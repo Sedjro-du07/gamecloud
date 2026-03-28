@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Chakra+Petch:wght@400;600;700&display=swap');
+
+body {
+  background: #05050a;
+  color: #e8e8f0;
+  font-family: 'Rajdhani', sans-serif;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #0c0c14; }
+::-webkit-scrollbar-thumb { background: #1a1a30; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #00ff88; }
+
+.glow-green { text-shadow: 0 0 20px rgba(0,255,136,0.4); }
+.glow-cyan { text-shadow: 0 0 20px rgba(0,212,255,0.4); }
+.neon-border { box-shadow: 0 0 15px rgba(0,255,136,0.15), inset 0 1px 0 rgba(0,255,136,0.1); }

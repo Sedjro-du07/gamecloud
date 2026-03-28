@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  MEMBER
+  ADMIN
+  VP
+  PRESIDENT
+}
+
+enum Track {
+  ENGINEERING
+  DESIGN
+  AUDIO
+  VISUALS
+}
+
+enum UserLevel {
+  TEK1
+  TEK2
+  TEK3
+  MASTER
+}
+
+enum ActivityType {
+  SESSION
+  DEFENSE
+  EVALUATION
+  CONFERENCE
+  GAMEJAM
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  password  String
+  name      String
+  role      Role      @default(MEMBER)
+  track     Track     @default(ENGINEERING)
+  level     UserLevel @default(TEK1)
+  xp        Int       @default(0)
+  badges    Int       @default(0)
+  bio       String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  skills            UserSkill[]
+  validatedSkills   UserSkill[]  @relation("Validator")
+  auditLogs         AuditLog[]
+  createdActivities Activity[]
+}
+
+model Skill {
+  id       String @id
+  name     String
+  block    Int
+
+  prereqs    SkillPrereq[] @relation("SkillMain")
+  prereqOf   SkillPrereq[] @relation("SkillPrereq")
+  userSkills UserSkill[]
+}
+
+model SkillPrereq {
+  id       String @id @default(cuid())
+  skillId  String
+  prereqId String
+  skill    Skill  @relation("SkillMain", fields: [skillId], references: [id])
+  prereq   Skill  @relation("SkillPrereq", fields: [prereqId], references: [id])
+  @@unique([skillId, prereqId])
+}
+
+model UserSkill {
+  id          String    @id @default(cuid())
+  userId      String
+  skillId     String
+  level       UserLevel @default(TEK1)
+  validatedBy String?
+  validatedAt DateTime  @default(now())
+  notes       String?
+
+  user      User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill     Skill @relation(fields: [skillId], references: [id])
+  validator User? @relation("Validator", fields: [validatedBy], references: [id])
+  @@unique([userId, skillId])
+}
+
+model Activity {
+  id          String       @id @default(cuid())
+  type        ActivityType
+  title       String
+  description String
+  date        DateTime
+  duration    String
+  track       String       @default("all")
+  level       String       @default("all")
+  status      String       @default("upcoming")
+  createdBy   String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  creator     User         @relation(fields: [createdBy], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  target    String?
+  details   String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
