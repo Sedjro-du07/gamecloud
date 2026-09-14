@@ -39,11 +39,13 @@ use crate::state::BotState;
 /// How many members to pull per page from the Discord API.
 const PAGE: u64 = 1000;
 
-/// Server-specific discipline roles mapped onto platform tracks.
+/// Legacy discipline roles mapped onto platform tracks.
 ///
-/// These are the names as they exist in the Game Cloud guild. A role
-/// named after the canonical track identifier is matched first, so
-/// renaming a role to `Engineering` works without touching this table.
+/// The Game Cloud guild used to carry these instead of track roles; they
+/// were deleted in September 2026 in favour of the roles the platform
+/// names itself. The table is kept because it costs nothing and makes the
+/// import resilient if a server recreates one of them — [`track_for_role`]
+/// tries the canonical spelling first either way.
 const ALIASES: &[(&str, Track)] = &[
     ("💻Developer", Track::Engineering),
     ("🔩game engineering", Track::Engineering),
