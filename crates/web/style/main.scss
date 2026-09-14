@@ -1,0 +1,541 @@
+// GameCloud OS — base stylesheet.
+//
+// Cyberpunk × Sci-Fi HUD vibe: neon rings, dark background, sharp
+// type. CSS variables expose track / rank colors so per-component
+// inline `style="--gc-ring: …"` overrides plug in cleanly.
+
+// ===========================================================================
+// Tokens
+// ===========================================================================
+
+:root {
+  --gc-bg: #07070a;
+  --gc-bg-elev: #0f0f15;
+  --gc-fg: #e8eaf2;
+  --gc-fg-mute: #9aa0b3;
+  --gc-accent: #00f2ff;
+  --gc-accent-2: #bf00ff;
+  --gc-danger: #ff003c;
+  --gc-success: #34d058;
+  --gc-warning: #ffaa00;
+  --gc-ring: var(--gc-accent);
+
+  --gc-font-display: 'Orbitron', 'Rajdhani', system-ui, sans-serif;
+  --gc-font-body: 'Inter', system-ui, sans-serif;
+  --gc-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --gc-radius-sm: 4px;
+  --gc-radius-md: 8px;
+  --gc-radius-lg: 16px;
+}
+
+// ===========================================================================
+// Reset
+// ===========================================================================
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--gc-bg);
+  color: var(--gc-fg);
+  font-family: var(--gc-font-body);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+a {
+  color: var(--gc-accent);
+  text-decoration: none;
+  transition: color 0.15s;
+
+  &:hover { color: var(--gc-accent-2); }
+  &:focus-visible {
+    outline: 2px solid var(--gc-accent);
+    outline-offset: 2px;
+  }
+}
+
+button { font: inherit; }
+
+// ===========================================================================
+// HUD shell
+// ===========================================================================
+
+.gc-hud {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+
+  &__top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, var(--gc-bg-elev), transparent);
+  }
+
+  &__brand a {
+    font-family: var(--gc-font-display);
+    font-size: 1.25rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  &__nav {
+    display: flex;
+    gap: 1.5rem;
+    a {
+      font-weight: 500;
+      color: var(--gc-fg);
+
+      &:hover { color: var(--gc-accent); }
+    }
+  }
+
+  &__content {
+    flex: 1;
+    padding: 2rem;
+    max-width: 1200px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  &__bottom {
+    padding: 1rem 2rem;
+    color: var(--gc-fg-mute);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    text-align: center;
+    font-size: 0.875rem;
+  }
+}
+
+// ===========================================================================
+// Buttons
+// ===========================================================================
+
+.gc-btn {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--gc-radius-md);
+  background: var(--gc-bg-elev);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--gc-fg);
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+
+  &:hover {
+    transform: translateY(-1px);
+    border-color: var(--gc-accent);
+    box-shadow: 0 0 16px rgba(0, 242, 255, 0.3);
+  }
+
+  &--primary {
+    background: linear-gradient(135deg, var(--gc-accent), var(--gc-accent-2));
+    border: none;
+    color: #000;
+  }
+}
+
+// ===========================================================================
+// Character card
+// ===========================================================================
+
+.gc-card {
+  background: var(--gc-bg-elev);
+  border-radius: var(--gc-radius-lg);
+  padding: 1.5rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  gap: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: box-shadow 0.2s;
+
+  &:focus-visible {
+    outline: 2px solid var(--gc-ring);
+    outline-offset: 2px;
+  }
+
+  &:hover {
+    box-shadow: 0 0 24px color-mix(in srgb, var(--gc-ring) 40%, transparent);
+  }
+
+  &__ring {
+    grid-row: 1 / 3;
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    padding: 4px;
+    background: conic-gradient(var(--gc-ring), color-mix(in srgb, var(--gc-ring) 40%, transparent), var(--gc-ring));
+    box-shadow: 0 0 16px color-mix(in srgb, var(--gc-ring) 50%, transparent);
+  }
+
+  &__avatar {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--gc-bg);
+  }
+
+  &__header {
+    align-self: end;
+  }
+
+  &__name {
+    margin: 0 0 0.25rem;
+    font-family: var(--gc-font-display);
+    font-size: 1.5rem;
+  }
+
+  &__title {
+    margin: 0;
+    color: var(--gc-fg-mute);
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+}
+
+// ===========================================================================
+// XP bar
+// ===========================================================================
+
+.gc-xp-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+
+  &__track {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  &__fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease-out;
+  }
+
+  &__label {
+    font-family: var(--gc-font-mono);
+    font-size: 0.75rem;
+    color: var(--gc-fg-mute);
+  }
+}
+
+// ===========================================================================
+// Pages
+// ===========================================================================
+
+.gc-home {
+  text-align: center;
+  padding: 4rem 1rem;
+
+  &__title {
+    font-family: var(--gc-font-display);
+    font-size: clamp(2.5rem, 6vw, 4rem);
+    margin: 0 0 1rem;
+    letter-spacing: 0.05em;
+    background: linear-gradient(135deg, var(--gc-accent), var(--gc-accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  &__tagline {
+    font-size: 1.25rem;
+    color: var(--gc-fg-mute);
+    margin: 0 0 2rem;
+  }
+
+  &__cta {
+    margin-bottom: 3rem;
+  }
+
+  &__bullets {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-width: 480px;
+    margin: 0 auto;
+    color: var(--gc-fg-mute);
+  }
+}
+
+.gc-onboard {
+  max-width: 480px;
+  margin: 0 auto;
+
+  h1 {
+    font-family: var(--gc-font-display);
+    margin-bottom: 1rem;
+  }
+}
+
+.gc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+
+  span {
+    font-size: 0.875rem;
+    color: var(--gc-fg-mute);
+  }
+
+  input {
+    padding: 0.75rem 1rem;
+    border-radius: var(--gc-radius-md);
+    background: var(--gc-bg-elev);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--gc-fg);
+    font-family: var(--gc-font-mono);
+
+    &:focus {
+      outline: 2px solid var(--gc-accent);
+      outline-offset: 2px;
+    }
+  }
+}
+
+.gc-empty {
+  text-align: center;
+  color: var(--gc-fg-mute);
+  padding: 4rem 1rem;
+}
+
+.gc-profile {
+  display: flex;
+  justify-content: center;
+  padding: 2rem 1rem;
+}
+
+// ===========================================================================
+// Auth pill (HUD top right)
+// ===========================================================================
+
+.gc-hud__top {
+  // Override base layout to fit the auth slot.
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.gc-hud__auth {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.gc-pill {
+  display: inline-block;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-family: var(--gc-font-mono);
+  font-size: 0.8rem;
+  color: var(--gc-fg);
+}
+
+.gc-link {
+  color: var(--gc-fg-mute);
+  font-size: 0.875rem;
+
+  &:hover { color: var(--gc-accent); }
+}
+
+// ===========================================================================
+// Banners (info / warning / danger)
+// ===========================================================================
+
+.gc-banner {
+  border-radius: var(--gc-radius-md);
+  padding: 0.85rem 1.25rem;
+  margin-bottom: 1.5rem;
+  border: 1px solid;
+  font-size: 0.95rem;
+
+  a { color: inherit; text-decoration: underline; }
+
+  &--warning {
+    background: rgba(255, 170, 0, 0.08);
+    border-color: rgba(255, 170, 0, 0.4);
+    color: var(--gc-warning);
+  }
+
+  &--danger {
+    background: rgba(255, 0, 60, 0.08);
+    border-color: rgba(255, 0, 60, 0.4);
+    color: var(--gc-danger);
+  }
+
+  &--info {
+    background: rgba(0, 242, 255, 0.06);
+    border-color: rgba(0, 242, 255, 0.3);
+    color: var(--gc-accent);
+  }
+}
+
+// ===========================================================================
+// Forms
+// ===========================================================================
+
+.gc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 480px;
+
+  button {
+    align-self: flex-start;
+  }
+}
+
+.gc-onboard__hint {
+  margin-top: 1.5rem;
+  color: var(--gc-fg-mute);
+  font-size: 0.875rem;
+}
+
+// ===========================================================================
+// Placeholder pages
+// ===========================================================================
+
+.gc-placeholder {
+  max-width: 640px;
+  margin: 3rem auto;
+  text-align: center;
+
+  h1 {
+    font-family: var(--gc-font-display);
+    margin-bottom: 1rem;
+  }
+
+  p {
+    color: var(--gc-fg-mute);
+    line-height: 1.6;
+  }
+
+  code {
+    background: var(--gc-bg-elev);
+    padding: 0.15rem 0.4rem;
+    border-radius: var(--gc-radius-sm);
+    font-family: var(--gc-font-mono);
+    color: var(--gc-accent);
+  }
+}
+
+// ===========================================================================
+// HUD auth pill (top right of the shell)
+// ===========================================================================
+
+.gc-hud__auth {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.gc-pill {
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(0, 242, 255, 0.08);
+  border: 1px solid rgba(0, 242, 255, 0.25);
+  color: var(--gc-accent);
+  font-size: 0.875rem;
+  font-family: var(--gc-font-mono);
+}
+
+.gc-link {
+  color: var(--gc-fg-mute);
+  font-size: 0.875rem;
+  &:hover { color: var(--gc-accent); }
+}
+
+// ===========================================================================
+// Banner (e.g. "email not verified")
+// ===========================================================================
+
+.gc-banner {
+  padding: 0.75rem 1rem;
+  border-radius: var(--gc-radius-md);
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+
+  &--warning {
+    background: rgba(255, 170, 0, 0.08);
+    border: 1px solid rgba(255, 170, 0, 0.35);
+    color: var(--gc-warning);
+
+    a {
+      color: var(--gc-warning);
+      text-decoration: underline;
+      &:hover { color: var(--gc-fg); }
+    }
+  }
+}
+
+// ===========================================================================
+// Forms
+// ===========================================================================
+
+.gc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+// ===========================================================================
+// Onboarding hint (small link below the form)
+// ===========================================================================
+
+.gc-onboard__hint {
+  margin-top: 1.5rem;
+  color: var(--gc-fg-mute);
+  font-size: 0.875rem;
+}
+
+// ===========================================================================
+// Placeholder pages (Projects, Leaderboard, …)
+// ===========================================================================
+
+.gc-placeholder {
+  max-width: 640px;
+  margin: 4rem auto;
+  padding: 2rem;
+  background: var(--gc-bg-elev);
+  border-radius: var(--gc-radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+
+  h1 {
+    font-family: var(--gc-font-display);
+    margin: 0 0 1rem;
+    color: var(--gc-accent);
+  }
+
+  p {
+    color: var(--gc-fg-mute);
+    line-height: 1.6;
+  }
+
+  code {
+    font-family: var(--gc-font-mono);
+    color: var(--gc-accent-2);
+    background: rgba(191, 0, 255, 0.1);
+    padding: 0.15rem 0.4rem;
+    border-radius: var(--gc-radius-sm);
+  }
+}

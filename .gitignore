@@ -1,0 +1,10 @@
+/target
+/.env
+/.env.local
+*.swp
+.DS_Store
+/node_modules
+/end2end
+.vscode/
+.idea/
+/Cargo.lock.bak

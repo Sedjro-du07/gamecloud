@@ -1,0 +1,40 @@
+[package]
+name        = "gamecloud-bot"
+version     = { workspace = true }
+edition     = { workspace = true }
+rust-version = { workspace = true }
+license     = { workspace = true }
+description = "GameCloud OS Discord bot (Serenity + Poise) — bidirectional sync with the platform."
+
+[[bin]]
+name = "gamecloud-bot"
+path = "src/main.rs"
+
+[dependencies]
+gamecloud-shared = { workspace = true, features = ["server"] }
+
+tokio       = { workspace = true }
+async-trait = { workspace = true }
+futures     = { workspace = true }
+
+serenity = { workspace = true }
+poise    = { workspace = true }
+
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+anyhow     = { workspace = true }
+
+chrono = { workspace = true }
+uuid   = { workspace = true }
+
+sqlx    = { workspace = true }
+reqwest = { workspace = true }
+
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+dotenvy   = { workspace = true }
+config    = { workspace = true }
+once_cell = { workspace = true }
+regex     = { workspace = true }

@@ -1,0 +1,113 @@
+[package]
+name        = "gamecloud-web"
+version     = { workspace = true }
+edition     = { workspace = true }
+rust-version = { workspace = true }
+license     = { workspace = true }
+description = "GameCloud OS web platform — Axum (SSR) + Leptos (hydration)."
+
+# Hybrid layout: the same crate produces both the WASM bundle (cdylib) and
+# the native server binary. cargo-leptos selects the right target via features.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "gamecloud-web"
+path = "src/bin/server.rs"
+required-features = ["ssr"]
+
+[features]
+hydrate = [
+    "leptos/hydrate",
+]
+ssr = [
+    "dep:axum",
+    "dep:axum-extra",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:tokio",
+    "dep:sqlx",
+    "dep:reqwest",
+    "dep:lettre",
+    "dep:oauth2",
+    "dep:jsonwebtoken",
+    "dep:hmac",
+    "dep:sha2",
+    "dep:rand",
+    "dep:argon2",
+    "dep:base64",
+    "dep:qrcode",
+    "dep:image",
+    "dep:octocrab",
+    "dep:validator",
+    "dep:url",
+    "dep:regex",
+    "dep:once_cell",
+    "dep:config",
+    "dep:dotenvy",
+    "dep:tracing-subscriber",
+    "dep:http",
+    "dep:anyhow",
+    "dep:time",
+    "dep:serde_urlencoded",
+    "dep:http-body-util",
+    "leptos/ssr",
+    "leptos_axum",
+    "leptos_meta/ssr",
+    "leptos_router/ssr",
+    "gamecloud-shared/server",
+]
+
+[dependencies]
+gamecloud-shared = { workspace = true }
+
+# Always present (used in views & shared code, including hydration target)
+leptos        = { workspace = true }
+leptos_meta   = { workspace = true }
+leptos_router = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+thiserror     = { workspace = true }
+chrono        = { workspace = true }
+uuid          = { workspace = true }
+tracing       = { workspace = true }
+
+# WASM-only
+console_error_panic_hook = { workspace = true }
+wasm-bindgen             = { workspace = true }
+
+# Server-only (gated behind the `ssr` feature)
+axum        = { workspace = true, optional = true }
+axum-extra  = { workspace = true, optional = true }
+tower       = { workspace = true, optional = true }
+tower-http  = { workspace = true, optional = true }
+tokio       = { workspace = true, optional = true }
+sqlx        = { workspace = true, optional = true }
+reqwest     = { workspace = true, optional = true }
+lettre      = { workspace = true, optional = true }
+oauth2      = { workspace = true, optional = true }
+jsonwebtoken = { workspace = true, optional = true }
+hmac        = { workspace = true, optional = true }
+sha2        = { workspace = true, optional = true }
+rand        = { workspace = true, optional = true }
+argon2      = { workspace = true, optional = true }
+base64      = { workspace = true, optional = true }
+qrcode      = { workspace = true, optional = true }
+image       = { workspace = true, optional = true }
+octocrab    = { workspace = true, optional = true }
+validator   = { workspace = true, optional = true }
+url         = { workspace = true, optional = true }
+regex       = { workspace = true, optional = true }
+once_cell   = { workspace = true, optional = true }
+config      = { workspace = true, optional = true }
+dotenvy     = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+leptos_axum = { workspace = true, optional = true }
+http        = { workspace = true, optional = true }
+anyhow      = { workspace = true, optional = true }
+time        = { version = "0.3", optional = true }
+serde_urlencoded = { version = "0.7", optional = true }
+http-body-util  = { version = "0.1", optional = true }
+
+[package.metadata.cargo-machete]
+ignored = ["wasm-bindgen", "console_error_panic_hook"]
