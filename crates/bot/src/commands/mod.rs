@@ -2,8 +2,10 @@
 
 use crate::state::BotState;
 
+pub mod badges;
 pub mod leaderboard;
 pub mod profil;
+pub mod quetes;
 pub mod track;
 pub mod xp;
 
@@ -14,5 +16,7 @@ pub fn all() -> Vec<poise::Command<BotState, anyhow::Error>> {
         xp::xp(),
         track::track(),
         leaderboard::leaderboard(),
+        quetes::quetes(),
+        badges::badges(),
     ]
 }

@@ -263,12 +263,12 @@ pub async fn vote(pool: &PgPool, voter: Uuid, resource_id: Uuid) -> WebResult<i3
         return Err(WebError::Domain(DomainError::AlreadyVoted));
     }
 
-    let votes: i32 = sqlx::query_scalar("SELECT votes FROM resources WHERE id = $1")
+    let tally: i32 = sqlx::query_scalar("SELECT votes FROM resources WHERE id = $1")
         .bind(resource_id)
         .fetch_optional(pool)
         .await?
         .ok_or(WebError::NotFound)?;
-    Ok(votes)
+    Ok(tally)
 }
 
 /// Withdraw a vote.
@@ -282,12 +282,12 @@ pub async fn unvote(pool: &PgPool, voter: Uuid, resource_id: Uuid) -> WebResult<
         .execute(pool)
         .await?;
 
-    let votes: i32 = sqlx::query_scalar("SELECT votes FROM resources WHERE id = $1")
+    let tally: i32 = sqlx::query_scalar("SELECT votes FROM resources WHERE id = $1")
         .bind(resource_id)
         .fetch_optional(pool)
         .await?
         .ok_or(WebError::NotFound)?;
-    Ok(votes)
+    Ok(tally)
 }
 
 #[cfg(test)]

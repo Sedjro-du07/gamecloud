@@ -32,28 +32,27 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// the configured public origin instead.
 fn cors(state: &AppState) -> CorsLayer {
     let origin = state.config().public_origin.clone();
-    match origin.parse::<axum::http::HeaderValue>() {
-        Ok(value) => CorsLayer::new()
-            .allow_origin(value)
-            .allow_methods([
-                axum::http::Method::GET,
-                axum::http::Method::POST,
-                axum::http::Method::PATCH,
-                axum::http::Method::DELETE,
-            ])
-            .allow_headers([
-                axum::http::header::CONTENT_TYPE,
-                axum::http::header::ACCEPT,
-            ])
-            .allow_credentials(true),
-        Err(_) => {
-            tracing::warn!(
-                %origin,
-                "PUBLIC_ORIGIN is not a valid header value; cross-origin requests are disabled"
-            );
-            CorsLayer::new()
-        }
-    }
+    let Ok(value) = origin.parse::<axum::http::HeaderValue>() else {
+        tracing::warn!(
+            %origin,
+            "PUBLIC_ORIGIN is not a valid header value; cross-origin requests are disabled"
+        );
+        return CorsLayer::new();
+    };
+
+    CorsLayer::new()
+        .allow_origin(value)
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PATCH,
+            axum::http::Method::DELETE,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::ACCEPT,
+        ])
+        .allow_credentials(true)
 }
 
 /// Build the full application router.

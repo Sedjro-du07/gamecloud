@@ -242,6 +242,147 @@ pub async fn grant_in_tx(
     let level_before = member.level;
     let level_after = level_for_xp(xp_after);
 
+    let streak_after = apply_member_update(
+        tx,
+        request.user_id,
+        &member,
+        xp_after,
+        rank_after,
+        level_after,
+    )
+    .await?;
+
+    // --- 5: track pool -----------------------------------------------
+    if let Some(track) = request.track {
+        credit_track_pool(tx, request.user_id, track, awarded).await?;
+    }
+
+    // --- 6: quests ---------------------------------------------------
+    let (completed_quests, rank_final, level_final) = settle_quests(
+        tx,
+        request,
+        season_id,
+        member.email_verified,
+        xp_after,
+        rank_after,
+        level_after,
+    )
+    .await?;
+
+    // --- 7: badges ---------------------------------------------------
+    let new_badges = refresh_badges(tx, request.user_id, streak_after).await?;
+
+    // --- 8: announcements --------------------------------------------
+    announce(
+        tx,
+        announce_channel,
+        request.user_id,
+        &member.display_name(),
+        (rank_final > rank_before).then_some(rank_final),
+        &new_badges,
+        &completed_quests,
+    )
+    .await?;
+
+    Ok(GrantOutcome {
+        awarded,
+        capped,
+        rank_change: (rank_final != rank_before).then_some((rank_before, rank_final)),
+        level_change: (level_final != level_before).then_some((level_before, level_final)),
+        streak_days: streak_after,
+        new_badges,
+        completed_quests,
+    })
+}
+
+/// Credit a track's XP pool and re-derive the member's track role.
+///
+/// `CoLead` and `Lead` are appointed, never earned, so they are left
+/// alone — the CASE deliberately short-circuits on them.
+async fn credit_track_pool(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: Uuid,
+    track: &str,
+    awarded: i32,
+) -> WebResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE track_memberships
+           SET track_xp       = GREATEST(track_xp + $3::BIGINT, 0),
+               last_active_at = NOW(),
+               track_role     = CASE
+                   WHEN track_role IN ('CoLead', 'Lead') THEN track_role
+                   WHEN track_xp + $3::BIGINT >= 500 THEN 'Mentor'
+                   WHEN track_xp + $3::BIGINT >= 300 THEN 'Reviewer'
+                   WHEN track_xp + $3::BIGINT >= 100 THEN 'Contributor'
+                   ELSE 'Observer'
+               END
+         WHERE user_id = $1 AND track = $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(track)
+    .bind(i64::from(awarded))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Advance quests, pay out any that finished, and re-derive the rank
+/// and level those payouts may have moved.
+///
+/// Quest rewards are credited *after* the main award has already
+/// updated the member's totals, so this is where the two are
+/// reconciled. Extracted from [`grant_in_tx`] to keep that function a
+/// readable sequence of stages.
+async fn settle_quests(
+    tx: &mut Transaction<'_, Postgres>,
+    request: &XpGrant<'_>,
+    season_id: Option<Uuid>,
+    email_verified: bool,
+    xp_after: i64,
+    rank_after: GlobalRank,
+    level_after: i32,
+) -> WebResult<(Vec<CompletedQuest>, GlobalRank, i32)> {
+    let completed = advance_quests(tx, request.user_id, request.source, request.track).await?;
+
+    let mut xp_from_quests = 0_i64;
+    for quest in &completed {
+        xp_from_quests += i64::from(quest.xp_reward);
+        pay_quest_reward(tx, request.user_id, quest, season_id).await?;
+    }
+
+    if xp_from_quests == 0 {
+        return Ok((completed, rank_after, level_after));
+    }
+
+    let xp = xp_after + xp_from_quests;
+    let rank = next_rank(rank_after, xp, email_verified);
+    let level = level_for_xp(xp);
+
+    sqlx::query("UPDATE users SET xp_total = $2, global_rank = $3, level = $4 WHERE id = $1")
+        .bind(request.user_id)
+        .bind(xp)
+        .bind(rank.as_str())
+        .bind(level)
+        .execute(&mut **tx)
+        .await?;
+
+    Ok((completed, rank, level))
+}
+
+/// Write the member's new totals, rank, level and streak.
+///
+/// Returns the streak the member now holds. Extracted from
+/// [`grant_in_tx`] to keep the cascade readable.
+async fn apply_member_update(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: Uuid,
+    member: &MemberSnapshot,
+    xp_after: i64,
+    rank_after: GlobalRank,
+    level_after: i32,
+) -> WebResult<i32> {
     let today = days_from_epoch(Utc::now().date_naive());
     let streak_outcome = evaluate_streak(member.streak_days, member.last_streak_day, today);
     let streak_after = streak_outcome.resolve(member.streak_days);
@@ -260,7 +401,7 @@ pub async fn grant_in_tx(
          WHERE id = $1
         "#,
     )
-    .bind(request.user_id)
+    .bind(user_id)
     .bind(xp_after)
     .bind(rank_after.as_str())
     .bind(level_after)
@@ -270,103 +411,48 @@ pub async fn grant_in_tx(
     .execute(&mut **tx)
     .await?;
 
-    // --- 5: track pool -----------------------------------------------
-    if let Some(track) = request.track {
-        sqlx::query(
-            r#"
-            UPDATE track_memberships
-               SET track_xp       = GREATEST(track_xp + $3::BIGINT, 0),
-                   last_active_at = NOW(),
-                   track_role     = CASE
-                       WHEN track_role IN ('CoLead', 'Lead') THEN track_role
-                       WHEN track_xp + $3::BIGINT >= 500 THEN 'Mentor'
-                       WHEN track_xp + $3::BIGINT >= 300 THEN 'Reviewer'
-                       WHEN track_xp + $3::BIGINT >= 100 THEN 'Contributor'
-                       ELSE 'Observer'
-                   END
-             WHERE user_id = $1 AND track = $2
-            "#,
-        )
-        .bind(request.user_id)
-        .bind(track)
-        .bind(i64::from(awarded))
-        .execute(&mut **tx)
-        .await?;
-    }
+    Ok(streak_after)
+}
 
-    // --- 6: quests ---------------------------------------------------
-    let completed_quests =
-        advance_quests(tx, request.user_id, request.source, request.track).await?;
-    let mut xp_from_quests = 0_i64;
-    for quest in &completed_quests {
-        xp_from_quests += i64::from(quest.xp_reward);
-        pay_quest_reward(tx, request.user_id, quest, season_id).await?;
-    }
-
-    // Quest payouts move the totals again; recompute what they changed
-    // so the announcements below report the member's true final state.
-    let (xp_final, rank_final, level_final) = if xp_from_quests > 0 {
-        let xp = xp_after + xp_from_quests;
-        let rank = next_rank(rank_after, xp, member.email_verified);
-        let level = level_for_xp(xp);
-        sqlx::query("UPDATE users SET xp_total = $2, global_rank = $3, level = $4 WHERE id = $1")
-            .bind(request.user_id)
-            .bind(xp)
-            .bind(rank.as_str())
-            .bind(level)
-            .execute(&mut **tx)
-            .await?;
-        (xp, rank, level)
-    } else {
-        (xp_after, rank_after, level_after)
-    };
-    let _ = xp_final;
-
-    // --- 7: badges ---------------------------------------------------
-    let new_badges = refresh_badges(tx, request.user_id, streak_after).await?;
-
-    // --- 8: announcements --------------------------------------------
-    let display = member.display_name();
-
-    if rank_final > rank_before {
+/// Enqueue every announcement an award earned.
+///
+/// Split out of [`grant_in_tx`] to keep that function readable: the
+/// cascade it drives is already long enough without three loops of
+/// message formatting at the end.
+async fn announce(
+    tx: &mut Transaction<'_, Postgres>,
+    channel: Option<u64>,
+    user_id: Uuid,
+    display: &str,
+    new_rank: Option<GlobalRank>,
+    new_badges: &[SpecialBadge],
+    completed_quests: &[CompletedQuest],
+) -> WebResult<()> {
+    if let Some(rank) = new_rank {
         notifications::enqueue(
             tx,
-            announce_channel,
-            &Announcement::rank_up(
-                request.user_id,
-                &display,
-                rank_final.title(),
-                rank_final.ring_color(),
-            ),
+            channel,
+            &Announcement::rank_up(user_id, display, rank.title(), rank.ring_color()),
         )
         .await?;
     }
-    for badge in &new_badges {
+    for badge in new_badges {
         notifications::enqueue(
             tx,
-            announce_channel,
-            &Announcement::badge(request.user_id, &display, badge.title(), badge.description()),
+            channel,
+            &Announcement::badge(user_id, display, badge.title(), badge.description()),
         )
         .await?;
     }
-    for quest in &completed_quests {
+    for quest in completed_quests {
         notifications::enqueue(
             tx,
-            announce_channel,
-            &Announcement::quest(request.user_id, &display, &quest.title, quest.xp_reward),
+            channel,
+            &Announcement::quest(user_id, display, &quest.title, quest.xp_reward),
         )
         .await?;
     }
-
-    Ok(GrantOutcome {
-        awarded,
-        capped,
-        rank_change: (rank_final != rank_before).then_some((rank_before, rank_final)),
-        level_change: (level_final != level_before).then_some((level_before, level_final)),
-        streak_days: streak_after,
-        new_badges,
-        completed_quests,
-    })
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -846,8 +932,7 @@ fn epoch_to_date(days: i64) -> NaiveDate {
 /// tests; the production check is done in SQL.
 #[must_use]
 pub fn is_nocturnal<T: Timelike>(at: &T) -> bool {
-    let hour = at.hour();
-    hour >= badges::NIGHT_OWL_FROM_HOUR && hour < badges::NIGHT_OWL_UNTIL_HOUR
+    (badges::NIGHT_OWL_FROM_HOUR..badges::NIGHT_OWL_UNTIL_HOUR).contains(&at.hour())
 }
 
 /// Whether a date lands in the current month. Used by the monthly

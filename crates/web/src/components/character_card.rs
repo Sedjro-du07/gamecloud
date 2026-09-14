@@ -10,22 +10,6 @@ use leptos::prelude::*;
 
 use crate::components::xp_bar::XpBar;
 
-/// Map a rank string (as stored in the DB) to a typed `GlobalRank`.
-fn rank_from_str(s: &str) -> GlobalRank {
-    match s {
-        "Visitor" => GlobalRank::Visitor,
-        "Initiate" => GlobalRank::Initiate,
-        "Apprentice" => GlobalRank::Apprentice,
-        "JuniorDev" => GlobalRank::JuniorDev,
-        "SeniorDev" => GlobalRank::SeniorDev,
-        "Expert" => GlobalRank::Expert,
-        "Veteran" => GlobalRank::Veteran,
-        "Legend" => GlobalRank::Legend,
-        "Myth" => GlobalRank::Myth,
-        _ => GlobalRank::Pending,
-    }
-}
-
 /// Character card component.
 #[component]
 #[allow(clippy::needless_pass_by_value)] // Leptos prop convention
@@ -42,7 +26,7 @@ pub fn CharacterCard(
     /// title.
     title: Option<String>,
 ) -> impl IntoView {
-    let rank = rank_from_str(global_rank.as_str());
+    let rank = GlobalRank::parse(global_rank.as_str());
     let ring = rank.ring_color().to_string();
     let displayed_title = title.unwrap_or_else(|| rank.title().to_string());
     let aria_label = format!("{name}, {}", rank.title());

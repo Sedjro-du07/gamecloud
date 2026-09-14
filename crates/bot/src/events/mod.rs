@@ -2,3 +2,4 @@
 
 pub mod draftbot;
 pub mod outbox;
+pub mod roles;

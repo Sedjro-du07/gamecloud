@@ -68,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!(user = %ready.user.name, "bot ready");
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                 events::outbox::spawn(state_for_setup.clone(), ctx.http.clone());
+                spawn_role_sync(state_for_setup.clone(), ctx.http.clone());
                 Ok(state_for_setup)
             })
         })
@@ -79,6 +80,26 @@ async fn main() -> anyhow::Result<()> {
 
     client.start().await?;
     Ok(())
+}
+
+/// Periodically mirror platform ranks onto Discord roles.
+///
+/// A no-op unless `DISCORD_GUILD_ID` is configured — the bot should
+/// never touch roles in a guild it was not explicitly pointed at. The
+/// first pass runs immediately so a fresh deployment converges without
+/// waiting out the interval.
+fn spawn_role_sync(state: BotState, http: std::sync::Arc<serenity::Http>) {
+    if state.config().guild_id.is_none() {
+        tracing::info!("DISCORD_GUILD_ID unset; rank-role sync disabled");
+        return;
+    }
+    let interval = Duration::from_secs(state.config().role_sync_seconds.max(60));
+    tokio::spawn(async move {
+        loop {
+            events::roles::sync_all(&state, &http).await;
+            tokio::time::sleep(interval).await;
+        }
+    });
 }
 
 async fn handle_event(

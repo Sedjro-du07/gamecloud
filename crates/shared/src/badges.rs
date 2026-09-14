@@ -165,6 +165,12 @@ pub const NIGHT_OWL_UNTIL_HOUR: u32 = 5;
 /// Everything the badge engine needs to know about one member at one
 /// instant. The web crate assembles this with a single aggregate query
 /// after each XP grant.
+///
+/// `clippy::struct_excessive_bools` fires here and is wrong for this
+/// type: these really are independent yes/no facts about one member at
+/// one instant, and collapsing them into an enum or a bitflag would
+/// make [`evaluate`] harder to read for no gain.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct BadgeSnapshot {
     /// Current consecutive-day streak.

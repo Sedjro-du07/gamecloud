@@ -114,13 +114,15 @@ async fn generate(
     // and is never written down.
     let token_id = qr_q::insert_qr_token(
         state.pool(),
-        &token,
-        &body.event_name,
-        &body.event_type,
-        body.xp_value,
-        user.id,
-        exp,
-        body.max_scans,
+        &qr_q::NewQrToken {
+            token: &token,
+            event_name: &body.event_name,
+            event_type: &body.event_type,
+            xp_value: body.xp_value,
+            created_by: user.id,
+            expires_at: exp,
+            max_scans: body.max_scans,
+        },
     )
     .await?;
 

@@ -26,22 +26,35 @@ use crate::{
     services::tokens,
 };
 
+/// A QR token about to be persisted.
+///
+/// Grouped into a struct rather than eight positional arguments, so a
+/// caller cannot silently transpose `event_name` and `event_type`.
+#[derive(Debug, Clone)]
+pub struct NewQrToken<'a> {
+    /// The signed JWT. Hashed on the way in; never stored in clear.
+    pub token: &'a str,
+    /// Event display name.
+    pub event_name: &'a str,
+    /// `Session`, `OfficeHours`, `StandUp`, `GameJam` or `Special`.
+    pub event_type: &'a str,
+    /// XP each attendee earns.
+    pub xp_value: i32,
+    /// Member who minted it.
+    pub created_by: Uuid,
+    /// When it stops being claimable.
+    pub expires_at: DateTime<Utc>,
+    /// Optional ceiling on how many members may claim it.
+    pub max_scans: Option<i32>,
+}
+
 /// Persist a freshly issued QR token.
 ///
 /// Takes the plaintext only to hash it; the plaintext is never written.
 ///
 /// # Errors
 /// Propagates database errors.
-pub async fn insert_qr_token(
-    pool: &PgPool,
-    token: &str,
-    event_name: &str,
-    event_type: &str,
-    xp_value: i32,
-    created_by: Uuid,
-    expires_at: DateTime<Utc>,
-    max_scans: Option<i32>,
-) -> WebResult<Uuid> {
+pub async fn insert_qr_token(pool: &PgPool, new: &NewQrToken<'_>) -> WebResult<Uuid> {
     let id: Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO qr_tokens (token_hash, event_name, event_type, xp_value,
@@ -50,16 +63,28 @@ pub async fn insert_qr_token(
         RETURNING id
         "#,
     )
-    .bind(tokens::hash(token))
-    .bind(event_name)
-    .bind(event_type)
-    .bind(xp_value)
-    .bind(created_by)
-    .bind(expires_at)
-    .bind(max_scans)
+    .bind(tokens::hash(new.token))
+    .bind(new.event_name)
+    .bind(new.event_type)
+    .bind(new.xp_value)
+    .bind(new.created_by)
+    .bind(new.expires_at)
+    .bind(new.max_scans)
     .fetch_one(pool)
     .await?;
     Ok(id)
+}
+
+/// The locked `qr_tokens` row a scan operates on.
+#[derive(Debug, sqlx::FromRow)]
+struct TokenRow {
+    id: Uuid,
+    event_name: String,
+    event_type: String,
+    xp_value: i32,
+    expires_at: DateTime<Utc>,
+    max_scans: Option<i32>,
+    scan_count: i32,
 }
 
 /// Information returned to a successful scan.
@@ -98,20 +123,27 @@ pub async fn claim_qr_token(
     let token_hash = tokens::hash(token);
     let mut tx = pool.begin().await?;
 
-    let row: Option<(Uuid, String, String, i32, DateTime<Utc>, Option<i32>, i32)> =
-        sqlx::query_as(
-            r#"
-            SELECT id, event_name, event_type, xp_value, expires_at, max_scans, scan_count
-              FROM qr_tokens
-             WHERE token_hash = $1
-             FOR UPDATE
-            "#,
-        )
-        .bind(&token_hash)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let row: Option<TokenRow> = sqlx::query_as(
+        r#"
+        SELECT id, event_name, event_type, xp_value, expires_at, max_scans, scan_count
+          FROM qr_tokens
+         WHERE token_hash = $1
+         FOR UPDATE
+        "#,
+    )
+    .bind(&token_hash)
+    .fetch_optional(&mut *tx)
+    .await?;
 
-    let Some((id, event_name, event_type, xp_value, expires_at, max_scans, scan_count)) = row
+    let Some(TokenRow {
+        id,
+        event_name,
+        event_type,
+        xp_value,
+        expires_at,
+        max_scans,
+        scan_count,
+    }) = row
     else {
         return Err(WebError::Domain(DomainError::InvalidQrToken));
     };

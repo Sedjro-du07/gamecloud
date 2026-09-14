@@ -40,6 +40,11 @@ pub struct Config {
     pub draftbot_api_key: String,
     /// Poll interval for the `notifications_outbox`, in seconds.
     pub outbox_poll_seconds: u64,
+    /// Guild whose roles mirror platform ranks. When absent, rank-role
+    /// synchronisation is disabled and the bot touches nobody's roles.
+    pub guild_id: Option<u64>,
+    /// How often to reconcile every member's rank role, in seconds.
+    pub role_sync_seconds: u64,
 }
 
 impl Config {
@@ -58,6 +63,8 @@ impl Config {
             gamecloud_sync_url: required("GAMECLOUD_SYNC_URL")?,
             draftbot_api_key: required("DRAFTBOT_API_KEY")?,
             outbox_poll_seconds: parse_or("OUTBOX_POLL_SECONDS", 5)?,
+            guild_id: parse_optional("DISCORD_GUILD_ID")?,
+            role_sync_seconds: parse_or("ROLE_SYNC_SECONDS", 900)?,
         })
     }
 }
@@ -105,6 +112,30 @@ where
             message: e.to_string(),
         }),
         Err(VarError::NotPresent) => Ok(default),
+        Err(VarError::NotUnicode(_)) => Err(ConfigError::InvalidVar {
+            var: key,
+            message: "value is not valid UTF-8".into(),
+        }),
+    }
+}
+
+/// Parse an optional numeric variable. Absent or empty yields `None`;
+/// present but malformed is an error rather than a silent default.
+fn parse_optional<T>(key: &'static str) -> Result<Option<T>, ConfigError>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    match std::env::var(key) {
+        Ok(v) if v.trim().is_empty() => Ok(None),
+        Ok(v) => v
+            .parse::<T>()
+            .map(Some)
+            .map_err(|e| ConfigError::InvalidVar {
+                var: key,
+                message: e.to_string(),
+            }),
+        Err(VarError::NotPresent) => Ok(None),
         Err(VarError::NotUnicode(_)) => Err(ConfigError::InvalidVar {
             var: key,
             message: "value is not valid UTF-8".into(),

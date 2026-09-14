@@ -1,146 +1,219 @@
-//! Profile page.
+//! Profile page — the character sheet.
 //!
-//! Displays the `CharacterCard` for the current user. The data is
-//! fetched via a Leptos server function that runs on the server side
-//! and reads the JWT from the `gc_access` cookie via the request
-//! parts injected into the Leptos render context.
+//! Everything the platform knows about a member, in one place: rank and
+//! level, the streak that multiplies their XP, their tracks, their
+//! badges, and the ledger of what they actually did. This is the page
+//! that makes the record worth something outside the club.
 
 use leptos::prelude::*;
-use serde::{Deserialize, Serialize};
 
-use crate::components::character_card::CharacterCard;
+use crate::{
+    api::{format_xp, level_percent, MeView, SheetView, XpEntry},
+    components::{
+        badge_grid::BadgeGrid, character_card::CharacterCard, track_list::TrackList,
+    },
+    server_fns::get_sheet,
+};
 
-/// Minimal subset of the user record exposed to the client. We
-/// re-define this here (rather than reusing `UserRecord`) because
-/// `UserRecord` pulls in `chrono::DateTime` types that don't
-/// round-trip cleanly through the WASM boundary in all configurations.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct CurrentUserView {
-    /// Discord ID — used as a stable display name when the user has
-    /// no preferred title.
-    pub display_name: String,
-    /// Avatar URL.
-    pub avatar_url: Option<String>,
-    /// Total XP across all sources.
-    pub xp_total: i64,
-    /// Global rank (string form).
-    pub global_rank: String,
-    /// User-selected title; falls back to the rank title.
-    pub title: Option<String>,
-    /// Whether the email has been verified.
-    pub email_verified: bool,
-    /// The user's Epitech email if any.
-    pub email: Option<String>,
+/// Re-exported for the HUD, which needs the same lookup.
+pub use crate::server_fns::get_me as get_current_user;
+
+/// Level progress bar.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn LevelBar(me: MeView) -> impl IntoView {
+    let pct = level_percent(me.level_xp_into, me.level_xp_needed);
+    view! {
+        <div class="gc-level">
+            <div class="gc-level__head">
+                <span class="gc-level__label">{format!("Niveau {}", me.level)}</span>
+                <span class="gc-level__count">
+                    {format!("{} / {} XP", me.level_xp_into, me.level_xp_needed)}
+                </span>
+            </div>
+            <div
+                class="gc-level__track"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow=format!("{pct:.0}")
+            >
+                <div
+                    class="gc-level__fill"
+                    style=format!("width: {pct:.1}%; background: {};", me.rank_color)
+                ></div>
+            </div>
+        </div>
+    }
 }
 
-/// Server function that returns the current user, or `None` if the
-/// caller is not signed in.
-#[server(GetCurrentUser, "/api")]
-pub async fn get_current_user() -> Result<Option<CurrentUserView>, ServerFnError> {
-    use crate::{
-        middleware::auth::ACCESS_COOKIE,
-        services::jwt,
-        state::AppState,
-    };
-    use axum::http::request::Parts;
-
-    // Pull the AppState and the request parts out of the Leptos render
-    // context. Both were injected by `leptos_routes_with_context` in
-    // `router.rs`.
-    let Some(state) = use_context::<AppState>() else {
-        return Ok(None);
-    };
-    let Some(parts) = use_context::<Parts>() else {
-        return Ok(None);
+/// The three headline stats.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn StatStrip(me: MeView) -> impl IntoView {
+    let streak_note = if me.streak_days >= 7 {
+        format!("×{:.2} sur tout ton XP", me.streak_multiplier)
+    } else if me.streak_days > 0 {
+        format!("{} j avant le bonus ×1.25", 7 - me.streak_days)
+    } else {
+        "Gagne de l'XP aujourd'hui pour lancer ta série".to_string()
     };
 
-    let cookie_header = match parts.headers.get(axum::http::header::COOKIE) {
-        Some(h) => h.to_str().unwrap_or("").to_string(),
-        None => return Ok(None),
-    };
-    let access_token = cookie_header
-        .split(';')
-        .map(str::trim)
-        .find_map(|kv| kv.strip_prefix(&format!("{ACCESS_COOKIE}=")));
-    let Some(token) = access_token else {
-        return Ok(None);
-    };
+    view! {
+        <ul class="gc-stats">
+            <li class="gc-stat">
+                <span class="gc-stat__value">{format_xp(me.xp_total)}</span>
+                <span class="gc-stat__label">"XP total"</span>
+            </li>
+            <li class="gc-stat">
+                <span class="gc-stat__value">
+                    {if me.streak_days > 0 {
+                        format!("🔥 {}", me.streak_days)
+                    } else {
+                        "—".to_string()
+                    }}
+                </span>
+                <span class="gc-stat__label">"Série"</span>
+                <span class="gc-stat__note">{streak_note}</span>
+            </li>
+            <li class="gc-stat">
+                <span class="gc-stat__value">
+                    {me.leaderboard_position
+                        .map_or_else(|| "—".to_string(), |p| format!("#{p}"))}
+                </span>
+                <span class="gc-stat__label">"Classement"</span>
+            </li>
+        </ul>
+    }
+}
 
-    let Ok(user_id) = jwt::verify_access(&state.config().jwt_secret, token) else {
-        return Ok(None);
-    };
-
-    match crate::db::queries::users::find_by_id(state.pool(), user_id).await {
-        Ok(Some(record)) => Ok(Some(CurrentUserView {
-            display_name: record
-                .current_title
-                .clone()
-                .unwrap_or_else(|| record.discord_id.clone()),
-            avatar_url: record
-                .avatar_custom_url
-                .clone()
-                .or(record.avatar_url.clone()),
-            xp_total: record.xp_total,
-            global_rank: record.global_rank.clone(),
-            title: record.current_title.clone(),
-            email_verified: record.email_verified,
-            email: record.email.clone(),
-        })),
-        Ok(None) => Ok(None),
-        Err(e) => {
-            tracing::warn!(error = ?e, "profile fetch failed");
-            Err(ServerFnError::ServerError(
-                "could not load profile".to_string(),
-            ))
+/// The profile body, once the sheet has loaded.
+///
+/// Split out of [`ProfilePage`] so that component stays a thin
+/// load-state switch and this one owns the layout.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn SheetBody(sheet: SheetView) -> impl IntoView {
+    let me = sheet.me;
+    let email_banner = (!me.email_verified).then(|| {
+        view! {
+            <div class="gc-banner gc-banner--warning">
+                "Email Epitech pas encore validé. "
+                <a href="/onboarding/email" rel="external">"Compléter"</a>
+                "."
+            </div>
         }
+    });
+    let onboarding_banner = me.needs_onboarding.then(|| {
+        view! {
+            <div class="gc-banner">
+                "Dernière étape : choisis ta track pour rejoindre l'échelle d'XP. "
+                <a href="/onboarding/tracks" rel="external">"Choisir maintenant"</a>
+            </div>
+        }
+    });
+    let bureau = me
+        .bureau_title
+        .clone()
+        .map(|t| view! { <p class="gc-profile__bureau">{t}</p> });
+
+    view! {
+        <>
+            {email_banner}
+            {onboarding_banner}
+            <CharacterCard
+                name=me.display_name.clone()
+                avatar_url=me.avatar_url.clone()
+                xp_total=me.xp_total
+                global_rank=me.global_rank.clone()
+                title=Some(me.rank_title.clone())
+            />
+            {bureau}
+            <LevelBar me=me.clone() />
+            <StatStrip me=me />
+            <TrackList tracks=sheet.tracks />
+            <BadgeGrid badges=sheet.badges />
+            <XpHistory entries=sheet.recent_xp />
+        </>
+    }
+}
+
+/// Recent ledger lines.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn XpHistory(entries: Vec<XpEntry>) -> impl IntoView {
+    view! {
+        <section class="gc-history">
+            <h2>"Activité récente"</h2>
+            {if entries.is_empty() {
+                view! {
+                    <p class="gc-empty">
+                        "Rien pour l'instant. Pousse du code, viens à une session,
+                         ou relis le projet de quelqu'un."
+                    </p>
+                }
+                    .into_any()
+            } else {
+                view! {
+                    <ul class="gc-history__list">
+                        {entries
+                            .into_iter()
+                            .map(|entry| {
+                                view! {
+                                    <li class="gc-history__item">
+                                        <span class="gc-history__when">{entry.when}</span>
+                                        <span class="gc-history__amount">
+                                            {format!("{:+}", entry.amount)} " XP"
+                                        </span>
+                                        <span class="gc-history__source">{entry.source}</span>
+                                        <span class="gc-history__desc">
+                                            {entry.description.unwrap_or_default()}
+                                        </span>
+                                    </li>
+                                }
+                            })
+                            .collect_view()}
+                    </ul>
+                }
+                    .into_any()
+            }}
+        </section>
     }
 }
 
 /// Profile page.
 #[component]
 pub fn ProfilePage() -> impl IntoView {
-    let me = Resource::new(|| (), |()| async { get_current_user().await });
+    let sheet = Resource::new(|| (), |()| async { get_sheet().await });
 
     view! {
         <section class="gc-profile">
             <Suspense fallback=move || view! { <p class="gc-empty">"Chargement…"</p> }>
-                {move || match me.get() {
+                {move || match sheet.get() {
                     None => view! { <p class="gc-empty">"Chargement…"</p> }.into_any(),
-                    Some(Err(_)) => view! {
-                        <p class="gc-empty">"Erreur lors du chargement du profil."</p>
+                    Some(Err(_)) => {
+                        view! { <p class="gc-empty">"Erreur lors du chargement du profil."</p> }
+                            .into_any()
                     }
-                    .into_any(),
-                    Some(Ok(None)) => view! {
-                        <p class="gc-empty">
-                            "Pas encore connecté. "
-                            <a href="/api/auth/login" rel="external">
-                                "Se connecter avec Discord"
-                            </a>
-                            "."
-                        </p>
-                    }
-                    .into_any(),
-                    Some(Ok(Some(user))) => {
-                        let card = view! {
-                            <CharacterCard
-                                name=user.display_name.clone()
-                                avatar_url=user.avatar_url.clone()
-                                xp_total=user.xp_total
-                                global_rank=user.global_rank.clone()
-                                title=user.title.clone()
-                            />
-                        };
-                        let banner = (!user.email_verified).then(|| view! {
-                            <div class="gc-banner gc-banner--warning">
-                                "Email Epitech pas encore validé. "
-                                <a href="/onboarding/email" rel="external">"Compléter"</a>
+                    Some(Ok(None)) => {
+                        view! {
+                            <p class="gc-empty">
+                                "Pas encore connecté. "
+                                <a href="/api/auth/login" rel="external">
+                                    "Se connecter avec Discord"
+                                </a>
                                 "."
-                            </div>
-                        });
-                        view! { <>{banner} {card}</> }.into_any()
+                            </p>
+                        }
+                            .into_any()
                     }
+                    Some(Ok(Some(sheet))) => view! { <SheetBody sheet /> }.into_any(),
                 }}
             </Suspense>
         </section>
     }
 }
+
+/// Kept so existing imports of `CurrentUserView` keep resolving; the
+/// canonical shape now lives in [`crate::api::MeView`].
+pub type CurrentUserView = MeView;

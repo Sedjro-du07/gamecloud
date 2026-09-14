@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, Meta, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
-    StaticSegment,
+    ParamSegment, StaticSegment,
 };
 
 use crate::{
@@ -14,7 +14,11 @@ use crate::{
         leaderboard::LeaderboardPage,
         onboarding::{OnboardingEmailPage, OnboardingVerifyPage},
         profile::ProfilePage,
+        project_detail::ProjectDetailPage,
         projects::ProjectsPage,
+        quests::QuestsPage,
+        scan::ScanPage,
+        tracks::TrackPickerPage,
     },
 };
 
@@ -61,11 +65,17 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("") view=HomePage />
                     <Route path=StaticSegment("profile") view=ProfilePage />
                     <Route path=StaticSegment("projects") view=ProjectsPage />
+                    <Route path=(StaticSegment("projects"), ParamSegment("id"))
+                           view=ProjectDetailPage />
                     <Route path=StaticSegment("leaderboard") view=LeaderboardPage />
+                    <Route path=StaticSegment("quests") view=QuestsPage />
+                    <Route path=StaticSegment("scan") view=ScanPage />
                     <Route path=(StaticSegment("onboarding"), StaticSegment("email"))
                            view=OnboardingEmailPage />
                     <Route path=(StaticSegment("onboarding"), StaticSegment("verify"))
                            view=OnboardingVerifyPage />
+                    <Route path=(StaticSegment("onboarding"), StaticSegment("tracks"))
+                           view=TrackPickerPage />
                 </Routes>
             </HudShell>
         </Router>

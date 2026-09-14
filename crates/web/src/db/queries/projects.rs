@@ -99,6 +99,17 @@ pub struct ContributorView {
     pub role_in_project: Option<String>,
 }
 
+/// The detail-only columns, kept out of [`ProjectSummary`] so listings
+/// do not drag long descriptions and image arrays around.
+#[derive(Debug, sqlx::FromRow)]
+struct ProjectExtra {
+    long_description: Option<String>,
+    github_repo_url: Option<String>,
+    itch_url: Option<String>,
+    screenshots: Vec<String>,
+    video_url: Option<String>,
+}
+
 /// Everything the detail page needs.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectDetail {
@@ -186,16 +197,15 @@ pub async fn detail(pool: &PgPool, id: Uuid) -> WebResult<ProjectDetail> {
     .await?
     .ok_or(WebError::NotFound)?;
 
-    let extra: (Option<String>, Option<String>, Option<String>, Vec<String>, Option<String>) =
-        sqlx::query_as(
-            r#"
-            SELECT long_description, github_repo_url, itch_url, screenshots, video_url
-              FROM projects WHERE id = $1
-            "#,
-        )
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
+    let extra: ProjectExtra = sqlx::query_as(
+        r#"
+        SELECT long_description, github_repo_url, itch_url, screenshots, video_url
+          FROM projects WHERE id = $1
+        "#,
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
 
     let contributors = sqlx::query_as::<_, ContributorView>(
         r#"
@@ -233,11 +243,11 @@ pub async fn detail(pool: &PgPool, id: Uuid) -> WebResult<ProjectDetail> {
 
     Ok(ProjectDetail {
         summary,
-        long_description: extra.0,
-        github_repo_url: extra.1,
-        itch_url: extra.2,
-        screenshots: extra.3,
-        video_url: extra.4,
+        long_description: extra.long_description,
+        github_repo_url: extra.github_repo_url,
+        itch_url: extra.itch_url,
+        screenshots: extra.screenshots,
+        video_url: extra.video_url,
         contributors,
         validations,
     })
@@ -685,54 +695,15 @@ pub async fn release(
     .execute(&mut *tx)
     .await?;
 
-    // --- pay the contributors ----------------------------------------
-    let contributors: Vec<(Uuid, String)> = sqlx::query_as(
-        "SELECT user_id, track FROM project_contributors WHERE project_id = $1",
+    let (total_xp, paid) = pay_out(
+        &mut tx,
+        announce_channel,
+        project_id,
+        &name,
+        &primary_track,
+        epitech_level.as_deref(),
     )
-    .bind(project_id)
-    .fetch_all(&mut *tx)
     .await?;
-
-    let award = contributor_award(epitech_level.as_deref());
-    let description = format!("Projet publié : {name}");
-    let mut total_xp = 0_i32;
-    let mut paid = BTreeSet::new();
-
-    for (user_id, track) in &contributors {
-        let outcome = xp::grant_in_tx(
-            &mut tx,
-            announce_channel,
-            &XpGrant::new(*user_id, award, XpSource::Project)
-                .describe(&description)
-                .in_track(track),
-        )
-        .await?;
-        total_xp = total_xp.saturating_add(outcome.awarded);
-        paid.insert(*user_id);
-    }
-
-    // --- pay the primary track's Lead --------------------------------
-    let leads: Vec<Uuid> = sqlx::query_scalar(
-        r#"
-        SELECT user_id FROM track_memberships
-         WHERE track = $1 AND track_role = 'Lead'
-        "#,
-    )
-    .bind(&primary_track)
-    .fetch_all(&mut *tx)
-    .await?;
-
-    for lead in leads {
-        let outcome = xp::grant_in_tx(
-            &mut tx,
-            announce_channel,
-            &XpGrant::new(lead, XP_TRACKLEAD_RELEASED, XpSource::Project)
-                .describe(&format!("Supervision : {name}"))
-                .in_track(&primary_track),
-        )
-        .await?;
-        total_xp = total_xp.saturating_add(outcome.awarded);
-    }
 
     // --- Hall of Fame -------------------------------------------------
     let boss_defeated_by: Vec<Uuid> = paid.iter().copied().collect();
@@ -779,6 +750,72 @@ pub async fn release(
         contributors_paid: paid.len(),
         total_xp,
     })
+}
+
+/// Credit every contributor and the primary track's Lead.
+///
+/// Returns the total XP distributed and the distinct members paid.
+/// Extracted from [`release`] so that function reads as the sequence of
+/// stages it is, rather than one long block.
+async fn pay_out(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    announce_channel: Option<u64>,
+    project_id: Uuid,
+    name: &str,
+    primary_track: &str,
+    epitech_level: Option<&str>,
+) -> WebResult<(i32, BTreeSet<Uuid>)> {
+    let contributors: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT user_id, track FROM project_contributors WHERE project_id = $1",
+    )
+    .bind(project_id)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let award = contributor_award(epitech_level);
+    let description = format!("Projet publié : {name}");
+    let mut total_xp = 0_i32;
+    let mut paid = BTreeSet::new();
+
+    for (user_id, track) in &contributors {
+        let outcome = xp::grant_in_tx(
+            tx,
+            announce_channel,
+            &XpGrant::new(*user_id, award, XpSource::Project)
+                .describe(&description)
+                .in_track(track),
+        )
+        .await?;
+        total_xp = total_xp.saturating_add(outcome.awarded);
+        paid.insert(*user_id);
+    }
+
+    // The Lead of the primary track earns the oversight bonus. There is
+    // normally exactly one, but the schema does not forbid two, so we
+    // pay whoever holds the role rather than assuming.
+    let leads: Vec<Uuid> = sqlx::query_scalar(
+        r#"
+        SELECT user_id FROM track_memberships
+         WHERE track = $1 AND track_role = 'Lead'
+        "#,
+    )
+    .bind(primary_track)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    for lead in leads {
+        let outcome = xp::grant_in_tx(
+            tx,
+            announce_channel,
+            &XpGrant::new(lead, XP_TRACKLEAD_RELEASED, XpSource::Project)
+                .describe(&format!("Supervision : {name}"))
+                .in_track(primary_track),
+        )
+        .await?;
+        total_xp = total_xp.saturating_add(outcome.awarded);
+    }
+
+    Ok((total_xp, paid))
 }
 
 #[cfg(test)]
