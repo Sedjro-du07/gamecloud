@@ -169,6 +169,39 @@ impl TrackRole {
             TrackRole::Lead => "Lead",
         }
     }
+
+    /// The title shown for a stored `track_role` value.
+    ///
+    /// Progress inside a track is a title, not a number: "Relecteur en
+    /// Audio" says what somebody may do there; "niveau 7" says nothing.
+    /// Takes the stored string because every caller reads it straight
+    /// out of `track_memberships`.
+    #[must_use]
+    pub fn title_of(stored: &str) -> &'static str {
+        match stored {
+            "Lead" => "👑 Responsable",
+            "CoLead" => "⚔️ Co-responsable",
+            "Mentor" => "🧭 Mentor",
+            "Reviewer" => "🔍 Relecteur",
+            "Contributor" => "🔨 Contributeur",
+            _ => "👁️ Observateur",
+        }
+    }
+
+    /// The next title earned by track XP for a stored `track_role`.
+    ///
+    /// Returns `(next title, XP the current title starts at, XP the next
+    /// one starts at)`, which is exactly what a progress bar needs.
+    /// `None` from Mentor up: past Mentor, titles are appointments, not XP.
+    #[must_use]
+    pub fn next_milestone(stored: &str) -> Option<(&'static str, i64, i64)> {
+        match stored {
+            "Observer" => Some((Self::title_of("Contributor"), 0, 100)),
+            "Contributor" => Some((Self::title_of("Reviewer"), 100, 300)),
+            "Reviewer" => Some((Self::title_of("Mentor"), 300, 500)),
+            _ => None,
+        }
+    }
 }
 
 // ===========================================================================
@@ -213,6 +246,12 @@ pub enum BureauRole {
     RecruitmentOfficer,
     /// Ambassadeur Suprême — PR manager.
     PrManager,
+    /// Membre du Bureau — a Bureau member whose office is not decided yet.
+    ///
+    /// It keeps the Bureau's channels open to them and nothing else: no
+    /// admin panel, no Bureau meetings, no executive right. It exists so
+    /// that assigning offices is not a race against people losing access.
+    Provisional,
 }
 
 impl BureauRole {
@@ -236,11 +275,12 @@ impl BureauRole {
             BureauRole::AssistantModerator => "🗡️ Garde",
             BureauRole::RecruitmentOfficer => "🎯 Chasseur de Talents",
             BureauRole::PrManager => "🤝 Ambassadeur Suprême",
+            BureauRole::Provisional => "🏛 Membre du Bureau",
         }
     }
 
-    /// Every bureau role.
-    pub const ALL: [BureauRole; 16] = [
+    /// Every bureau role, the provisional one last.
+    pub const ALL: [BureauRole; 17] = [
         BureauRole::President,
         BureauRole::VicePresident,
         BureauRole::Secretary,
@@ -257,6 +297,7 @@ impl BureauRole {
         BureauRole::AssistantModerator,
         BureauRole::RecruitmentOfficer,
         BureauRole::PrManager,
+        BureauRole::Provisional,
     ];
 
     /// Stable string identifier, as stored in `users.bureau_role`.
@@ -279,7 +320,15 @@ impl BureauRole {
             BureauRole::AssistantModerator => "AssistantModerator",
             BureauRole::RecruitmentOfficer => "RecruitmentOfficer",
             BureauRole::PrManager => "PrManager",
+            BureauRole::Provisional => "Provisional",
         }
+    }
+
+    /// Whether this is an actual office, as opposed to the provisional
+    /// placeholder that only keeps the Bureau's channels open.
+    #[must_use]
+    pub const fn holds_office(self) -> bool {
+        !matches!(self, BureauRole::Provisional)
     }
 
     /// Parse from the canonical string identifier.
@@ -398,6 +447,30 @@ impl GlobalRank {
         }
     }
 
+    /// The next rank earned by XP, and the total XP it starts at.
+    ///
+    /// `None` at the top. The gated ranks (`Pending`, `Visitor`,
+    /// `Initiate`) all lead to `Apprentice`: what they wait on is not XP,
+    /// but XP is what a progress bar can show.
+    #[must_use]
+    pub fn next_milestone(self) -> Option<(GlobalRank, i64)> {
+        let i = Self::ALL.iter().position(|r| *r == self)?;
+        Self::ALL[i + 1..]
+            .iter()
+            .zip(&RANK_THRESHOLDS[i + 1..])
+            .find(|(_, (xp, _))| *xp > 0)
+            .map(|(rank, (xp, _))| (*rank, *xp))
+    }
+
+    /// Total XP at which this rank starts.
+    #[must_use]
+    pub fn floor_xp(self) -> i64 {
+        Self::ALL
+            .iter()
+            .position(|r| *r == self)
+            .map_or(0, |i| RANK_THRESHOLDS[i].0)
+    }
+
     /// All ranks, lowest first.
     pub const ALL: [GlobalRank; 10] = [
         GlobalRank::Pending,
@@ -443,6 +516,75 @@ impl GlobalRank {
             GlobalRank::Legend => "Legend",
             GlobalRank::Myth => "Myth",
         }
+    }
+}
+
+#[cfg(test)]
+mod provisional_tests {
+    use super::BureauRole;
+
+    #[test]
+    fn the_provisional_role_round_trips_and_is_not_an_office() {
+        assert_eq!(BureauRole::parse("Provisional"), Some(BureauRole::Provisional));
+        assert!(!BureauRole::Provisional.holds_office());
+        assert!(!BureauRole::Provisional.is_executive());
+        assert!(BureauRole::Secretary.holds_office());
+    }
+
+    #[test]
+    fn office_titles_stay_distinct() {
+        // Discord roles are found by title, so two sharing one would be
+        // indistinguishable.
+        let mut titles: Vec<&str> = BureauRole::ALL.iter().map(|b| b.title()).collect();
+        let before = titles.len();
+        titles.sort_unstable();
+        titles.dedup();
+        assert_eq!(titles.len(), before);
+    }
+}
+
+#[cfg(test)]
+mod milestone_tests {
+    use super::{GlobalRank, TrackRole};
+
+    #[test]
+    fn the_next_title_skips_the_gated_ranks() {
+        assert_eq!(
+            GlobalRank::Pending.next_milestone(),
+            Some((GlobalRank::Apprentice, 150))
+        );
+        assert_eq!(
+            GlobalRank::Apprentice.next_milestone(),
+            Some((GlobalRank::JuniorDev, 400))
+        );
+        assert_eq!(GlobalRank::Myth.next_milestone(), None);
+    }
+
+    #[test]
+    fn a_rank_starts_at_its_threshold() {
+        assert_eq!(GlobalRank::Initiate.floor_xp(), 0);
+        assert_eq!(GlobalRank::Expert.floor_xp(), 2_500);
+    }
+
+    #[test]
+    fn every_stored_track_role_has_a_title() {
+        for stored in ["Observer", "Contributor", "Reviewer", "Mentor", "CoLead", "Lead"] {
+            assert!(!TrackRole::title_of(stored).is_empty());
+        }
+        assert_eq!(TrackRole::title_of("Reviewer"), "🔍 Relecteur");
+    }
+
+    #[test]
+    fn track_milestones_match_the_auto_thresholds() {
+        // The bar must agree with `from_track_xp`, or it would promise a
+        // title at an XP total that does not grant it.
+        for stored in ["Observer", "Contributor", "Reviewer"] {
+            let (_, floor, target) = TrackRole::next_milestone(stored).unwrap();
+            assert_eq!(TrackRole::from_track_xp(floor).as_str(), stored);
+            assert_ne!(TrackRole::from_track_xp(target).as_str(), stored);
+        }
+        assert_eq!(TrackRole::next_milestone("Mentor"), None);
+        assert_eq!(TrackRole::next_milestone("Lead"), None);
     }
 }
 
@@ -665,6 +807,23 @@ impl Authority {
                 Some(BureauRole::President | BureauRole::VicePresident)
             ),
             Action::GenerateQrToken => self.is_event_manager() || self.is_executive(),
+            // A track Lead owns their track's sessions; anything that
+            // concerns the whole association stays with the people whose
+            // job it is to run it.
+            Action::ManageEvents(scope) => match scope {
+                EventScope::Association => self.is_event_manager() || self.is_executive(),
+                EventScope::Track(t) => {
+                    self.is_event_manager()
+                        || self.is_executive()
+                        || self.has_track_role(t, TrackRole::Lead)
+                }
+                // Any office-holder may call a Bureau meeting. The
+                // Bureau is small and self-governing; making its own
+                // members ask the President to book a room would be
+                // ceremony, not control — and nobody outside it can see
+                // these events anyway.
+                EventScope::Bureau => self.bureau.is_some_and(BureauRole::holds_office),
+            },
             Action::GrantManualXp => self.is_executive(),
             Action::ValidateResource => matches!(
                 self.bureau,
@@ -674,7 +833,7 @@ impl Authority {
                 self.bureau,
                 Some(BureauRole::Moderator | BureauRole::AssistantModerator)
             ) || self.is_executive(),
-            Action::AccessAdminPanel => self.bureau.is_some(),
+            Action::AccessAdminPanel => self.bureau.is_some_and(BureauRole::holds_office),
             Action::ViewAuditLogs => self.is_executive(),
         }
     }
@@ -685,6 +844,65 @@ impl Authority {
             self.bureau,
             Some(BureauRole::EventManager | BureauRole::AssistantEventManager)
         )
+    }
+}
+
+/// Who an event is for.
+///
+/// Not `Option<Track>`: "the whole association" and "the Bureau only"
+/// are both track-less, but they are opposites — one is the most public
+/// thing on the calendar and the other must not appear on an ordinary
+/// member's calendar at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventScope {
+    /// Everybody in the association.
+    Association,
+    /// One discipline.
+    Track(Track),
+    /// The Bureau, and nobody else.
+    Bureau,
+}
+
+impl EventScope {
+    /// Parse the stored `audience` column plus its optional track.
+    ///
+    /// Mirrors the `events_track_matches_audience` CHECK exactly, in
+    /// both directions: a `Track` scope must name a track, and every
+    /// other scope must not. Accepting a stray track on a Bureau meeting
+    /// would let it be filed under a discipline and surface on that
+    /// track's agenda — precisely the leak the column exists to prevent.
+    ///
+    /// Returns `None` for any combination the schema forbids, so a row
+    /// that somehow broke its constraint is refused rather than silently
+    /// treated as public.
+    #[must_use]
+    pub fn parse(audience: &str, track: Option<&str>) -> Option<Self> {
+        let named = track.map(str::trim).filter(|t| !t.is_empty());
+        match audience {
+            "Association" if named.is_none() => Some(Self::Association),
+            "Bureau" if named.is_none() => Some(Self::Bureau),
+            "Track" => Track::parse(named?).map(Self::Track),
+            _ => None,
+        }
+    }
+
+    /// The `audience` value this scope stores as.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Association => "Association",
+            Self::Track(_) => "Track",
+            Self::Bureau => "Bureau",
+        }
+    }
+
+    /// The track, when the scope has one.
+    #[must_use]
+    pub const fn track(self) -> Option<Track> {
+        match self {
+            Self::Track(t) => Some(t),
+            _ => None,
+        }
     }
 }
 
@@ -722,6 +940,11 @@ pub enum Action {
     AssignBureauRole,
     /// Create QR codes for events.
     GenerateQrToken,
+    /// Put an event on the calendar, change it, or call it off.
+    ///
+    /// Carries the event's scope, because who may touch an event depends
+    /// entirely on who it is for.
+    ManageEvents(EventScope),
     /// Manually grant XP (audited).
     GrantManualXp,
     /// Validate a community-submitted resource.
@@ -741,6 +964,42 @@ pub enum Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scope_round_trips_through_its_stored_form() {
+        for scope in [
+            EventScope::Association,
+            EventScope::Bureau,
+            EventScope::Track(Track::Audio),
+        ] {
+            let track = scope.track().map(Track::as_str);
+            assert_eq!(EventScope::parse(scope.as_str(), track), Some(scope));
+        }
+    }
+
+    #[test]
+    fn a_scope_refuses_the_combinations_the_schema_refuses() {
+        // A track on something that is not a track event, and a track
+        // event with no track: both are rows the CHECK constraint would
+        // reject, and both must be rejected here too.
+        assert_eq!(EventScope::parse("Association", Some("Audio")), None);
+        assert_eq!(EventScope::parse("Bureau", Some("Audio")), None);
+        assert_eq!(EventScope::parse("Track", None), None);
+        assert_eq!(EventScope::parse("Track", Some("Cooking")), None);
+        assert_eq!(EventScope::parse("Everyone", None), None);
+    }
+
+    #[test]
+    fn a_blank_track_counts_as_no_track() {
+        // The form submits an empty string rather than omitting the
+        // field, so "   " must read as absent and not as a track named
+        // three spaces.
+        assert_eq!(
+            EventScope::parse("Association", Some("   ")),
+            Some(EventScope::Association)
+        );
+        assert_eq!(EventScope::parse("Track", Some("  ")), None);
+    }
 
     #[test]
     fn track_role_ordering() {

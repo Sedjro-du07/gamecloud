@@ -75,6 +75,17 @@ pub fn build(state: AppState) -> Router {
     Router::new()
         .merge(routes::health::router())
         .nest("/api", api)
+        // Leptos server functions. They need their own prefix: `/api` is
+        // the REST API, and mounting this catch-all there would shadow
+        // every hand-written endpoint. Without this route the browser has
+        // nowhere to fetch from, so every page that loads data stays on
+        // its "Chargement…" fallback forever — which is exactly what it
+        // did before this line existed.
+        .route(
+            "/_fn/{*fn_name}",
+            axum::routing::get(leptos_axum::handle_server_fns)
+                .post(leptos_axum::handle_server_fns),
+        )
         .leptos_routes_with_context(
             &state,
             routes,

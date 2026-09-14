@@ -1,6 +1,9 @@
 //! `/profil` — shows the user's GameCloud profile card.
 
-use gamecloud_shared::{roles::GlobalRank, xp::streak_multiplier};
+use gamecloud_shared::{
+    roles::{BureauRole, GlobalRank, Track, TrackRole},
+    xp::streak_multiplier,
+};
 use poise::serenity_prelude as serenity;
 
 use crate::state::Context;
@@ -14,9 +17,9 @@ pub async fn profil(
     let target = user.as_ref().unwrap_or_else(|| ctx.author());
     let discord_id = target.id.to_string();
 
-    let row: Option<(String, i64, i32, String, Option<String>, i32)> = sqlx::query_as(
+    let row: Option<(i64, String, Option<String>, Option<String>, i32)> = sqlx::query_as(
         r#"
-        SELECT discord_id, xp_total, level, global_rank, current_title, streak_days
+        SELECT xp_total, global_rank, current_title, bureau_role, streak_days
         FROM users WHERE discord_id = $1
         "#,
     )
@@ -24,27 +27,63 @@ pub async fn profil(
     .fetch_optional(ctx.data().pool())
     .await?;
 
-    let Some((_, xp, level, rank, title, streak)) = row else {
+    let Some((xp, rank, title, bureau, streak)) = row else {
         ctx.reply("Cet utilisateur n'a pas encore de compte GameCloud.")
             .await?;
         return Ok(());
     };
 
+    let tracks: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT m.track, m.track_role
+        FROM track_memberships m JOIN users u ON u.id = m.user_id
+        WHERE u.discord_id = $1 AND m.left_at IS NULL
+        ORDER BY array_position(
+                     ARRAY['Lead', 'CoLead', 'Mentor', 'Reviewer', 'Contributor', 'Observer'],
+                     m.track_role),
+                 m.track_xp DESC
+        "#,
+    )
+    .bind(&discord_id)
+    .fetch_all(ctx.data().pool())
+    .await?;
+
     let rank_enum = GlobalRank::parse(&rank);
     let title_str = title.as_deref().unwrap_or(rank_enum.title());
     let color = ring_color_to_u32(rank_enum.ring_color());
 
-    let embed = serenity::CreateEmbed::new()
+    // Titles, not numbers, and every one of them, most important first:
+    // the Bureau office, the global title, then each track's title.
+    let mut embed = serenity::CreateEmbed::new()
         .title(format!("Profil de {}", target.name))
         .description(title_str)
-        .color(color)
-        .field("Rang", rank_enum.title(), true)
-        .field("Niveau", level.to_string(), true)
+        .color(color);
+    if let Some(office) = bureau.as_deref().and_then(BureauRole::parse) {
+        embed = embed.field("Bureau", office.title(), true);
+    }
+    embed = embed
+        .field("Titre", rank_enum.title(), true)
         .field("XP totale", xp.to_string(), true)
         .field("Série", streak_label(streak), true);
 
+    if !tracks.is_empty() {
+        embed = embed.field("Tracks", tracks_label(&tracks), false);
+    }
+
     ctx.send(poise::CreateReply::default().embed(embed)).await?;
     Ok(())
+}
+
+/// One line per track: the discipline and the title held in it.
+fn tracks_label(tracks: &[(String, String)]) -> String {
+    tracks
+        .iter()
+        .map(|(track, role)| {
+            let emoji = Track::parse(track).map_or("•", Track::emoji);
+            format!("{emoji} {track} — {}", TrackRole::title_of(role))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn ring_color_to_u32(hex: &str) -> u32 {
@@ -68,7 +107,7 @@ fn streak_label(streak: i32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ring_color_to_u32, streak_label};
+    use super::{ring_color_to_u32, streak_label, tracks_label};
 
     #[test]
     fn a_cold_streak_says_so() {
@@ -96,5 +135,12 @@ mod tests {
     #[test]
     fn a_bad_color_falls_back_to_brand_purple() {
         assert_eq!(ring_color_to_u32("nonsense"), 0x9c4dff);
+    }
+
+    #[test]
+    fn tracks_show_titles_not_levels() {
+        let label = tracks_label(&[("Audio".into(), "Reviewer".into())]);
+        assert!(label.contains("Relecteur"));
+        assert!(!label.to_lowercase().contains("niveau"));
     }
 }

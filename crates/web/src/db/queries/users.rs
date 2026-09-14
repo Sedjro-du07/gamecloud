@@ -15,7 +15,7 @@ use crate::error::{WebError, WebResult};
 /// Propagates database errors.
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> WebResult<Option<UserRecord>> {
     let row = sqlx::query_as::<_, UserRecord>(
-        "SELECT id, discord_id, github_username, email, email_verified, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, sessions_valid_from, last_activity_at, created_at FROM users WHERE id = $1",
+        "SELECT id, discord_id, discord_username, discord_global_name, github_username, email, email_verified, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, sessions_valid_from, last_activity_at, created_at FROM users WHERE id = $1",
     )
         .bind(id)
         .fetch_optional(pool)
@@ -29,7 +29,7 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> WebResult<Option<UserRecord>
 /// Propagates database errors.
 pub async fn find_by_discord_id(pool: &PgPool, discord_id: &str) -> WebResult<Option<UserRecord>> {
     let row = sqlx::query_as::<_, UserRecord>(
-        "SELECT id, discord_id, github_username, email, email_verified, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, sessions_valid_from, last_activity_at, created_at FROM users WHERE discord_id = $1",
+        "SELECT id, discord_id, discord_username, discord_global_name, github_username, email, email_verified, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, sessions_valid_from, last_activity_at, created_at FROM users WHERE discord_id = $1",
     )
         .bind(discord_id)
         .fetch_optional(pool)
@@ -44,25 +44,78 @@ pub async fn find_by_discord_id(pool: &PgPool, discord_id: &str) -> WebResult<Op
 /// Propagates database errors.
 pub async fn upsert_from_discord(
     pool: &PgPool,
-    discord_id: &str,
-    avatar_url: Option<&str>,
+    identity: &DiscordIdentity<'_>,
 ) -> WebResult<UserRecord> {
     let row = sqlx::query_as::<_, UserRecord>(
         r#"
-        INSERT INTO users (discord_id, avatar_url)
-        VALUES ($1, $2)
+        INSERT INTO users (discord_id, discord_username, discord_global_name, avatar_url)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (discord_id) DO UPDATE
-            SET avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url)
-        RETURNING id, discord_id, github_username, email, email_verified, avatar_url,
+            SET avatar_url          = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
+                discord_username    = COALESCE(EXCLUDED.discord_username, users.discord_username),
+                discord_global_name = COALESCE(EXCLUDED.discord_global_name, users.discord_global_name)
+        RETURNING id, discord_id, discord_username, discord_global_name,
+                  github_username, email, email_verified, avatar_url,
                   avatar_custom_url, xp_total, level, global_rank, bureau_role,
                   current_title, streak_days, sessions_valid_from, last_activity_at, created_at
         "#,
     )
-    .bind(discord_id)
-    .bind(avatar_url)
+    .bind(identity.discord_id)
+    .bind(identity.username)
+    .bind(identity.global_name)
+    .bind(identity.avatar_url)
     .fetch_one(pool)
     .await?;
     Ok(row)
+}
+
+/// What a Discord login tells us about a member.
+///
+/// Grouped rather than passed as four bare `&str`s, because three of
+/// them are optional strings and a caller that swapped the handle and
+/// the display name would produce a plausible-looking but wrong row.
+#[derive(Debug, Clone, Copy)]
+pub struct DiscordIdentity<'a> {
+    /// Snowflake, the only field Discord always supplies.
+    pub discord_id: &'a str,
+    /// Globally unique handle.
+    pub username: Option<&'a str>,
+    /// Display name the member chose, when they set one.
+    pub global_name: Option<&'a str>,
+    /// CDN avatar URL built from the avatar hash.
+    pub avatar_url: Option<&'a str>,
+}
+
+/// Record the Discord names the bot sees for a member.
+///
+/// The bot meets members the platform has never had a login from — it
+/// reads the whole guild — so this fills in names without touching
+/// anything else on the row.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn set_discord_names(
+    pool: &PgPool,
+    discord_id: &str,
+    username: &str,
+    global_name: Option<&str>,
+) -> WebResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE users
+           SET discord_username    = $2,
+               discord_global_name = COALESCE($3, users.discord_global_name)
+         WHERE discord_id = $1
+           AND (users.discord_username    IS DISTINCT FROM $2
+             OR users.discord_global_name IS DISTINCT FROM COALESCE($3, users.discord_global_name))
+        "#,
+    )
+    .bind(discord_id)
+    .bind(username)
+    .bind(global_name)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Build the `Authority` envelope for a user: rank, bureau role, and
@@ -191,7 +244,8 @@ pub async fn update_profile(
                avatar_custom_url = COALESCE($3, avatar_custom_url),
                github_username   = COALESCE($4, github_username)
          WHERE id = $1
-        RETURNING id, discord_id, github_username, email, email_verified, avatar_url,
+        RETURNING id, discord_id, discord_username, discord_global_name,
+                  github_username, email, email_verified, avatar_url,
                   avatar_custom_url, xp_total, level, global_rank, bureau_role,
                   current_title, streak_days, sessions_valid_from, last_activity_at, created_at
         "#,
@@ -241,6 +295,8 @@ pub async fn set_bureau_role(
         .bind(role)
         .execute(pool)
         .await?;
+    // The office role on Discord follows the platform, immediately.
+    crate::services::notifications::request_role_sync(pool).await?;
     Ok(())
 }
 
@@ -303,6 +359,20 @@ pub async fn find_by_reference(pool: &PgPool, reference: &str) -> WebResult<Opti
         .fetch_optional(pool)
         .await?;
     Ok(found)
+}
+
+/// Tracks whose unpublished work a member may see.
+///
+/// Derived from the permission matrix rather than from the membership
+/// table directly, so the answer stays the one `Authority::can` would
+/// give and cannot drift from it.
+#[must_use]
+pub fn visible_tracks(authority: &Authority) -> Vec<String> {
+    Track::ALL
+        .iter()
+        .filter(|t| authority.can(gamecloud_shared::roles::Action::ViewTrackInternalProjects(**t)))
+        .map(|t| t.as_str().to_string())
+        .collect()
 }
 
 #[cfg(test)]

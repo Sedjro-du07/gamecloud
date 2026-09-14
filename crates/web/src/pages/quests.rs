@@ -5,12 +5,13 @@
 
 use leptos::prelude::*;
 
-use crate::{components::quest_card::QuestCard, server_fns::get_quests};
+use crate::{components::quest_card::QuestCard, server_fns::{get_me, get_quests}};
 
 /// Quests page.
 #[component]
 pub fn QuestsPage() -> impl IntoView {
     let quests = Resource::new(|| (), |()| async { get_quests().await });
+    let me = Resource::new(|| (), |()| async { get_me().await });
 
     view! {
         <section class="gc-quests">
@@ -20,6 +21,28 @@ pub fn QuestsPage() -> impl IntoView {
                  toutes seules : continue à pousser du code, à venir aux
                  sessions et à relire les projets des autres."
             </p>
+
+            // Opening a quest lives in the Bureau panel, next to the
+            // other things only the Bureau does. Saying so here saves a
+            // member of the Bureau hunting for a button on the page
+            // where quests are actually read.
+            <Suspense fallback=|| ()>
+                {move || {
+                    me.get()
+                        .and_then(Result::ok)
+                        .flatten()
+                        .filter(|u| u.can_access_admin)
+                        .map(|_| {
+                            view! {
+                                <p class="gc-quests__bureau">
+                                    "Vous êtes du Bureau : "
+                                    <a class="gc-link" href="/admin">"ouvrez une quête depuis le panneau Bureau"</a>
+                                    "."
+                                </p>
+                            }
+                        })
+                }}
+            </Suspense>
 
             <Suspense fallback=move || {
                 view! { <p class="gc-empty">"Chargement des quêtes…"</p> }

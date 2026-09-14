@@ -157,6 +157,8 @@ impl Config {
                 hall_of_fame: channel("DISCORD_HALL_CHANNEL_ID")?,
                 review_queue: channel("DISCORD_REVIEWS_CHANNEL_ID")?,
                 journal: channel("DISCORD_JOURNAL_CHANNEL_ID")?,
+                bureau: channel("DISCORD_BUREAU_CHANNEL_ID")?,
+                presences: channel("DISCORD_PRESENCES_CHANNEL_ID")?,
                 tracks: track_channels(),
             },
 
@@ -189,8 +191,15 @@ pub struct DiscordChannels {
     /// Work waiting for a validator: projects in review, submitted
     /// resources.
     pub review_queue: Option<u64>,
-    /// Audit trail. Bureau-only.
+    /// Audit trail. Bureau-only; falls back to `bureau`, never to a
+    /// public channel.
     pub journal: Option<u64>,
+    /// The Bureau's own channel. Meetings called for the Bureau are
+    /// announced here and nowhere else.
+    pub bureau: Option<u64>,
+    /// Attendance recorded by QR scan. No fallback: a line per scan would
+    /// drown the general feed.
+    pub presences: Option<u64>,
     /// One channel per track, in [`Track::ALL`] order. A review request
     /// lands in the channel of the discipline being asked, which is the
     /// difference between a queue nobody reads and a question addressed
@@ -222,7 +231,20 @@ impl DiscordChannels {
             "ProjectReleased" => self.hall_of_fame.or(self.announce),
             "QuestOpened" => self.quests.or(self.announce),
             "SeasonStandings" => self.leaderboard.or(self.announce),
-            "AuditEntry" => self.journal,
+            // The Bureau's own channel is private too, so the journal may
+            // share it: one Bureau channel on the server, not two.
+            "AuditEntry" => self.journal.or(self.bureau),
+            // A Bureau meeting goes to the Bureau's own channel and
+            // nowhere else. No fallback on purpose: announcing a private
+            // meeting in the public channel because one id happens to be
+            // unset would be worse than not announcing it at all.
+            "BureauMeeting" | "BureauMeetingCancelled" => self.bureau,
+            "AttendanceRecorded" => self.presences,
+            // An event concerning one track belongs in that track's
+            // channel, where the people it concerns already are.
+            "EventScheduled" | "EventCancelled" => track
+                .and_then(|t| self.for_track(t))
+                .or(self.announce),
             "ProjectSubmitted" | "ResourceSubmitted" => track
                 .and_then(|t| self.for_track(t))
                 .or(self.review_queue)

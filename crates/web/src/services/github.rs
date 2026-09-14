@@ -481,6 +481,91 @@ fn fold_accent(ch: char) -> String {
     }
 }
 
+/// Everything provisioning a repository needs to know.
+///
+/// Grouped so the two creation paths — the REST endpoint and the
+/// Leptos server function — pass the same thing, and so adding a field
+/// later is a change in one place.
+#[derive(Debug, Clone, Copy)]
+pub struct NewRepo<'a> {
+    /// The project the repository belongs to.
+    pub project_id: uuid::Uuid,
+    /// Project name; slugified into the repository name.
+    pub name: &'a str,
+    /// One-line description, copied to the repository.
+    pub description: Option<&'a str>,
+    /// The author's GitHub login, when they have linked one.
+    pub author_login: Option<&'a str>,
+}
+
+/// Create the project's repository, add the author, install the webhook.
+///
+/// Returns the repository URL when everything that matters succeeded.
+/// Each step is independent: a repository with no webhook is still more
+/// useful than no repository, so a webhook failure does not discard it.
+///
+/// Lives here rather than beside one of its callers because a project
+/// can be created from two places, and when this was a private helper
+/// of the REST route the Leptos path silently created projects with no
+/// repository at all — while its own documentation promised one.
+pub async fn provision_project_repo(
+    state: &crate::state::AppState,
+    new: &NewRepo<'_>,
+) -> Option<String> {
+    let github = state.github()?;
+
+    let repo = match github.create_repo(new.name, new.description).await {
+        Ok(repo) => repo,
+        Err(e) => {
+            tracing::warn!(error = %e, project = %new.project_id, "github: repository not created");
+            return None;
+        }
+    };
+
+    // Push access for the author, when they have linked a GitHub login.
+    // Without one there is nobody to add — and linking it is also what
+    // makes their commits pay XP, so the profile page nags for it.
+    if let Some(login) = new.author_login {
+        if let Err(e) = github.add_collaborator(&repo.name, login).await {
+            tracing::warn!(error = %e, login, "github: collaborator not added");
+        }
+    } else {
+        tracing::info!(
+            project = %new.project_id,
+            "github: author has no linked GitHub login; repository left without a collaborator"
+        );
+    }
+
+    // The webhook is what makes commits in this repository pay XP. A
+    // localhost origin can never receive one, so do not install a hook
+    // that would only ever fail.
+    let cfg = state.config();
+    let origin = &cfg.public_origin;
+    match (&cfg.github_webhook_secret, origin.contains("localhost")) {
+        (Some(secret), false) => {
+            let callback = format!("{}/api/webhooks/github", origin.trim_end_matches('/'));
+            if let Err(e) = github
+                .add_webhook(&repo.name, &callback, &String::from_utf8_lossy(secret))
+                .await
+            {
+                tracing::warn!(error = %e, repo = %repo.name, "github: webhook not installed");
+            }
+        }
+        (_, true) => tracing::info!(
+            "github: PUBLIC_ORIGIN is localhost, skipping webhook (it could never be delivered)"
+        ),
+        (None, _) => tracing::info!("github: GITHUB_WEBHOOK_SECRET unset, skipping webhook"),
+    }
+
+    if let Err(e) =
+        crate::db::queries::projects::set_repo_url(state.pool(), new.project_id, &repo.html_url)
+            .await
+    {
+        tracing::warn!(error = %e, "github: repository created but URL not recorded");
+    }
+    Some(repo.html_url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

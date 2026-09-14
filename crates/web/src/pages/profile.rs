@@ -1,7 +1,7 @@
 //! Profile page — the character sheet.
 //!
-//! Everything the platform knows about a member, in one place: rank and
-//! level, the streak that multiplies their XP, their tracks, their
+//! Everything the platform knows about a member, in one place: rank
+//! title, the streak that multiplies their XP, their tracks, their
 //! badges, and the ledger of what they actually did. This is the page
 //! that makes the record worth something outside the club.
 
@@ -10,7 +10,8 @@ use leptos::prelude::*;
 use crate::{
     api::{format_xp, level_percent, MeView, SheetView, XpEntry},
     components::{
-        badge_grid::BadgeGrid, character_card::CharacterCard, track_list::TrackList,
+        badge_grid::BadgeGrid, character_card::CharacterCard, title_ladder::TitleLadder,
+        track_list::TrackList,
     },
     server_fns::get_sheet,
 };
@@ -18,18 +19,29 @@ use crate::{
 /// Re-exported for the HUD, which needs the same lookup.
 pub use crate::server_fns::get_me as get_current_user;
 
-/// Level progress bar.
+/// Progress towards the next rank title.
+///
+/// The platform ranks people by title, not by number, so the bar names
+/// the title it leads to.
 #[component]
 #[allow(clippy::needless_pass_by_value)] // Leptos prop convention
-fn LevelBar(me: MeView) -> impl IntoView {
-    let pct = level_percent(me.level_xp_into, me.level_xp_needed);
+fn RankBar(me: MeView) -> impl IntoView {
+    let pct = if me.rank_xp_needed == 0 {
+        100.0
+    } else {
+        level_percent(me.rank_xp_into, me.rank_xp_needed)
+    };
+    let label = me.next_rank_title.clone().map_or_else(
+        || "Titre le plus haut atteint".to_string(),
+        |next| format!("Prochain titre : {next}"),
+    );
+    let count = (me.rank_xp_needed > 0)
+        .then(|| format!("{} / {} XP", me.rank_xp_into, me.rank_xp_needed));
     view! {
         <div class="gc-level">
             <div class="gc-level__head">
-                <span class="gc-level__label">{format!("Niveau {}", me.level)}</span>
-                <span class="gc-level__count">
-                    {format!("{} / {} XP", me.level_xp_into, me.level_xp_needed)}
-                </span>
+                <span class="gc-level__label">{label}</span>
+                <span class="gc-level__count">{count}</span>
             </div>
             <div
                 class="gc-level__track"
@@ -112,10 +124,13 @@ fn SheetBody(sheet: SheetView) -> impl IntoView {
             </div>
         }
     });
-    let bureau = me
+    // Every title the member holds, most important first: the Bureau
+    // office, then the global title. Track titles follow in the track
+    // list, which is ordered the same way.
+    let titles = me
         .bureau_title
         .clone()
-        .map(|t| view! { <p class="gc-profile__bureau">{t}</p> });
+        .map_or_else(|| me.rank_title.clone(), |b| format!("{b} · {}", me.rank_title));
 
     view! {
         <>
@@ -126,11 +141,14 @@ fn SheetBody(sheet: SheetView) -> impl IntoView {
                 avatar_url=me.avatar_url.clone()
                 xp_total=me.xp_total
                 global_rank=me.global_rank.clone()
-                title=Some(me.rank_title.clone())
+                title=Some(titles)
             />
-            {bureau}
-            <LevelBar me=me.clone() />
-            <StatStrip me=me />
+            <RankBar me=me.clone() />
+            <StatStrip me=me.clone() />
+            <section class="gc-profile__ladder">
+                <h2>"Échelle des titres"</h2>
+                <TitleLadder current=Some(me.global_rank) />
+            </section>
             <TrackList tracks=sheet.tracks />
             <BadgeGrid badges=sheet.badges />
             <XpHistory entries=sheet.recent_xp />

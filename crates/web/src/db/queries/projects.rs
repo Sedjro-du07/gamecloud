@@ -26,7 +26,7 @@ use gamecloud_shared::{
     DomainError,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
@@ -138,16 +138,19 @@ pub struct ProjectDetail {
 
 /// List projects.
 ///
-/// `include_internal` controls whether pre-release work is visible;
-/// callers pass `true` only for members who hold the matching track
-/// role. Everyone else sees the published record.
+/// Visibility is not a single yes/no: published work is public, while
+/// work still in progress belongs to the tracks judging it and to the
+/// member who started it. A bare boolean forced a choice between
+/// showing everyone every draft and showing an author nothing of their
+/// own, which is why a member could create a project and then never
+/// find it in the list again.
 ///
 /// # Errors
 /// Propagates database errors.
 pub async fn list(
     pool: &PgPool,
     track: Option<&str>,
-    include_internal: bool,
+    seen_by: &Visibility<'_>,
 ) -> WebResult<Vec<ProjectSummary>> {
     let rows = sqlx::query_as::<_, ProjectSummary>(
         r#"
@@ -166,15 +169,37 @@ pub async fn list(
                           WHERE c.project_id = p.id), 0) AS contributor_count
           FROM projects p
          WHERE ($1::TEXT IS NULL OR p.primary_track = $1)
-           AND ($2::BOOLEAN OR p.status IN ('Released', 'Archived'))
+           AND (
+                 p.status IN ('Released', 'Archived')
+              OR p.created_by = $3
+              -- A project in review concerns every track that owes it a
+              -- verdict, not only the track it was filed under, so the
+              -- reviewers can find what they have to judge.
+              OR p.primary_track = ANY($2::TEXT[])
+              OR EXISTS (SELECT 1
+                           FROM track_validations tv
+                          WHERE tv.project_id = p.id
+                            AND tv.track = ANY($2::TEXT[]))
+               )
          ORDER BY p.released_at DESC NULLS LAST, p.created_at DESC
         "#,
     )
     .bind(track)
-    .bind(include_internal)
+    .bind(seen_by.tracks)
+    .bind(seen_by.viewer)
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// Who is looking, for the purpose of showing unpublished work.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Visibility<'a> {
+    /// Tracks whose pre-release work this viewer may see.
+    pub tracks: &'a [String],
+    /// The viewer, who always sees projects they started. `None` for a
+    /// signed-out visitor, who sees only the published record.
+    pub viewer: Option<Uuid>,
 }
 
 /// Fetch one project with its contributors and verdicts.
@@ -211,7 +236,7 @@ pub async fn detail(pool: &PgPool, id: Uuid) -> WebResult<ProjectDetail> {
     let contributors = sqlx::query_as::<_, ContributorView>(
         r#"
         SELECT c.user_id,
-               COALESCE(u.current_title, u.discord_id) AS display_name,
+               member_display_name(u.current_title, u.discord_global_name, u.discord_username, u.discord_id) AS display_name,
                COALESCE(u.avatar_custom_url, u.avatar_url) AS avatar_url,
                c.track,
                c.role_in_project
@@ -229,7 +254,7 @@ pub async fn detail(pool: &PgPool, id: Uuid) -> WebResult<ProjectDetail> {
         r#"
         SELECT v.track,
                v.status,
-               COALESCE(u.current_title, u.discord_id) AS reviewer_name,
+               member_display_name(u.current_title, u.discord_global_name, u.discord_username, u.discord_id) AS reviewer_name,
                v.feedback,
                v.reviewed_at
           FROM track_validations v
@@ -350,6 +375,7 @@ pub async fn create(pool: &PgPool, author: Uuid, project: &NewProject) -> WebRes
     .fetch_one(&mut *tx)
     .await?;
 
+    let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         INSERT INTO project_contributors (project_id, user_id, track, role_in_project)
@@ -383,16 +409,18 @@ pub async fn create(pool: &PgPool, author: Uuid, project: &NewProject) -> WebRes
 /// `UnknownTrack` or a database error.
 pub async fn add_contributor(
     pool: &PgPool,
+    channels: DiscordChannels,
     project_id: Uuid,
     user_id: Uuid,
     track: &str,
     role_in_project: Option<&str>,
 ) -> WebResult<()> {
-    if Track::parse(track).is_none() {
+    let Some(parsed) = Track::parse(track) else {
         return Err(WebError::Domain(DomainError::UnknownTrack(
             track.to_string(),
         )));
-    }
+    };
+    let mut tx = pool.begin().await?;
     sqlx::query(
         r#"
         INSERT INTO project_contributors (project_id, user_id, track, role_in_project)
@@ -405,8 +433,31 @@ pub async fn add_contributor(
     .bind(user_id)
     .bind(track)
     .bind(role_in_project)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+
+    // Being credited on somebody else's project is worth knowing about:
+    // it is how XP and a place in the Hall of Fame arrive without the
+    // member doing anything at that moment.
+    let name: Option<String> = sqlx::query_scalar("SELECT name FROM projects WHERE id = $1")
+        .bind(project_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if let Some(name) = name {
+        notifications::enqueue(
+            &mut tx,
+            channels,
+            &Announcement::contributor_added(
+                user_id,
+                &name,
+                parsed,
+                role_in_project.unwrap_or("contributeur"),
+            ),
+        )
+        .await?;
+    }
+
+    tx.commit().await?;
     Ok(())
 }
 
@@ -530,6 +581,63 @@ pub async fn submit_for_review(
     Ok(concerned.into_iter().collect())
 }
 
+/// Let the project's author know what a track decided.
+///
+/// A verdict nobody hears about changes nothing, and a rejection is
+/// precisely the case where the feedback has to reach somebody. Split
+/// out of [`record_verdict`] to keep that function readable.
+async fn tell_the_author(
+    tx: &mut Transaction<'_, Postgres>,
+    channels: DiscordChannels,
+    project_id: Uuid,
+    judgement: &Judgement<'_>,
+) -> WebResult<()> {
+    let Some(parsed) = Track::parse(judgement.track) else {
+        return Ok(());
+    };
+    let author: Option<(Uuid, String)> =
+        sqlx::query_as("SELECT created_by, name FROM projects WHERE id = $1")
+            .bind(project_id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let Some((author, name)) = author else {
+        return Ok(());
+    };
+
+    notifications::enqueue(
+        tx,
+        channels,
+        &Announcement::verdict_rendered(
+            author,
+            &name,
+            parsed,
+            judgement.verdict.as_str(),
+            judgement.feedback,
+            judgement.score,
+        ),
+    )
+    .await
+}
+
+/// One track's judgement on one project.
+///
+/// Grouped rather than passed as five positional arguments: `track`,
+/// `verdict` and `feedback` are all string-ish, and a caller that
+/// transposed two of them would compile and record the wrong thing.
+#[derive(Debug, Clone, Copy)]
+pub struct Judgement<'a> {
+    /// Project being judged.
+    pub project_id: Uuid,
+    /// Track rendering the verdict.
+    pub track: &'a str,
+    /// Approve, reject, or declare the track not concerned.
+    pub verdict: Verdict,
+    /// What has to change. Mandatory on a rejection.
+    pub feedback: Option<&'a str>,
+    /// Mark out of 100 for this track's share, when the reviewer gives one.
+    pub score: Option<i32>,
+}
+
 /// Record one track's verdict and re-derive the project status.
 ///
 /// The reviewer earns peer-review XP for a substantive verdict.
@@ -537,17 +645,23 @@ pub async fn submit_for_review(
 /// review work, and paying for it would make it the rational default.
 ///
 /// # Errors
-/// `Validation` when a rejection carries no feedback, `NotFound` when
-/// the track is not under review, otherwise database errors.
+/// `Validation` when a rejection carries no feedback or the mark is off
+/// the scale, `NotFound` when the track is not under review, otherwise
+/// database errors.
 pub async fn record_verdict(
     pool: &PgPool,
     channels: DiscordChannels,
     reviewer: Uuid,
-    project_id: Uuid,
-    track: &str,
-    verdict: Verdict,
-    feedback: Option<&str>,
+    judgement: &Judgement<'_>,
 ) -> WebResult<ProjectStatus> {
+    let &Judgement {
+        project_id,
+        track,
+        verdict,
+        feedback,
+        score,
+    } = judgement;
+
     if verdict == Verdict::Pending {
         return Err(WebError::Validation(
             "Pending is not a verdict a reviewer can submit".into(),
@@ -557,6 +671,17 @@ pub async fn record_verdict(
         return Err(WebError::Validation(
             "a rejection must explain what needs to change".into(),
         ));
+    }
+    // A mark is optional — a reviewer may still simply gate — but a
+    // mark outside the scale is a slip worth refusing rather than
+    // clamping, because a 110 almost always means the reviewer typed
+    // into the wrong field.
+    if let Some(n) = score {
+        if !(0..=100).contains(&n) {
+            return Err(WebError::Validation(
+                "la note doit être comprise entre 0 et 100".into(),
+            ));
+        }
     }
 
     let current = status_of(pool, project_id).await?;
@@ -572,7 +697,8 @@ pub async fn record_verdict(
     let updated = sqlx::query(
         r#"
         UPDATE track_validations
-           SET status = $3, reviewed_by = $4, feedback = $5, reviewed_at = NOW()
+           SET status = $3, reviewed_by = $4, feedback = $5, score = $6,
+               reviewed_at = NOW()
          WHERE project_id = $1 AND track = $2
         "#,
     )
@@ -581,6 +707,7 @@ pub async fn record_verdict(
     .bind(verdict.as_str())
     .bind(reviewer)
     .bind(feedback)
+    .bind(score)
     .execute(&mut *tx)
     .await?;
 
@@ -616,6 +743,8 @@ pub async fn record_verdict(
         )
         .await?;
     }
+
+    tell_the_author(&mut tx, channels, project_id, judgement).await?;
 
     audit::record_in_tx(
         &mut tx,

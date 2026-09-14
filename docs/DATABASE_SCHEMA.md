@@ -777,8 +777,71 @@ Every table is now read or written by code. For orientation:
 | `quests`, `quest_progress`, `quest_completions` | `db::queries::quests`, `xp` |
 | `projects`, `project_contributors`, `track_validations`, `hall_of_fame` | `db::queries::projects` |
 | `resources`, `resource_votes` | `db::queries::resources` |
-| `qr_tokens`, `attendance` | `db::queries::qr` |
+| `qr_tokens`, `attendance` | `db::queries::qr` — both now carry `event_id` |
+| `events` | `db::queries::events` (calendar) |
 | `audit_logs` | `db::queries::audit` |
 | `notifications_outbox` | `services::notifications` (web) → drained by the bot |
-| `project_files` | reserved for the Supabase upload flow (not yet built) |
+| `project_files` | `db::queries::files` — builds live in a GitHub release, this table indexes them |
 | `roadmap` | reserved for the block/boss view (not yet built) |
+
+
+---
+
+# `events` — the calendar
+
+Added in `0015_calendar_and_grading.sql`. Attendance previously hung off
+a free-text `event_name` on `qr_tokens`, which meant two weeks of Tuesday
+sessions were unrelated strings and no question about attendance over
+time had an answer.
+
+| Column | Notes |
+|---|---|
+| `kind` | `Session`, `Workshop`, `Jam`, `Meeting`, `Deadline`, `Showcase` |
+| `track` | `NULL` = the whole association. Also decides who may edit it. |
+| `xp_reward` | 0–500. Zero is legitimate: a deadline is seen, not attended. |
+| `cancelled_at` | Events are **cancelled, never deleted** — attendance points at them. |
+
+`qr_tokens.event_id` and `attendance.event_id` are both nullable, and
+nothing was backfilled: rows written before events existed keep their
+free-text name and point at nothing.
+
+A unique index on `(user_id, event_id)` means a member counts once per
+event however many codes are printed for it. Without it, an organiser
+who reprinted the QR would have paid the same member twice.
+
+# `member_display_name(...)`
+
+Added in `0014_discord_identity.sql`. Resolves a member to
+`title → Discord display name → Discord handle → snowflake`. It exists as
+a SQL function rather than a `COALESCE` chain because eight queries
+needed the same precedence and copies drift apart.
+
+`UserRecord::display_name()` mirrors it in Rust for rows read through
+`sqlx::query_as`.
+
+# `track_validations.score`
+
+Added in `0015`. A mark out of 100 for one track's share of a project,
+`NULL` when the reviewer only gated. Approving is a gate; grading is a
+judgement, and a reviewer who only wants to open the gate is not forced
+to invent a number.
+
+
+# `events.audience`
+
+Added in `0016_event_audience.sql`. `Association`, `Track` or `Bureau`.
+
+`track IS NULL` used to mean "the whole association", which left no way
+to express a third and genuinely different case: a Bureau meeting. Those
+are not merely unannounced — they must not appear on an ordinary
+member's calendar at all, and that is a visibility rule a nullable column
+cannot carry.
+
+Two CHECK constraints keep the pair honest: a `Track` event must name a
+track, and an `Association` or `Bureau` event must not. `EventScope::parse`
+in `gamecloud-shared` mirrors both directions exactly, so a row that
+somehow broke its constraint is refused in Rust rather than being read as
+public.
+
+Bureau meetings are filtered out **in SQL**, not after the fetch — a row
+that reaches the browser and merely goes undrawn is not private.

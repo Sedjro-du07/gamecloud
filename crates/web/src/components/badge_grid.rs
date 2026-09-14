@@ -34,8 +34,10 @@ pub fn BadgeGrid(
                             "gc-badge"
                         };
                         let tooltip = b.description.clone();
+                        let state = if b.held { "✨" } else { "🔒" };
                         view! {
                             <li class=class title=tooltip>
+                                <span class="gc-badge__state" aria-hidden="true">{state}</span>
                                 <span class="gc-badge__title">{b.title}</span>
                                 <span class="gc-badge__desc">{b.description}</span>
                             </li>

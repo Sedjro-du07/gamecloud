@@ -58,8 +58,14 @@ Source: `TrackRole::from_track_xp` plus explicit appointment paths.
 
 ## Bureau roles
 
-There are 16 Bureau roles. Six are considered **executive** and unlock
-destructive operations like `GrantManualXp` and `ViewAuditLogs`.
+There are 16 Bureau offices, plus a **provisional** role. Six offices are
+considered **executive** and unlock destructive operations like
+`GrantManualXp` and `ViewAuditLogs`.
+
+`Provisional` (🏛 Membre du Bureau) is not an office: it keeps a Bureau
+member's access to the Bureau's Discord channels while their office is
+being decided, and grants nothing on the platform — no admin panel, no
+Bureau meetings (`BureauRole::holds_office` is false).
 
 | Role | Tier | Title |
 |------|------|-------|
@@ -79,6 +85,7 @@ destructive operations like `GrantManualXp` and `ViewAuditLogs`.
 | `AssistantModerator` | non-exec | 🗡️ Garde |
 | `RecruitmentOfficer` | non-exec | 🎯 Chasseur de Talents |
 | `PrManager` | non-exec | 🤝 Ambassadeur Suprême |
+| `Provisional` | not an office | 🏛 Membre du Bureau |
 
 Source: `BureauRole::title()` and `BureauRole::is_executive()`.
 
@@ -101,10 +108,13 @@ who satisfies the predicate.
 | `AppointTrackLead(t)` | executive Bureau role |
 | `AssignBureauRole` | `President` ∨ `VicePresident` |
 | `GenerateQrToken` | `EventManager` ∨ `AssistantEventManager` ∨ executive |
+| `ManageEvents(EventScope::Association)` | `EventManager` ∨ `AssistantEventManager` ∨ executive |
+| `ManageEvents(EventScope::Track(t))` | the above ∨ **`Lead` of that track** |
+| `ManageEvents(EventScope::Bureau)` | **any office-holder** (not `Provisional`) |
 | `GrantManualXp` | executive |
 | `ValidateResource` | `Archiviste` ∨ `AssistantArchiviste` ∨ any track Lead |
 | `ModerateContent` | `Moderator` ∨ `AssistantModerator` ∨ executive |
-| `AccessAdminPanel` | any Bureau role |
+| `AccessAdminPanel` | any Bureau office (not `Provisional`) |
 | `ViewAuditLogs` | executive |
 
 Source: `Authority::can` in `crates/shared/src/roles.rs`. Unit tests in
@@ -181,3 +191,33 @@ Epitech address at will. The handler now refuses once
 XP **cannot** move a `Pending` or `Visitor` member: `next_rank` returns
 their current rank unchanged however much they accumulate. That is what
 makes onboarding unskippable rather than merely encouraged.
+
+
+---
+
+# `ManageEvents` carries a scope
+
+It is the only action whose answer depends on *which* row is being
+touched, which is why it takes the event's scope:
+
+- `EventScope::Association` — concerns everybody. Only the event
+  managers and the executive.
+- `EventScope::Track(t)` — that track's own sessions. Its `Lead`
+  qualifies, so a track can run itself without being handed the whole
+  association's calendar.
+- `EventScope::Bureau` — a Bureau meeting. **Any** office-holder may
+  call one: the Bureau is small and self-governing, and making its
+  members ask the President to book a room would be ceremony rather than
+  control. Nobody outside it can see these events anyway.
+
+The same check also governs *visibility*: `get_calendar` asks whether the
+viewer can manage `EventScope::Bureau` and passes the answer into SQL, so
+a member without an office never receives those rows at all.
+
+An update re-checks against the event **as it currently is**, not only as
+it is being rewritten. Without that, a track Lead could take over an
+association-wide event by resubmitting it under their own track.
+
+Generating a QR code for an event accepts either `GenerateQrToken` or
+`ManageEvents` for that event's scope — a track Lead running their own
+session should not need the association-wide QR right.

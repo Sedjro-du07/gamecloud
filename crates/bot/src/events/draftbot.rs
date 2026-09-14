@@ -34,6 +34,9 @@ static LEVEL_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// parse error to crash the bot.
 pub async fn on_message_create(ctx: &Context, msg: &Message, state: &BotState) {
     let cfg = state.config();
+    if !cfg.draftbot_enabled {
+        return;
+    }
     if msg.channel_id.get() != cfg.draftbot_channel_id {
         return;
     }

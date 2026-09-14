@@ -71,7 +71,11 @@ pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> WebResult<Vec<Member
         SELECT track, specialization, track_role, track_xp, joined_at, last_active_at
           FROM track_memberships
          WHERE user_id = $1 AND left_at IS NULL
-         ORDER BY track_xp DESC, track ASC
+         -- Most important title first, then the most XP within a title.
+         ORDER BY array_position(
+                      ARRAY['Lead', 'CoLead', 'Mentor', 'Reviewer', 'Contributor', 'Observer'],
+                      track_role),
+                  track_xp DESC, track ASC
         "#,
     )
     .bind(user_id)
@@ -142,13 +146,21 @@ pub async fn join(
     .execute(&mut *tx)
     .await?;
 
-    // Visitor -> Initiate. This is the only path onto the XP ladder:
+    // Visitor -> onto the XP ladder. This is the only path onto it:
     // `next_rank` refuses to promote a Visitor no matter how much XP
-    // they hold, precisely so that onboarding cannot be skipped.
+    // they hold, precisely so that onboarding cannot be skipped. The
+    // title is computed from the XP already held rather than fixed at
+    // Initiate — XP carried over from before the platform counts the
+    // moment onboarding is done, not at the member's next award.
+    let xp_total: i64 = sqlx::query_scalar("SELECT xp_total FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let reached = GlobalRank::from_xp(xp_total);
     let promoted: Option<(String, bool)> = sqlx::query_as(
         r#"
         UPDATE users
-           SET global_rank = 'Initiate'
+           SET global_rank = $2
          WHERE id = $1
            AND global_rank = 'Visitor'
            AND email_verified = TRUE
@@ -156,6 +168,7 @@ pub async fn join(
         "#,
     )
     .bind(user_id)
+    .bind(reached.as_str())
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -163,12 +176,7 @@ pub async fn join(
         notifications::enqueue(
             &mut tx,
             channels,
-            &Announcement::rank_up(
-                user_id,
-                &display,
-                GlobalRank::Initiate.title(),
-                GlobalRank::Initiate.ring_color(),
-            ),
+            &Announcement::rank_up(user_id, &display, reached.title(), reached.ring_color()),
         )
         .await?;
     }
@@ -186,6 +194,7 @@ pub async fn join(
         &Announcement::track_joined(user_id, &display, track.as_str()),
     )
     .await?;
+    notifications::request_role_sync(&mut *tx).await?;
 
     let view = sqlx::query_as::<_, MembershipView>(
         r#"
@@ -224,6 +233,7 @@ pub async fn leave(pool: &PgPool, user_id: Uuid, track_name: &str) -> WebResult<
         .bind(track.as_str())
         .execute(pool)
         .await?;
+    notifications::request_role_sync(pool).await?;
     Ok(())
 }
 
@@ -234,18 +244,39 @@ pub async fn leave(pool: &PgPool, user_id: Uuid, track_name: &str) -> WebResult<
 /// Propagates database errors.
 pub async fn set_role(
     pool: &PgPool,
+    channels: crate::config::DiscordChannels,
     user_id: Uuid,
     track: Track,
     role: TrackRole,
 ) -> WebResult<()> {
-    sqlx::query(
+    let mut tx = pool.begin().await?;
+    let changed = sqlx::query(
         "UPDATE track_memberships SET track_role = $3 WHERE user_id = $1 AND track = $2 AND left_at IS NULL",
     )
     .bind(user_id)
     .bind(track.as_str())
     .bind(role.as_str())
-    .execute(pool)
-    .await?;
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+
+    // Being appointed is something you are told, not something you
+    // discover by noticing a new button. Only on a real change: a no-op
+    // re-appointment should not ping anybody.
+    if changed > 0 {
+        crate::services::notifications::enqueue(
+            &mut tx,
+            channels,
+            &crate::services::notifications::Announcement::track_appointment(
+                user_id,
+                track,
+                role.as_str(),
+            ),
+        )
+        .await?;
+    }
+
+    tx.commit().await?;
     Ok(())
 }
 
@@ -281,4 +312,151 @@ mod tests {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Track board
+// ---------------------------------------------------------------------------
+
+/// One member of a track.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BoardMember {
+    /// Name to show.
+    pub display_name: String,
+    /// `Lead`, `CoLead`, `Mentor`, `Reviewer`, `Contributor`, `Observer`.
+    pub track_role: String,
+    /// XP earned inside this track.
+    pub track_xp: i64,
+    /// Chosen specialization, when set.
+    pub specialization: Option<String>,
+}
+
+/// One project as it stands with this track.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct BoardProject {
+    /// Project id.
+    pub id: Uuid,
+    /// Project name.
+    pub name: String,
+    /// Project status.
+    pub status: String,
+    /// This track's verdict.
+    pub verdict: String,
+    /// This track's mark, when one was given.
+    pub score: Option<i32>,
+    /// Who rendered the verdict.
+    pub reviewer_name: Option<String>,
+    /// Builds attached to the project.
+    pub file_count: i64,
+}
+
+/// Everything the track page needs, minus its calendar.
+#[derive(Debug, Clone)]
+pub struct Board {
+    /// The viewer's role in this track, when they belong to it.
+    pub my_role: Option<String>,
+    /// XP pooled across the track's members.
+    pub total_xp: i64,
+    /// Mean of the marks this track has given.
+    pub average_score: Option<f64>,
+    /// Members, strongest role first.
+    pub members: Vec<BoardMember>,
+    /// Projects this track has a say in.
+    pub projects: Vec<BoardProject>,
+}
+
+/// Load one track's board.
+///
+/// Members are ordered by *role* before XP, because the page is a "who
+/// do I talk to" list before it is a ranking — the Lead belongs at the
+/// top even on the day somebody out-earns them.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn board(pool: &PgPool, track: &str, viewer: Option<Uuid>) -> WebResult<Board> {
+    let members = sqlx::query_as::<_, BoardMember>(
+        r"
+        SELECT member_display_name(u.current_title, u.discord_global_name,
+                                   u.discord_username, u.discord_id) AS display_name,
+               tm.track_role,
+               tm.track_xp,
+               tm.specialization
+          FROM track_memberships tm
+          JOIN users u ON u.id = tm.user_id
+         WHERE tm.track = $1 AND tm.left_at IS NULL
+         ORDER BY CASE tm.track_role
+                      WHEN 'Lead'        THEN 0
+                      WHEN 'CoLead'      THEN 1
+                      WHEN 'Mentor'      THEN 2
+                      WHEN 'Reviewer'    THEN 3
+                      WHEN 'Contributor' THEN 4
+                      ELSE 5
+                  END,
+                  tm.track_xp DESC
+        ",
+    )
+    .bind(track)
+    .fetch_all(pool)
+    .await?;
+
+    let projects = sqlx::query_as::<_, BoardProject>(
+        r"
+        SELECT p.id,
+               p.name,
+               p.status,
+               tv.status AS verdict,
+               tv.score,
+               CASE WHEN tv.reviewed_by IS NULL THEN NULL
+                    ELSE member_display_name(r.current_title, r.discord_global_name,
+                                             r.discord_username, r.discord_id)
+               END AS reviewer_name,
+               (SELECT COUNT(*) FROM project_files f WHERE f.project_id = p.id) AS file_count
+          FROM track_validations tv
+          JOIN projects p ON p.id = tv.project_id
+          LEFT JOIN users r ON r.id = tv.reviewed_by
+         WHERE tv.track = $1
+         ORDER BY CASE tv.status WHEN 'Pending' THEN 0 ELSE 1 END,
+                  p.created_at DESC
+        ",
+    )
+    .bind(track)
+    .fetch_all(pool)
+    .await?;
+
+    let total_xp: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(track_xp), 0)::bigint FROM track_memberships \
+         WHERE track = $1 AND left_at IS NULL",
+    )
+    .bind(track)
+    .fetch_one(pool)
+    .await?;
+
+    let average_score: Option<f64> = sqlx::query_scalar(
+        "SELECT AVG(score)::float8 FROM track_validations WHERE track = $1 AND score IS NOT NULL",
+    )
+    .bind(track)
+    .fetch_one(pool)
+    .await?;
+
+    let my_role: Option<String> = match viewer {
+        Some(id) => {
+            sqlx::query_scalar(
+                "SELECT track_role FROM track_memberships \
+                 WHERE track = $1 AND user_id = $2 AND left_at IS NULL",
+            )
+            .bind(track)
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+        }
+        None => None,
+    };
+
+    Ok(Board {
+        my_role,
+        total_xp,
+        average_score,
+        members,
+        projects,
+    })
 }

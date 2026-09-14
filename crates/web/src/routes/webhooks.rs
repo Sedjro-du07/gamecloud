@@ -273,10 +273,6 @@ async fn draftbot(
     let event: DraftBotEvent = serde_json::from_slice(&body)
         .map_err(|e| WebError::Validation(format!("invalid json: {e}")))?;
 
-    let Some(user) = users::find_by_discord_id(state.pool(), &event.discord_id).await? else {
-        return Ok("ignored");
-    };
-
     let level = event.new_level.clamp(0, DRAFTBOT_MAX_LEVEL);
     if level != event.new_level {
         tracing::warn!(
@@ -289,6 +285,61 @@ async fn draftbot(
         return Ok("ignored");
     }
 
+    let Some(user) = users::find_by_discord_id(state.pool(), &event.discord_id).await? else {
+        // Not on the platform yet. The level is kept rather than dropped:
+        // the activity is real, and it is paid the day they sign in.
+        sqlx::query(
+            "INSERT INTO draftbot_pending_levels (discord_id, level) VALUES ($1, $2) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(&event.discord_id)
+        .bind(level)
+        .execute(state.pool())
+        .await?;
+        return Ok("queued");
+    };
+
+    credit_draftbot_level(&state, user.id, level).await
+}
+
+/// Pay the DraftBot levels a member earned before signing in.
+///
+/// Called at login. Each level goes through [`credit_draftbot_level`],
+/// so a level already paid is skipped and a crash between paying and
+/// clearing the queue cannot pay twice.
+///
+/// # Errors
+/// Propagates database errors.
+pub(super) async fn credit_draftbot_backlog(
+    state: &AppState,
+    user_id: uuid::Uuid,
+    discord_id: &str,
+) -> WebResult<()> {
+    let levels: Vec<i32> = sqlx::query_scalar(
+        "SELECT level FROM draftbot_pending_levels WHERE discord_id = $1 ORDER BY level",
+    )
+    .bind(discord_id)
+    .fetch_all(state.pool())
+    .await?;
+
+    for level in &levels {
+        credit_draftbot_level(state, user_id, *level).await?;
+    }
+    if !levels.is_empty() {
+        sqlx::query("DELETE FROM draftbot_pending_levels WHERE discord_id = $1")
+            .bind(discord_id)
+            .execute(state.pool())
+            .await?;
+    }
+    Ok(())
+}
+
+/// Credit one DraftBot level to a member, at most once.
+async fn credit_draftbot_level(
+    state: &AppState,
+    user_id: uuid::Uuid,
+    level: i32,
+) -> WebResult<&'static str> {
     // Idempotency: the same level for the same member is only ever paid
     // once. A re-posted or edited DraftBot announcement, or a gateway
     // replay after a reconnect, therefore cannot farm XP.
@@ -301,13 +352,13 @@ async fn draftbot(
         )
         "#,
     )
-    .bind(user.id)
+    .bind(user_id)
     .bind(&description)
     .fetch_one(state.pool())
     .await?;
 
     if already {
-        tracing::debug!(user = %user.id, level, "draftbot level already credited");
+        tracing::debug!(user = %user_id, level, "draftbot level already credited");
         return Ok("duplicate");
     }
 
@@ -315,7 +366,7 @@ async fn draftbot(
     xp::grant(
         state.pool(),
         state.channels(),
-        &XpGrant::new(user.id, bonus, XpSource::Discord).describe(&description),
+        &XpGrant::new(user_id, bonus, XpSource::Discord).describe(&description),
     )
     .await?;
 
@@ -324,7 +375,7 @@ async fn draftbot(
         None,
         "draftbot.level_up",
         Some("user"),
-        Some(user.id),
+        Some(user_id),
         serde_json::json!({ "level": level, "xp": bonus }),
     )
     .await?;

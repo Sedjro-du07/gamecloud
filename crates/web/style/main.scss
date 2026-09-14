@@ -72,7 +72,8 @@ button { font: inherit; }
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 2rem;
+    gap: 1rem;
+    padding: 0.9rem 2rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     background: linear-gradient(180deg, var(--gc-bg-elev), transparent);
   }
@@ -84,32 +85,168 @@ button { font: inherit; }
     text-transform: uppercase;
   }
 
-  &__nav {
-    display: flex;
-    gap: 1.5rem;
-    a {
-      font-weight: 500;
-      color: var(--gc-fg);
+  // The rail and the page sit side by side; the footer is pushed to the
+  // bottom of the content column rather than under the rail, so a short
+  // page does not leave the rail floating above it.
+  &__body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: var(--gc-rail-w, 208px) minmax(0, 1fr);
+    align-items: start;
+  }
 
-      &:hover { color: var(--gc-accent); }
-    }
+  &__rail {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 1.5rem 0.75rem 2rem;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, var(--gc-bg-elev), transparent 60%);
   }
 
   &__content {
-    flex: 1;
     padding: 2rem;
     max-width: 1200px;
     width: 100%;
     margin: 0 auto;
+    min-width: 0;
   }
 
   &__bottom {
+    grid-column: 2;
     padding: 1rem 2rem;
     color: var(--gc-fg-mute);
     border-top: 1px solid rgba(255, 255, 255, 0.08);
     text-align: center;
     font-size: 0.875rem;
   }
+
+  &__nag { grid-column: 1 / -1; }
+}
+
+// ===========================================================================
+// Navigation rail
+// ===========================================================================
+
+.gc-rail {
+  &__group {
+    margin-bottom: 1.5rem;
+  }
+
+  &__label {
+    display: block;
+    padding: 0 0.75rem 0.4rem;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--gc-fg-mute);
+  }
+
+  &__link {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--gc-radius-md);
+    color: var(--gc-fg);
+    font-weight: 500;
+    font-size: 0.9rem;
+    // The left edge is always present but transparent, so the active
+    // state does not shift the label sideways by three pixels.
+    border-left: 2px solid transparent;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--gc-accent);
+    }
+
+    // Leptos sets this on the link matching the current route.
+    &[aria-current='page'] {
+      background: rgba(0, 242, 255, 0.1);
+      border-left-color: var(--gc-accent);
+      color: var(--gc-accent);
+    }
+  }
+
+  &__icon {
+    font-size: 1rem;
+    line-height: 1;
+    width: 1.25rem;
+    text-align: center;
+    flex: none;
+  }
+
+  &__text { white-space: nowrap; }
+}
+
+// Between the full rail and the bottom bar: keep the rail, drop the
+// labels. The icons stay in the same order and the same place, so the
+// muscle memory built on the wide layout still works.
+@media (max-width: 1080px) and (min-width: 721px) {
+  .gc-hud__body { --gc-rail-w: 60px; }
+  .gc-rail__text,
+  .gc-rail__label { display: none; }
+  .gc-rail__link { justify-content: center; padding: 0.6rem 0; }
+  .gc-hud__rail { padding: 1rem 0.35rem; }
+}
+
+// Phones: the rail becomes a fixed bottom bar, where a thumb reaches.
+@media (max-width: 720px) {
+  .gc-hud__body {
+    display: block;
+  }
+
+  .gc-hud__rail {
+    position: fixed;
+    inset: auto 0 0 0;
+    max-height: none;
+    display: flex;
+    justify-content: space-around;
+    gap: 0.15rem;
+    padding: 0.35rem 0.25rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
+    border-right: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background: var(--gc-bg-elev);
+    overflow-x: auto;
+    z-index: 20;
+  }
+
+  .gc-rail__group {
+    display: flex;
+    gap: 0.15rem;
+    margin: 0;
+  }
+
+  .gc-rail__label { display: none; }
+
+  .gc-rail__link {
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.35rem 0.5rem;
+    border-left: none;
+    border-bottom: 2px solid transparent;
+    font-size: 0.6rem;
+
+    &[aria-current='page'] {
+      border-left-color: transparent;
+      border-bottom-color: var(--gc-accent);
+    }
+  }
+
+  .gc-rail__icon { font-size: 1.15rem; }
+
+  .gc-rail__text {
+    font-size: 0.58rem;
+    letter-spacing: -0.01em;
+  }
+
+  // Leave room for the bar so it never covers the last control on a page.
+  .gc-hud__content { padding: 1.25rem 1rem 5.5rem; }
+  .gc-hud__bottom { display: none; }
+  .gc-hud__top { padding: 0.75rem 1rem; }
 }
 
 // ===========================================================================
@@ -1207,19 +1344,6 @@ button { font: inherit; }
     padding: 0.85rem 1rem;
   }
 
-  .gc-hud__nav {
-    order: 3;
-    width: 100%;
-    gap: 1rem;
-    overflow-x: auto;
-    padding-bottom: 0.25rem;
-    font-size: 0.9rem;
-    // The nav scrolls itself rather than widening the page.
-    -webkit-overflow-scrolling: touch;
-
-    a { white-space: nowrap; }
-  }
-
   .gc-hud__auth { margin-left: 0; }
 
   .gc-hud__content { padding: 1.25rem 1rem 3rem; }
@@ -1519,7 +1643,7 @@ button { font: inherit; }
 
   // Chrome that means nothing on paper.
   .gc-hud__top,
-  .gc-hud__nav,
+  .gc-hud__rail,
   .gc-hud__auth,
   .gc-hud__nag,
   .gc-hud__bottom,
@@ -1528,6 +1652,7 @@ button { font: inherit; }
     display: none !important;
   }
 
+  .gc-hud__body { display: block; }
   .gc-hud__content { padding: 0; max-width: none; }
   .gc-profile { max-width: none; gap: 1.2rem; }
 
@@ -1611,4 +1736,1503 @@ button { font: inherit; }
   &__name { display: block; font-weight: 600; }
   &__meta { display: block; font-size: 0.8rem; color: var(--gc-fg-mute); }
   &__log { margin: 0.35rem 0 0; font-size: 0.82rem; color: var(--gc-fg-mute); }
+}
+
+// ===========================================================================
+// Shared additions
+// ===========================================================================
+
+// A ghost button reads as "available but not the thing to do" — used for
+// destructive or reversing actions sitting next to a primary one.
+.gc-btn--ghost {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--gc-fg-mute);
+
+  &:hover {
+    border-color: var(--gc-danger);
+    color: var(--gc-fg);
+    box-shadow: 0 0 16px rgba(255, 0, 60, 0.25);
+  }
+}
+
+.gc-chip--call {
+  background: rgba(255, 170, 0, 0.16);
+  color: var(--gc-warning);
+  border-color: rgba(255, 170, 0, 0.42);
+}
+
+// Verdict chips borrow the colours the review form already uses, so a
+// decision looks the same wherever it is shown.
+.gc-verdict--ok   { background: rgba(52, 208, 88, 0.15);  color: var(--gc-success);  border-color: rgba(52, 208, 88, 0.4); }
+.gc-verdict--no   { background: rgba(255, 0, 60, 0.14);   color: var(--gc-danger);   border-color: rgba(255, 0, 60, 0.4); }
+.gc-verdict--na   { background: rgba(255, 255, 255, 0.06); color: var(--gc-fg-mute); }
+.gc-verdict--wait { background: rgba(0, 242, 255, 0.12);  color: var(--gc-accent);   border-color: rgba(0, 242, 255, 0.35); }
+
+// A form that lays its fields out in columns instead of one per line.
+// Used where a form has more than about four fields and a single column
+// would push the submit button below the fold.
+.gc-form--grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 1rem;
+  align-items: start;
+}
+
+.gc-field--wide { grid-column: 1 / -1; }
+
+.gc-form__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+// `gc-field` styles `input` but not `select` or `textarea`; the calendar
+// form uses all three and they must not look like three different eras.
+.gc-field {
+  select,
+  textarea {
+    padding: 0.75rem 1rem;
+    border-radius: var(--gc-radius-md);
+    background: var(--gc-bg-elev);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--gc-fg);
+    font-family: inherit;
+
+    &:focus {
+      outline: 2px solid var(--gc-accent);
+      outline-offset: 1px;
+    }
+  }
+
+  textarea { resize: vertical; }
+}
+
+.gc-review__score input { max-width: 8rem; }
+
+.gc-review__hint--bad { color: var(--gc-danger); }
+
+// ===========================================================================
+// Calendar
+// ===========================================================================
+
+.gc-cal {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+
+    h1 {
+      font-family: var(--gc-font-display);
+      margin: 0;
+      flex: 1 1 auto;
+    }
+  }
+
+  &__nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  &__month {
+    font-family: var(--gc-font-display);
+    font-size: 1.15rem;
+    text-transform: capitalize;
+    min-width: 10ch;
+    text-align: center;
+    color: var(--gc-accent);
+  }
+
+  &__filter { margin: 0; }
+
+  &__hint {
+    color: var(--gc-fg-mute);
+    font-size: 0.85rem;
+    margin: 0 0 1.5rem;
+  }
+
+  // Seven columns, one per weekday. Below the breakpoint the grid
+  // collapses to a single column and becomes an agenda — a 7-wide month
+  // on a phone is unreadable, and an agenda is what you actually want
+  // there anyway.
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 1px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--gc-radius-md);
+    overflow: hidden;
+  }
+
+  &__dow {
+    background: rgba(255, 255, 255, 0.04);
+    padding: 0.5rem;
+    text-align: center;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--gc-fg-mute);
+  }
+
+  &__cell {
+    background: var(--gc-bg);
+    min-height: 7rem;
+    padding: 0.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+
+    &--blank { background: rgba(255, 255, 255, 0.015); }
+    &--busy  { background: var(--gc-bg-elev); }
+  }
+
+  &__daynum {
+    font-family: var(--gc-font-mono);
+    font-size: 0.75rem;
+    color: var(--gc-fg-mute);
+  }
+
+  &__event {
+    border-left: 3px solid var(--gc-accent);
+    background: rgba(0, 242, 255, 0.07);
+    border-radius: var(--gc-radius-sm);
+    overflow: hidden;
+
+    &--workshop { border-left-color: var(--gc-accent-2); background: rgba(191, 0, 255, 0.08); }
+    &--jam      { border-left-color: var(--gc-warning);  background: rgba(255, 170, 0, 0.08); }
+    &--deadline { border-left-color: var(--gc-danger);   background: rgba(255, 0, 60, 0.08); }
+    &--showcase { border-left-color: var(--gc-success);  background: rgba(52, 208, 88, 0.08); }
+
+    // A cancelled event stays on the calendar — people planned around
+    // it — but has to be unmistakable at a glance.
+    &--off {
+      opacity: 0.5;
+      .gc-cal__title { text-decoration: line-through; }
+    }
+
+    &--past { opacity: 0.62; }
+  }
+
+  &__event-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: inherit;
+    padding: 0.35rem 0.5rem;
+    cursor: pointer;
+
+    &:hover { background: rgba(255, 255, 255, 0.05); }
+    &:focus-visible { outline: 2px solid var(--gc-accent); outline-offset: -2px; }
+  }
+
+  &__time {
+    font-family: var(--gc-font-mono);
+    font-size: 0.68rem;
+    color: var(--gc-accent);
+  }
+
+  &__title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+
+  &__kind {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--gc-fg-mute);
+  }
+
+  &__body {
+    padding: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  &__desc {
+    font-size: 0.8rem;
+    color: var(--gc-fg-mute);
+    margin: 0 0 0.5rem;
+  }
+
+  &__meta {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 0.75rem;
+    font-size: 0.75rem;
+    color: var(--gc-fg-mute);
+
+    li { margin-bottom: 0.15rem; }
+  }
+
+  &__off { color: var(--gc-danger); }
+
+  &__panel {
+    border-top: 1px dashed rgba(255, 255, 255, 0.12);
+    padding-top: 0.75rem;
+    margin-top: 0.5rem;
+  }
+
+  &__panel-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+
+    .gc-btn { padding: 0.45rem 0.9rem; font-size: 0.8rem; }
+  }
+
+  &__qr h4,
+  &__sheet h4 {
+    font-family: var(--gc-font-display);
+    font-size: 0.85rem;
+    margin: 0.75rem 0 0.4rem;
+  }
+
+  &__qr-controls {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+
+    .gc-field { margin-bottom: 0; }
+    input { max-width: 7rem; }
+    .gc-btn { padding: 0.5rem 1rem; font-size: 0.8rem; }
+  }
+
+  &__qr-out {
+    margin: 0.75rem 0 0;
+    text-align: center;
+    font-size: 0.72rem;
+    color: var(--gc-fg-mute);
+  }
+
+  // The QR itself must stay black-on-white whatever the page does around
+  // it: a neon-tinted code is a code that will not scan.
+  &__qr-svg {
+    display: inline-block;
+    background: #fff;
+    padding: 0.6rem;
+    border-radius: var(--gc-radius-sm);
+
+    svg { display: block; width: 220px; height: 220px; }
+  }
+
+  &__qr-url {
+    display: inline-block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    font-size: 0.62rem;
+    color: var(--gc-fg-mute);
+  }
+
+  &__attendees {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 0.78rem;
+
+    li {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.25rem 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+  }
+
+  &__who  { font-weight: 600; }
+  &__when { color: var(--gc-fg-mute); font-family: var(--gc-font-mono); font-size: 0.7rem; }
+  &__xp   { color: var(--gc-success); }
+
+  &__form-card {
+    margin-top: 2.5rem;
+    padding: 1.5rem;
+    background: var(--gc-bg-elev);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--gc-radius-lg);
+
+    h2 {
+      font-family: var(--gc-font-display);
+      margin: 0 0 1rem;
+      font-size: 1.05rem;
+    }
+  }
+}
+
+// ===========================================================================
+// Track board
+// ===========================================================================
+
+.gc-track {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+
+  &__head {
+    padding: 1.5rem;
+    border-radius: var(--gc-radius-lg);
+    background: var(--gc-bg-elev);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 4px solid var(--gc-track, var(--gc-accent));
+    margin-bottom: 2rem;
+
+    h1 {
+      font-family: var(--gc-font-display);
+      margin: 0 0 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+  }
+
+  &__emoji { font-size: 1.6rem; }
+
+  &__stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  &__specs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0 0 0.75rem;
+  }
+
+  &__mine {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--gc-fg-mute);
+  }
+
+  &__cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  &__panel {
+    padding: 1.25rem;
+    background: var(--gc-bg-elev);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--gc-radius-lg);
+    margin-bottom: 1.5rem;
+
+    h2 {
+      font-family: var(--gc-font-display);
+      font-size: 1rem;
+      margin: 0 0 0.9rem;
+    }
+  }
+
+  &__members,
+  &__agenda {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+
+    li {
+      display: flex;
+      align-items: baseline;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+  }
+
+  // The Lead and CoLead sit at the top of the list; a left edge makes
+  // that visible without having to read the role label.
+  &__member--lead {
+    border-left: 2px solid var(--gc-accent);
+    padding-left: 0.6rem;
+  }
+
+  &__member--senior {
+    border-left: 2px solid rgba(0, 242, 255, 0.35);
+    padding-left: 0.6rem;
+  }
+
+  &__name { font-weight: 600; }
+
+  &__role {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--gc-accent);
+  }
+
+  &__spec,
+  &__where { font-size: 0.75rem; color: var(--gc-fg-mute); }
+
+  &__xp {
+    margin-left: auto;
+    font-family: var(--gc-font-mono);
+    font-size: 0.78rem;
+    color: var(--gc-fg-mute);
+  }
+
+  &__when {
+    font-family: var(--gc-font-mono);
+    font-size: 0.72rem;
+    color: var(--gc-accent);
+  }
+
+  &__evt { font-weight: 600; }
+
+  &__score { font-family: var(--gc-font-mono); }
+
+  &__files { color: var(--gc-fg-mute); font-size: 0.8rem; }
+
+  &__row--todo { background: rgba(255, 170, 0, 0.05); }
+
+  &__cta {
+    font-size: 0.85rem;
+    color: var(--gc-fg-mute);
+  }
+}
+
+// ===========================================================================
+// Narrow screens
+// ===========================================================================
+
+@media (max-width: 860px) {
+  // A seven-column month is unreadable on a phone. Collapsing to one
+  // column turns the same markup into an agenda: empty days disappear,
+  // busy days stack in order.
+  .gc-cal__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gc-cal__dow { display: none; }
+
+  .gc-cal__cell {
+    min-height: 0;
+
+    &--blank { display: none; }
+
+    // A day with nothing on it contributes nothing to an agenda.
+    &:not(.gc-cal__cell--busy) { display: none; }
+  }
+
+  .gc-cal__daynum {
+    font-size: 0.9rem;
+    color: var(--gc-accent);
+  }
+
+  .gc-cal__head { gap: 0.75rem; }
+
+  .gc-track__cols { grid-template-columns: 1fr; }
+}
+
+.gc-track-option__board {
+  display: inline-block;
+  margin: 0.35rem 0 0.6rem 0.75rem;
+  font-size: 0.78rem;
+}
+
+.gc-home__next {
+  margin: 2.5rem auto 0;
+  max-width: 560px;
+  text-align: left;
+  padding: 1.25rem;
+  background: var(--gc-bg-elev);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--gc-radius-lg);
+
+  h2 {
+    font-family: var(--gc-font-display);
+    font-size: 0.95rem;
+    margin: 0 0 0.75rem;
+  }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 0.75rem;
+  }
+
+  li {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    padding: 0.4rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  &-when {
+    font-family: var(--gc-font-mono);
+    font-size: 0.72rem;
+    color: var(--gc-accent);
+  }
+
+  &-title { font-weight: 600; }
+}
+
+.gc-quests__bureau {
+  font-size: 0.85rem;
+  color: var(--gc-fg-mute);
+  margin: 0 0 1.5rem;
+}
+
+// A Bureau meeting is the one thing on the calendar that is not public,
+// and the form says so before it is submitted rather than after.
+.gc-cal__private {
+  grid-column: 1 / -1;
+  margin: 0 0 1rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--gc-radius-md);
+  background: rgba(255, 170, 0, 0.1);
+  border: 1px solid rgba(255, 170, 0, 0.32);
+  color: var(--gc-warning);
+  font-size: 0.8rem;
+}
+
+// Audience badge on an event card.
+.gc-cal__event--bureau {
+  border-left-color: var(--gc-warning);
+  background: rgba(255, 170, 0, 0.1);
+}
+
+// ===========================================================================
+// Gamified layer — September 2026
+// ===========================================================================
+//
+// One pass over the whole look, written last so it wins over the older
+// rules it refines. The direction is a game HUD: a faint grid and neon
+// glow behind everything, panels that light up in the colour of what they
+// represent (a rank's ring, a track's colour), progress shown as bars
+// wherever there is progress, and motion that says "something happened"
+// — never motion for its own sake, and none at all for people who asked
+// their system for less.
+
+:root {
+  --gc-panel: rgba(15, 15, 21, 0.78);
+  --gc-border: rgba(255, 255, 255, 0.08);
+  --gc-border-strong: rgba(255, 255, 255, 0.16);
+  --gc-gold: #ffd700;
+  --gc-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+// --- Backdrop ---------------------------------------------------------------
+
+body {
+  background:
+    radial-gradient(1100px 560px at 8% -12%, rgba(0, 242, 255, 0.09), transparent 60%),
+    radial-gradient(900px 520px at 108% 6%, rgba(191, 0, 255, 0.09), transparent 60%),
+    var(--gc-bg);
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+// A faint grid, strongest at the top of the screen and fading out, so it
+// reads as depth rather than as graph paper.
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 50% 0%, #000 25%, transparent 75%);
+}
+
+.gc-hud { position: relative; z-index: 1; }
+
+::selection { background: rgba(0, 242, 255, 0.3); }
+
+h1, h2, h3 { overflow-wrap: anywhere; }
+
+// --- Chrome -----------------------------------------------------------------
+
+.gc-hud__top {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  backdrop-filter: blur(10px);
+  background: rgba(7, 7, 10, 0.72);
+
+  > * { min-width: 0; }
+}
+
+.gc-hud__brand a {
+  font-weight: 800;
+  background: linear-gradient(90deg, var(--gc-accent), var(--gc-accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 24px rgba(0, 242, 255, 0.25);
+}
+
+.gc-hud__rail {
+  top: 64px;
+  background: linear-gradient(180deg, rgba(15, 15, 21, 0.85), transparent 70%);
+}
+
+.gc-rail__link {
+  position: relative;
+
+  &:hover .gc-rail__icon { transform: scale(1.15); }
+
+  &[aria-current='page'] {
+    box-shadow: inset 0 0 18px rgba(0, 242, 255, 0.08);
+    text-shadow: 0 0 12px rgba(0, 242, 255, 0.45);
+  }
+}
+
+.gc-rail__icon { transition: transform 0.15s ease; }
+
+// The member pill: name, most important title, streak, and a thin bar
+// towards the next title underneath — the one number worth a glance.
+.gc-pill {
+  position: relative;
+  overflow: hidden;
+  padding: 0.35rem 0.85rem 0.5rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: color-mix(in srgb, var(--gc-ring) 55%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--gc-ring) 22%, transparent);
+  max-width: 100%;
+
+  &__name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__level {
+    color: var(--gc-ring);
+    white-space: nowrap;
+  }
+
+  &__streak { color: var(--gc-warning); }
+
+  &__xp {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  &__xp-fill {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--gc-ring), var(--gc-accent-2));
+    box-shadow: 0 0 8px var(--gc-ring);
+  }
+}
+
+// --- Primitives -------------------------------------------------------------
+
+.gc-btn {
+  position: relative;
+  letter-spacing: 0.01em;
+
+  &--primary {
+    box-shadow: 0 0 22px rgba(0, 242, 255, 0.28), 0 0 44px rgba(191, 0, 255, 0.16);
+
+    &:hover {
+      box-shadow: 0 0 28px rgba(0, 242, 255, 0.5), 0 0 60px rgba(191, 0, 255, 0.3);
+      color: #000;
+    }
+  }
+
+  &--lg {
+    padding: 0.95rem 1.8rem;
+    font-size: 1.05rem;
+  }
+
+  &:active { transform: translateY(1px) scale(0.99); }
+}
+
+.gc-kicker {
+  margin: 0 0 0.6rem;
+  font-family: var(--gc-font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gc-accent);
+}
+
+// Section titles carry a short neon rule, so a long page still reads as
+// a sequence of chapters.
+.gc-section-title {
+  font-family: var(--gc-font-display);
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+  margin: 0 0 0.9rem;
+
+  &::after {
+    content: "";
+    display: block;
+    width: 48px;
+    height: 3px;
+    margin-top: 0.45rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--gc-accent), var(--gc-accent-2));
+  }
+}
+
+.gc-leaderboard > h1,
+.gc-quests > h1,
+.gc-projects h1,
+.gc-scan > h1,
+.gc-onboard > h1,
+.gc-profile > h1 {
+  &::after {
+    content: "";
+    display: block;
+    width: 64px;
+    height: 3px;
+    margin-top: 0.5rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--gc-accent), var(--gc-accent-2));
+  }
+}
+
+// An empty state is an invitation, not an apology: a framed panel with a
+// big glyph reads as "nothing here yet" rather than as a broken page.
+.gc-empty {
+  position: relative;
+  max-width: 560px;
+  margin: 2rem auto;
+  padding: 3.25rem 1.5rem 2rem;
+  border: 1px dashed var(--gc-border-strong);
+  border-radius: var(--gc-radius-lg);
+  background: rgba(255, 255, 255, 0.02);
+
+  &::before {
+    content: "🎮";
+    position: absolute;
+    top: 0.9rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 1.6rem;
+    filter: drop-shadow(0 0 10px rgba(0, 242, 255, 0.4));
+  }
+}
+
+.gc-chip { backdrop-filter: blur(4px); }
+
+// --- Home: hero and mission -------------------------------------------------
+
+.gc-home {
+  padding: 2.5rem 0 1rem;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.gc-hero,
+.gc-mission {
+  position: relative;
+  text-align: center;
+  padding: 3.5rem 1.5rem 3rem;
+  margin-bottom: 3rem;
+  border: 1px solid var(--gc-border);
+  border-radius: 24px;
+  background:
+    radial-gradient(600px 240px at 50% 0%, rgba(0, 242, 255, 0.12), transparent 70%),
+    var(--gc-panel);
+  box-shadow: var(--gc-shadow);
+  overflow: hidden;
+}
+
+.gc-hero {
+  &__title {
+    font-family: var(--gc-font-display);
+    font-weight: 800;
+    font-size: clamp(2.2rem, 7vw, 4.4rem);
+    line-height: 1.05;
+    margin: 0 0 1rem;
+    letter-spacing: 0.04em;
+    background: linear-gradient(135deg, var(--gc-accent) 10%, #8a7dff 50%, var(--gc-accent-2) 90%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 0 26px rgba(0, 242, 255, 0.25));
+  }
+
+  &__tagline {
+    font-size: clamp(1rem, 2.4vw, 1.2rem);
+    color: var(--gc-fg-mute);
+    max-width: 38rem;
+    margin: 0 auto 2rem;
+    line-height: 1.6;
+  }
+
+  &__cta {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  &__stats {
+    list-style: none;
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0;
+    margin: 2.5rem 0 0;
+
+    li {
+      min-width: 8.5rem;
+      padding: 0.8rem 1rem;
+      border: 1px solid var(--gc-border);
+      border-radius: var(--gc-radius-md);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    strong {
+      display: block;
+      font-family: var(--gc-font-display);
+      font-size: 1.6rem;
+      color: var(--gc-accent);
+    }
+
+    span {
+      font-size: 0.78rem;
+      color: var(--gc-fg-mute);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+  }
+}
+
+.gc-mission {
+  background:
+    radial-gradient(640px 260px at 50% 0%, color-mix(in srgb, var(--gc-ring) 22%, transparent), transparent 70%),
+    var(--gc-panel);
+  border-color: color-mix(in srgb, var(--gc-ring) 35%, transparent);
+
+  &__name {
+    font-family: var(--gc-font-display);
+    font-size: clamp(1.8rem, 5vw, 3rem);
+    margin: 0 0 0.35rem;
+  }
+
+  &__titles {
+    margin: 0 0 1.75rem;
+    color: var(--gc-ring);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+  }
+
+  &__bar {
+    max-width: 520px;
+    height: 12px;
+    margin: 0 auto;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.07);
+    overflow: hidden;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+
+  &__fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--gc-ring), var(--gc-accent-2));
+    box-shadow: 0 0 16px var(--gc-ring);
+  }
+
+  &__next {
+    margin: 0.6rem 0 0;
+    font-family: var(--gc-font-mono);
+    font-size: 0.8rem;
+    color: var(--gc-fg-mute);
+  }
+
+  &__stats {
+    @extend .gc-hero__stats;
+    margin: 2rem 0;
+
+    strong { color: var(--gc-fg); }
+  }
+}
+
+.gc-home__section {
+  margin: 0 0 3rem;
+  text-align: left;
+}
+
+.gc-home__next {
+  max-width: none;
+  margin: 0;
+  background: var(--gc-panel);
+}
+
+// --- How to progress ----------------------------------------------------------
+
+.gc-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  counter-reset: step;
+}
+
+.gc-step {
+  position: relative;
+  counter-increment: step;
+  padding: 1.4rem 1.25rem 1.25rem;
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius-lg);
+  background: var(--gc-panel);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+
+  &::after {
+    content: "0" counter(step);
+    position: absolute;
+    top: 1rem;
+    right: 1.1rem;
+    font-family: var(--gc-font-display);
+    font-size: 1.6rem;
+    color: rgba(255, 255, 255, 0.06);
+  }
+
+  &:hover {
+    transform: translateY(-3px);
+    border-color: rgba(0, 242, 255, 0.35);
+    box-shadow: 0 0 24px rgba(0, 242, 255, 0.12);
+  }
+
+  &__icon { font-size: 1.8rem; }
+
+  h3 {
+    margin: 0.6rem 0 0.35rem;
+    font-size: 1rem;
+  }
+
+  p {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.55;
+    color: var(--gc-fg-mute);
+  }
+}
+
+// --- Title ladder -------------------------------------------------------------
+
+.gc-ladder {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 0.6rem;
+}
+
+.gc-ladder__rung {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 0.65rem;
+  align-items: center;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius-md);
+  background: var(--gc-panel);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+
+  &--locked { opacity: 0.55; }
+
+  &--reached { border-color: color-mix(in srgb, var(--gc-ring) 40%, transparent); }
+
+  &--current {
+    border-color: var(--gc-ring);
+    box-shadow: 0 0 22px color-mix(in srgb, var(--gc-ring) 35%, transparent);
+    background:
+      linear-gradient(135deg, color-mix(in srgb, var(--gc-ring) 16%, transparent), transparent),
+      var(--gc-panel);
+
+    &::after {
+      content: "VOUS";
+      position: absolute;
+      top: -0.55rem;
+      right: 0.6rem;
+      padding: 0 0.4rem;
+      border-radius: 999px;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: #000;
+      background: var(--gc-ring);
+    }
+  }
+}
+
+.gc-ladder__dot {
+  grid-row: 1 / 3;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--gc-ring);
+  box-shadow: 0 0 10px var(--gc-ring);
+
+  .gc-ladder__rung--locked & {
+    background: transparent;
+    border: 2px solid var(--gc-ring);
+    box-shadow: none;
+  }
+}
+
+.gc-ladder__title {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.gc-ladder__xp {
+  font-family: var(--gc-font-mono);
+  font-size: 0.72rem;
+  color: var(--gc-fg-mute);
+}
+
+// --- Track strip --------------------------------------------------------------
+
+.gc-trackstrip {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.6rem;
+
+  &__item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--gc-border);
+    border-left: 3px solid var(--gc-track);
+    border-radius: var(--gc-radius-md);
+    background: var(--gc-panel);
+    color: var(--gc-fg);
+    font-weight: 600;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+
+    &:hover {
+      color: var(--gc-fg);
+      transform: translateY(-2px);
+      border-color: var(--gc-track);
+      box-shadow: 0 0 20px color-mix(in srgb, var(--gc-track) 30%, transparent);
+    }
+  }
+
+  &__emoji { font-size: 1.3rem; }
+}
+
+// --- Leaderboard podium -------------------------------------------------------
+
+.gc-podium {
+  list-style: none;
+  padding: 0;
+  margin: 1.5rem 0 2rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.gc-podium__place {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.2rem;
+  min-width: 0;
+
+  &--me .gc-podium__name { color: var(--gc-accent); }
+}
+
+.gc-podium__medal { font-size: 1.6rem; }
+
+.gc-podium__avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  padding: 3px;
+  background: conic-gradient(var(--gc-ring), color-mix(in srgb, var(--gc-ring) 30%, transparent), var(--gc-ring));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--gc-ring) 45%, transparent);
+
+  img,
+  .gc-podium__initial {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--gc-bg);
+  }
+
+  .gc-podium__initial {
+    display: grid;
+    place-items: center;
+    font-family: var(--gc-font-display);
+    font-size: 1.4rem;
+    color: var(--gc-ring);
+  }
+
+  .gc-podium__place--1 & {
+    width: 84px;
+    height: 84px;
+  }
+}
+
+.gc-podium__name {
+  max-width: 100%;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gc-podium__title {
+  font-size: 0.75rem;
+  color: var(--gc-ring);
+}
+
+.gc-podium__xp {
+  font-family: var(--gc-font-mono);
+  font-size: 0.78rem;
+  color: var(--gc-fg-mute);
+}
+
+// The block each place stands on; the winner's is tallest.
+.gc-podium__block {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding-top: 0.6rem;
+  border-radius: var(--gc-radius-md) var(--gc-radius-md) 0 0;
+  border: 1px solid color-mix(in srgb, var(--gc-ring) 40%, transparent);
+  border-bottom: none;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--gc-ring) 22%, transparent), transparent);
+  font-family: var(--gc-font-display);
+  font-size: 1.4rem;
+  color: color-mix(in srgb, var(--gc-ring) 70%, #fff);
+  height: 3.5rem;
+
+  .gc-podium__place--1 & { height: 5.5rem; }
+  .gc-podium__place--3 & { height: 2.6rem; }
+}
+
+.gc-table__rank { color: var(--gc-ring, var(--gc-fg-mute)); }
+
+.gc-table__row--me td:first-child { box-shadow: inset 3px 0 0 var(--gc-accent); }
+
+.gc-table tbody tr { transition: background 0.15s ease; }
+.gc-table tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+
+// --- Profile ------------------------------------------------------------------
+
+.gc-card {
+  background:
+    radial-gradient(360px 160px at 20% 0%, color-mix(in srgb, var(--gc-ring) 16%, transparent), transparent 70%),
+    var(--gc-panel);
+  border-color: color-mix(in srgb, var(--gc-ring) 30%, transparent);
+  box-shadow: var(--gc-shadow);
+}
+
+.gc-card__title {
+  color: var(--gc-ring);
+  font-weight: 600;
+}
+
+.gc-level {
+  max-width: 560px;
+  width: 100%;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius-lg);
+  background: var(--gc-panel);
+
+  &__track { height: 12px; }
+
+  &__fill {
+    box-shadow: 0 0 14px currentColor;
+    background-image: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.25), transparent);
+    background-size: 200% 100%;
+    animation: gc-shimmer 2.8s linear infinite;
+  }
+}
+
+.gc-stat {
+  background: var(--gc-panel);
+  transition: transform 0.18s ease, border-color 0.18s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    border-color: rgba(0, 242, 255, 0.3);
+  }
+
+  &__value { text-shadow: 0 0 16px rgba(0, 242, 255, 0.35); }
+}
+
+.gc-profile__ladder h2 {
+  font-family: var(--gc-font-display);
+  font-size: 1.05rem;
+  margin: 0 0 1rem;
+}
+
+.gc-track {
+  background: var(--gc-panel);
+  transition: box-shadow 0.18s ease;
+
+  &:hover { box-shadow: 0 0 18px color-mix(in srgb, var(--gc-track, var(--gc-accent)) 22%, transparent); }
+
+  &__progress {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.4rem;
+  }
+
+  &__bar {
+    flex: 1;
+    max-width: 220px;
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+
+  &__fill {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: var(--gc-track, var(--gc-accent));
+    box-shadow: 0 0 8px var(--gc-track, var(--gc-accent));
+  }
+
+  &__next {
+    font-family: var(--gc-font-mono);
+    font-size: 0.7rem;
+    color: var(--gc-fg-mute);
+  }
+}
+
+.gc-badge {
+  position: relative;
+  background: var(--gc-panel);
+
+  &__state {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.6rem;
+    font-size: 0.8rem;
+  }
+
+  &__title { padding-right: 1.4rem; }
+
+  &--held {
+    background:
+      linear-gradient(135deg, rgba(255, 215, 0, 0.1), transparent 60%),
+      var(--gc-panel);
+    animation: gc-glow 3.5s ease-in-out infinite;
+  }
+}
+
+.gc-history__item { transition: background 0.15s ease; }
+.gc-history__item:hover { background: rgba(255, 255, 255, 0.025); }
+
+// --- Quests -------------------------------------------------------------------
+
+.gc-quest {
+  position: relative;
+  background: var(--gc-panel);
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+
+  &:hover {
+    transform: translateY(-3px);
+    border-color: rgba(191, 0, 255, 0.4);
+    box-shadow: 0 0 24px rgba(191, 0, 255, 0.15);
+  }
+
+  &__reward {
+    padding: 0.1rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(52, 208, 88, 0.12);
+    border: 1px solid rgba(52, 208, 88, 0.35);
+
+    &::before { content: "✨ "; }
+  }
+
+  &__track { height: 8px; }
+
+  &__fill { box-shadow: 0 0 10px rgba(0, 242, 255, 0.5); }
+
+  // A finished quest gets a stamp, the way a completed achievement does.
+  &--done::after {
+    content: "ACCOMPLIE";
+    position: absolute;
+    top: 42%;
+    right: 1rem;
+    transform: rotate(-12deg);
+    padding: 0.15rem 0.6rem;
+    border: 2px solid rgba(52, 208, 88, 0.7);
+    border-radius: var(--gc-radius-sm);
+    font-family: var(--gc-font-display);
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    color: rgba(52, 208, 88, 0.85);
+    pointer-events: none;
+  }
+}
+
+// --- Track picker -------------------------------------------------------------
+
+.gc-track-option {
+  background: var(--gc-panel);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 22px color-mix(in srgb, var(--gc-track, var(--gc-accent)) 28%, transparent);
+  }
+}
+
+// --- Motion -------------------------------------------------------------------
+
+@keyframes gc-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@keyframes gc-glow {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 215, 0, 0.1); }
+  50% { box-shadow: 0 0 20px rgba(255, 215, 0, 0.28); }
+}
+
+@keyframes gc-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.gc-hero,
+.gc-mission,
+.gc-step,
+.gc-ladder__rung,
+.gc-podium__place,
+.gc-quest {
+  animation: gc-rise 0.45s ease both;
+}
+
+.gc-step:nth-child(2),
+.gc-ladder__rung:nth-child(2),
+.gc-podium__place:nth-child(2) { animation-delay: 0.05s; }
+.gc-step:nth-child(3),
+.gc-ladder__rung:nth-child(3),
+.gc-podium__place:nth-child(3) { animation-delay: 0.1s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+// --- Phones -------------------------------------------------------------------
+
+@media (max-width: 720px) {
+  // Brand and pill share one line; the pill gives way first.
+  .gc-hud__top {
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+  }
+
+  .gc-hud__brand a { font-size: 1rem; white-space: nowrap; }
+
+  .gc-hud__auth {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+
+    .gc-link { display: none; }
+    .gc-btn { padding: 0.5rem 0.8rem; font-size: 0.85rem; white-space: nowrap; }
+  }
+
+  .gc-pill__name { max-width: 7rem; }
+
+  .gc-hud__rail { top: auto; }
+
+  .gc-hero,
+  .gc-mission {
+    padding: 2.25rem 1rem 2rem;
+    border-radius: var(--gc-radius-lg);
+  }
+
+  .gc-hero__stats li { min-width: 0; flex: 1 1 30%; }
+
+  .gc-podium { gap: 0.4rem; }
+  .gc-podium__avatar { width: 48px; height: 48px; }
+  .gc-podium__place--1 .gc-podium__avatar { width: 60px; height: 60px; }
+}
+
+// --- Legibility and fixes from the first look ---------------------------------
+
+// Some rank rings are deep colours (Ancien de la Forge is #5c1a9c) that
+// glow well but read badly as text on the dark ground. Text takes the
+// ring lightened; borders and glows keep it as it is.
+.gc-mission__titles,
+.gc-podium__title,
+.gc-table__rank,
+.gc-pill__level,
+.gc-card__title,
+.gc-podium__initial,
+.gc-card__initial {
+  color: color-mix(in srgb, var(--gc-ring) 55%, #ffffff);
+}
+
+.gc-card__initial {
+  display: grid;
+  place-items: center;
+  font-family: var(--gc-font-display);
+  font-size: 2.2rem;
+}
+
+@media (max-width: 720px) {
+  .gc-hud__brand { flex: none; }
+  .gc-hud__auth { flex: 1 1 auto; justify-content: flex-end; }
+  .gc-pill { min-width: 0; }
+  // On a phone the pill keeps the name, the streak and the bar; the
+  // title is one tap away on the profile.
+  .gc-pill__level { display: none; }
+}
+
+// The track *board* page also uses `.gc-track` as its page container,
+// with a 1100px width and page padding. Inside the profile's track list
+// those rules squeezed every row into a tall narrow column; a list item
+// is a row, not a page.
+.gc-tracks__list > .gc-track {
+  max-width: none;
+  margin: 0;
+  padding: 0.8rem 1rem;
 }

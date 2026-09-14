@@ -24,8 +24,9 @@ use leptos::prelude::*;
 
 // Types that appear in the function signatures, so both targets need them.
 use crate::api::{
-    AuditLine, FileItem, LeaderboardView, MeView, ProjectCard, ProjectDetailView, QuestItem,
-    ResourceItem, ReviewItem, SheetView, TrackOption,
+    AuditLine, CalendarEvent, CalendarRights, EventAttendee, EventDraft, FileItem, LeaderboardView, MeView, ProjectCard,
+    ProjectDetailView, QrTicket, QuestItem, ResourceItem, ReviewItem, SheetView, TrackBoard,
+    TrackOption,
 };
 
 // Types only constructed inside the server bodies.
@@ -120,13 +121,13 @@ mod ctx {
 /// # Errors
 /// Returns a `ServerFnError` only on an unexpected database failure; a
 /// missing or invalid session is `Ok(None)`.
-#[server(GetMe, "/api")]
+#[server(GetMe, "/_fn")]
 pub async fn get_me() -> Result<Option<MeView>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
         use gamecloud_shared::{
             roles::{Action, BureauRole, GlobalRank},
-            xp::{level_progress, streak_multiplier},
+            xp::streak_multiplier,
         };
 
         let Some(state) = ctx::state() else {
@@ -151,19 +152,21 @@ pub async fn get_me() -> Result<Option<MeView>, ServerFnError> {
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         let rank = GlobalRank::parse(&record.global_rank);
-        let (into, needed) = level_progress(record.xp_total);
+        // Progress is shown towards the next title, not a numbered level.
+        let next = rank.next_milestone();
+        let floor = rank.floor_xp();
+        let (into, needed) = next.map_or((0, 0), |(_, at)| {
+            ((record.xp_total - floor).clamp(0, at - floor), at - floor)
+        });
 
         return Ok(Some(MeView {
             id: record.id.to_string(),
-            display_name: record
-                .current_title
-                .clone()
-                .unwrap_or_else(|| record.discord_id.clone()),
+            display_name: record.display_name(),
             avatar_url: record.avatar_custom_url.clone().or(record.avatar_url.clone()),
             xp_total: record.xp_total,
-            level: record.level,
-            level_xp_into: into,
-            level_xp_needed: needed,
+            next_rank_title: next.map(|(r, _)| r.title().to_string()),
+            rank_xp_into: into,
+            rank_xp_needed: needed,
             global_rank: record.global_rank.clone(),
             rank_title: rank.title().to_string(),
             rank_color: rank.ring_color().to_string(),
@@ -203,7 +206,7 @@ pub async fn get_me() -> Result<Option<MeView>, ServerFnError> {
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
-#[server(GetSheet, "/api")]
+#[server(GetSheet, "/_fn")]
 pub async fn get_sheet() -> Result<Option<SheetView>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -298,11 +301,27 @@ pub async fn get_sheet() -> Result<Option<SheetView>, ServerFnError> {
 // Leaderboard
 // ---------------------------------------------------------------------------
 
+/// The member title a leaderboard row shows.
+///
+/// A verified member shows the rank the platform holds. An account that
+/// has not verified its email yet — a Bureau member created ahead of their
+/// first login — is gated on the platform but has earned its title by
+/// progression, so it shows what its XP is worth, as it does on Discord.
+#[cfg(feature = "ssr")]
+fn shown_rank(row: &crate::db::queries::leaderboard::LeaderboardRow) -> gamecloud_shared::roles::GlobalRank {
+    use gamecloud_shared::roles::GlobalRank;
+    if row.email_verified {
+        GlobalRank::parse(&row.global_rank)
+    } else {
+        GlobalRank::from_xp(row.total_xp).max(GlobalRank::Initiate)
+    }
+}
+
 /// A leaderboard for the given scope (`all`, `season` or `track`).
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
-#[server(GetLeaderboard, "/api")]
+#[server(GetLeaderboard, "/_fn")]
 pub async fn get_leaderboard(
     scope: String,
     track: Option<String>,
@@ -358,16 +377,32 @@ pub async fn get_leaderboard(
             }
         };
 
+        // On a track board the "rank" column holds the track role, so the
+        // title and colour come from the track rather than the XP ladder.
+        let track_color = (scope == "track")
+            .then(|| label.as_deref().and_then(gamecloud_shared::roles::Track::parse))
+            .flatten()
+            .map(|t| t.color_hex().to_string());
         let entries = rows
             .into_iter()
             .enumerate()
-            .map(|(i, row)| LeaderboardEntry {
+            // Resolved before the row's fields are moved into the entry.
+            .map(|(i, row)| (i, shown_rank(&row), row))
+            .map(|(i, shown, row)| LeaderboardEntry {
                 position: i + 1,
                 is_me: viewer == Some(row.user_id),
                 user_id: row.user_id.to_string(),
                 display_name: row.display_name,
                 avatar_url: row.avatar_url,
                 xp: row.xp,
+                rank_title: match &track_color {
+                    Some(_) => gamecloud_shared::roles::TrackRole::title_of(&row.global_rank)
+                        .to_string(),
+                    None => shown.title().to_string(),
+                },
+                rank_color: track_color
+                    .clone()
+                    .unwrap_or_else(|| shown.ring_color().to_string()),
                 rank: row.global_rank,
                 level: row.level,
                 streak_days: row.streak_days,
@@ -396,7 +431,7 @@ pub async fn get_leaderboard(
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
-#[server(GetQuests, "/api")]
+#[server(GetQuests, "/_fn")]
 pub async fn get_quests() -> Result<Vec<QuestItem>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -454,7 +489,7 @@ fn condition_label(condition: &str, target: i32) -> String {
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
-#[server(GetTrackOptions, "/api")]
+#[server(GetTrackOptions, "/_fn")]
 pub async fn get_track_options() -> Result<Vec<TrackOption>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -496,7 +531,7 @@ pub async fn get_track_options() -> Result<Vec<TrackOption>, ServerFnError> {
 ///
 /// # Errors
 /// Returns a `ServerFnError` carrying the domain message on failure.
-#[server(JoinTrack, "/api")]
+#[server(JoinTrack, "/_fn")]
 pub async fn join_track(
     track: String,
     specialization: Option<String>,
@@ -535,7 +570,7 @@ pub async fn join_track(
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
-#[server(GetProjects, "/api")]
+#[server(GetProjects, "/_fn")]
 pub async fn get_projects(track: Option<String>) -> Result<Vec<ProjectCard>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -543,9 +578,29 @@ pub async fn get_projects(track: Option<String>) -> Result<Vec<ProjectCard>, Ser
             return Ok(Vec::new());
         };
         let filter = track.filter(|t| !t.is_empty());
-        let rows = crate::db::queries::projects::list(state.pool(), filter.as_deref(), false)
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        // Signed out is not an error: a visitor simply sees the
+        // published record and nothing in progress.
+        let viewer = ctx::current_user_id(&state).await;
+        let tracks = match viewer {
+            Some(id) => {
+                let authority = crate::db::queries::users::load_authority(state.pool(), id)
+                    .await
+                    .map_err(|e| ServerFnError::new(e.to_string()))?;
+                crate::db::queries::users::visible_tracks(&authority)
+            }
+            None => Vec::new(),
+        };
+
+        let rows = crate::db::queries::projects::list(
+            state.pool(),
+            filter.as_deref(),
+            &crate::db::queries::projects::Visibility {
+                tracks: &tracks,
+                viewer,
+            },
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
         return Ok(rows.into_iter().map(to_card).collect());
     }
 
@@ -560,7 +615,7 @@ pub async fn get_projects(track: Option<String>) -> Result<Vec<ProjectCard>, Ser
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
-#[server(GetProject, "/api")]
+#[server(GetProject, "/_fn")]
 pub async fn get_project(id: String) -> Result<Option<ProjectDetailView>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -709,7 +764,7 @@ fn to_card(summary: crate::db::queries::projects::ProjectSummary) -> ProjectCard
 /// Returns a `ServerFnError` carrying the domain message — "you have
 /// already scanned this code", "this code has reached its scan limit"
 /// and so on — so the page can show it verbatim.
-#[server(ScanQr, "/api")]
+#[server(ScanQr, "/_fn")]
 pub async fn scan_qr(token: String) -> Result<String, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -750,7 +805,7 @@ pub async fn scan_qr(token: String) -> Result<String, ServerFnError> {
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
-#[server(GetReviewQueue, "/api")]
+#[server(GetReviewQueue, "/_fn")]
 pub async fn get_review_queue() -> Result<Vec<ReviewItem>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -785,12 +840,13 @@ pub async fn get_review_queue() -> Result<Vec<ReviewItem>, ServerFnError> {
 /// Returns a `ServerFnError` carrying the domain message — a rejection
 /// with no feedback, a track the caller cannot judge, a project no
 /// longer in review.
-#[server(ReviewProject, "/api")]
+#[server(ReviewProject, "/_fn")]
 pub async fn review_project(
     project_id: String,
     track: String,
     verdict: String,
     feedback: Option<String>,
+    score: Option<i32>,
 ) -> Result<String, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -824,10 +880,13 @@ pub async fn review_project(
             state.pool(),
             state.channels(),
             user_id,
-            id,
-            parsed_track.as_str(),
-            parsed_verdict,
-            feedback.as_deref().filter(|f| !f.trim().is_empty()),
+            &crate::db::queries::projects::Judgement {
+                project_id: id,
+                track: parsed_track.as_str(),
+                verdict: parsed_verdict,
+                feedback: feedback.as_deref().filter(|f| !f.trim().is_empty()),
+                score,
+            },
         )
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -837,7 +896,7 @@ pub async fn review_project(
 
     #[cfg(not(feature = "ssr"))]
     {
-        let _ = (project_id, track, verdict, feedback);
+        let _ = (project_id, track, verdict, feedback, score);
         Ok(String::new())
     }
 }
@@ -846,7 +905,7 @@ pub async fn review_project(
 ///
 /// # Errors
 /// Returns a `ServerFnError` on a refused transition or a missing right.
-#[server(SubmitProject, "/api")]
+#[server(SubmitProject, "/_fn")]
 pub async fn submit_project(project_id: String) -> Result<Vec<String>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -892,7 +951,7 @@ pub async fn submit_project(project_id: String) -> Result<Vec<String>, ServerFnE
 ///
 /// # Errors
 /// Returns a `ServerFnError` on a validation failure or a missing right.
-#[server(CreateProject, "/api")]
+#[server(CreateProject, "/_fn")]
 pub async fn create_project(
     name: String,
     short_description: String,
@@ -932,6 +991,26 @@ pub async fn create_project(
         let id = crate::db::queries::projects::create(state.pool(), user_id, &new)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        // The repository is a convenience, not a precondition: GitHub
+        // being down must not stop a member starting a project, so a
+        // failure is logged and the project stands without one.
+        let author_login = crate::db::queries::users::find_by_id(state.pool(), user_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|u| u.github_username);
+        crate::services::github::provision_project_repo(
+            &state,
+            &crate::services::github::NewRepo {
+                project_id: id,
+                name: &new.name,
+                description: new.short_description.as_deref(),
+                author_login: author_login.as_deref(),
+            },
+        )
+        .await;
+
         return Ok(id.to_string());
     }
 
@@ -946,7 +1025,7 @@ pub async fn create_project(
 ///
 /// # Errors
 /// Returns a `ServerFnError` when the caller lacks `GrantManualXp`.
-#[server(GrantXp, "/api")]
+#[server(GrantXp, "/_fn")]
 pub async fn grant_xp(
     member: String,
     amount: i32,
@@ -1013,7 +1092,7 @@ pub async fn grant_xp(
 ///
 /// # Errors
 /// Returns a `ServerFnError` when the caller lacks `ViewAuditLogs`.
-#[server(GetAudit, "/api")]
+#[server(GetAudit, "/_fn")]
 pub async fn get_audit() -> Result<Vec<AuditLine>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -1061,7 +1140,7 @@ pub async fn get_audit() -> Result<Vec<AuditLine>, ServerFnError> {
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
-#[server(GetResources, "/api")]
+#[server(GetResources, "/_fn")]
 pub async fn get_resources() -> Result<Vec<ResourceItem>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -1112,7 +1191,7 @@ pub async fn get_resources() -> Result<Vec<ResourceItem>, ServerFnError> {
 ///
 /// # Errors
 /// Returns a `ServerFnError` on a validation failure.
-#[server(SubmitResource, "/api")]
+#[server(SubmitResource, "/_fn")]
 pub async fn submit_resource(
     title: String,
     url: String,
@@ -1156,7 +1235,7 @@ pub async fn submit_resource(
 ///
 /// # Errors
 /// Returns a `ServerFnError` carrying the domain message.
-#[server(ActOnResource, "/api")]
+#[server(ActOnResource, "/_fn")]
 pub async fn act_on_resource(id: String, action: String) -> Result<(), ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -1214,7 +1293,7 @@ pub async fn act_on_resource(id: String, action: String) -> Result<(), ServerFnE
 ///
 /// # Errors
 /// Returns a `ServerFnError` when the caller lacks `GrantManualXp`.
-#[server(OpenQuest, "/api")]
+#[server(OpenQuest, "/_fn")]
 pub async fn open_quest(
     title: String,
     condition: String,
@@ -1273,7 +1352,7 @@ pub async fn open_quest(
 ///
 /// # Errors
 /// Returns a `ServerFnError` on a missing right or unknown member.
-#[server(AddContributor, "/api")]
+#[server(AddContributor, "/_fn")]
 pub async fn add_contributor(
     project_id: String,
     member: String,
@@ -1306,6 +1385,7 @@ pub async fn add_contributor(
 
         crate::db::queries::projects::add_contributor(
             state.pool(),
+            state.channels(),
             id,
             target,
             &track,
@@ -1328,7 +1408,7 @@ pub async fn add_contributor(
 /// # Errors
 /// Returns a `ServerFnError` when the caller may not appoint in that
 /// track, or the member is unknown.
-#[server(AppointTrackRole, "/api")]
+#[server(AppointTrackRole, "/_fn")]
 pub async fn appoint_track_role(
     member: String,
     track: String,
@@ -1374,7 +1454,13 @@ pub async fn appoint_track_role(
             .map_err(|e| ServerFnError::new(e.to_string()))?
             .ok_or_else(|| ServerFnError::new("membre introuvable"))?;
 
-        crate::db::queries::tracks::set_role(state.pool(), target, parsed_track, parsed_role)
+        crate::db::queries::tracks::set_role(
+            state.pool(),
+            state.channels(),
+            target,
+            parsed_track,
+            parsed_role,
+        )
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
@@ -1403,7 +1489,7 @@ pub async fn appoint_track_role(
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
-#[server(GetProjectFiles, "/api")]
+#[server(GetProjectFiles, "/_fn")]
 pub async fn get_project_files(project_id: String) -> Result<Vec<FileItem>, ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -1437,5 +1523,732 @@ pub async fn get_project_files(project_id: String) -> Result<Vec<FileItem>, Serv
     {
         let _ = project_id;
         Ok(Vec::new())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Calendar
+// ---------------------------------------------------------------------------
+
+/// The scope a stored event belongs to.
+///
+/// Falls back to `Bureau` when the row is somehow inconsistent: the
+/// most restrictive answer is the safe one, because guessing `Association`
+/// on a malformed row would put a private meeting on everybody's
+/// calendar.
+#[cfg(feature = "ssr")]
+fn scope_of(row: &crate::db::queries::events::EventRow) -> gamecloud_shared::roles::EventScope {
+    use gamecloud_shared::roles::EventScope;
+    EventScope::parse(&row.audience, row.track.as_deref()).unwrap_or(EventScope::Bureau)
+}
+
+/// French label for an event kind.
+///
+/// Lives here rather than in the page so the label is decided once, on
+/// the server, and every surface that shows an event agrees.
+#[cfg(feature = "ssr")]
+fn kind_label(kind: &str) -> &'static str {
+    match kind {
+        "Session" => "Séance",
+        "Workshop" => "Atelier",
+        "Jam" => "Game jam",
+        "Meeting" => "Réunion",
+        "Deadline" => "Échéance",
+        "Showcase" => "Présentation",
+        _ => "Événement",
+    }
+}
+
+/// Turn a stored event into what the calendar renders.
+#[cfg(feature = "ssr")]
+fn present_event(
+    row: &crate::db::queries::events::EventRow,
+    authority: &gamecloud_shared::roles::Authority,
+) -> CalendarEvent {
+    use gamecloud_shared::roles::{Action, Track};
+
+    let track = row.track.as_deref().and_then(Track::parse);
+    let same_day = row.starts_at.date_naive() == row.ends_at.date_naive();
+    let time_label = if row.ends_at == row.starts_at {
+        row.starts_at.format("%H:%M").to_string()
+    } else if same_day {
+        format!(
+            "{} – {}",
+            row.starts_at.format("%H:%M"),
+            row.ends_at.format("%H:%M")
+        )
+    } else {
+        format!(
+            "{} → {}",
+            row.starts_at.format("%d/%m %H:%M"),
+            row.ends_at.format("%d/%m %H:%M")
+        )
+    };
+
+    CalendarEvent {
+        id: row.id.to_string(),
+        title: row.title.clone(),
+        description: row.description.clone(),
+        kind_label: kind_label(&row.kind).to_string(),
+        kind: row.kind.clone(),
+        track: row.track.clone(),
+        track_emoji: track.map(|t| t.emoji().to_string()),
+        audience_label: match row.audience.as_str() {
+            "Bureau" => "Bureau".to_string(),
+            "Track" => track.map_or_else(|| "Track".to_string(), |t| t.as_str().to_string()),
+            _ => "Association".to_string(),
+        },
+        audience: row.audience.clone(),
+        day: row.starts_at.format("%Y-%m-%d").to_string(),
+        time_label,
+        when_label: ctx::stamp(row.starts_at),
+        location: row.location.clone(),
+        xp_reward: row.xp_reward,
+        attendee_count: row.attendee_count,
+        cancelled: row.cancelled_at.is_some(),
+        past: row.ends_at < chrono::Utc::now(),
+        can_manage: authority.can(Action::ManageEvents(scope_of(row))),
+    }
+}
+
+/// Parse a `YYYY-MM` month into the half-open window it covers.
+///
+/// Returns `None` for anything unparseable, which the caller turns into
+/// the current month rather than an error — a bad query string should
+/// show the calendar, not a stack trace.
+#[cfg(feature = "ssr")]
+fn month_window(
+    month: &str,
+) -> Option<(
+    chrono::DateTime<chrono::Utc>,
+    chrono::DateTime<chrono::Utc>,
+)> {
+    use chrono::{Datelike, NaiveDate, TimeZone};
+
+    let (year, rest) = month.split_once('-')?;
+    let year: i32 = year.parse().ok()?;
+    let month: u32 = rest.parse().ok()?;
+    let first = NaiveDate::from_ymd_opt(year, month, 1)?;
+    // Adding a month by hand, because `chrono` has no calendar-aware
+    // "next month" and December has to roll the year.
+    let next = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)?
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)?
+    };
+    let _ = first.day();
+    Some((
+        chrono::Utc.from_utc_datetime(&first.and_hms_opt(0, 0, 0)?),
+        chrono::Utc.from_utc_datetime(&next.and_hms_opt(0, 0, 0)?),
+    ))
+}
+
+/// Everything on the calendar for one month.
+///
+/// `month` is `YYYY-MM`; anything else falls back to the current month.
+/// `track` filters to one track's events plus the association-wide ones,
+/// because a member looking at the Audio calendar still needs to know
+/// about the general assembly.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the database is unreachable.
+#[server(GetCalendar, "/_fn")]
+pub async fn get_calendar(
+    month: String,
+    track: Option<String>,
+) -> Result<Vec<CalendarEvent>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use chrono::Datelike;
+
+        let Some(state) = ctx::state() else {
+            return Ok(Vec::new());
+        };
+
+        let (from, to) = month_window(&month).unwrap_or_else(|| {
+            let now = chrono::Utc::now();
+            month_window(&format!("{:04}-{:02}", now.year(), now.month()))
+                .expect("the current month is always a valid YYYY-MM")
+        });
+
+        // Signed out is not an error here: the calendar is readable by
+        // anyone who reaches the page, they simply manage nothing.
+        let authority = match ctx::current_user_id(&state).await {
+            Some(id) => crate::db::queries::users::load_authority(state.pool(), id)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?,
+            None => gamecloud_shared::roles::Authority::anonymous(),
+        };
+
+        let sees_bureau = authority.can(gamecloud_shared::roles::Action::ManageEvents(
+            gamecloud_shared::roles::EventScope::Bureau,
+        ));
+        let rows = crate::db::queries::events::in_window(
+            state.pool(),
+            from,
+            to,
+            track.as_deref().filter(|t| !t.is_empty()),
+            sees_bureau,
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        return Ok(rows.iter().map(|r| present_event(r, &authority)).collect());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (month, track);
+        Ok(Vec::new())
+    }
+}
+
+/// The next few events, for the home page.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the database is unreachable.
+#[server(GetUpcoming, "/_fn")]
+pub async fn get_upcoming() -> Result<Vec<CalendarEvent>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let Some(state) = ctx::state() else {
+            return Ok(Vec::new());
+        };
+        let authority = match ctx::current_user_id(&state).await {
+            Some(id) => crate::db::queries::users::load_authority(state.pool(), id)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?,
+            None => gamecloud_shared::roles::Authority::anonymous(),
+        };
+        let sees_bureau = authority.can(gamecloud_shared::roles::Action::ManageEvents(
+            gamecloud_shared::roles::EventScope::Bureau,
+        ));
+        let rows = crate::db::queries::events::upcoming(state.pool(), 5, sees_bureau)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(rows.iter().map(|r| present_event(r, &authority)).collect());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(Vec::new())
+}
+
+/// What the viewer may schedule.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the database is unreachable.
+#[server(GetCalendarRights, "/_fn")]
+pub async fn get_calendar_rights() -> Result<CalendarRights, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::{Action, EventScope, Track};
+
+        let Some(state) = ctx::state() else {
+            return Ok(CalendarRights::default());
+        };
+        let Some(user_id) = ctx::current_user_id(&state).await else {
+            return Ok(CalendarRights::default());
+        };
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        let association = authority.can(Action::ManageEvents(EventScope::Association));
+        let bureau = authority.can(Action::ManageEvents(EventScope::Bureau));
+        let tracks: Vec<String> = Track::ALL
+            .iter()
+            .filter(|t| authority.can(Action::ManageEvents(EventScope::Track(**t))))
+            .map(|t| t.as_str().to_string())
+            .collect();
+
+        return Ok(CalendarRights {
+            any: association || bureau || !tracks.is_empty(),
+            association,
+            bureau,
+            tracks,
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(CalendarRights::default())
+}
+
+/// Create or update an event.
+///
+/// One function for both, because the form is the same one and the only
+/// difference is whether the caller already has an id. `id` empty means
+/// create.
+///
+/// # Errors
+/// Returns a `ServerFnError` on a missing right or a malformed event.
+#[server(SaveEvent, "/_fn")]
+pub async fn save_event(draft: EventDraft) -> Result<String, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+
+        let EventDraft {
+            id,
+            title,
+            description,
+            kind,
+            track,
+            audience,
+            starts_at,
+            ends_at,
+            location,
+            xp_reward,
+        } = draft;
+
+        let audience = if audience.trim().is_empty() {
+            "Association".to_string()
+        } else {
+            audience.trim().to_string()
+        };
+        // A track only belongs on a track-scoped event; carrying one on a
+        // Bureau meeting would violate the schema's CHECK and, worse,
+        // make the meeting look public.
+        let track = (audience == "Track")
+            .then(|| track.trim().to_string())
+            .filter(|t| !t.is_empty());
+        let scope = gamecloud_shared::roles::EventScope::parse(&audience, track.as_deref())
+            .ok_or_else(|| ServerFnError::new("portée invalide"))?;
+
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::ManageEvents(scope)) {
+            return Err(ServerFnError::new(
+                "vous ne pouvez pas modifier le calendrier de cette portée",
+            ));
+        }
+
+        let new = crate::db::queries::events::NewEvent {
+            title,
+            description: (!description.trim().is_empty()).then(|| description.clone()),
+            kind,
+            track,
+            audience,
+            starts_at: parse_local(&starts_at)?,
+            ends_at: parse_local(&ends_at)?,
+            location: (!location.trim().is_empty()).then(|| location.clone()),
+            xp_reward,
+        };
+
+        if id.trim().is_empty() {
+            let created = crate::db::queries::events::create(state.pool(), state.channels(), user_id, &new)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))?;
+            return Ok(created.to_string());
+        }
+
+        let existing = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("événement inconnu"))?;
+
+        // Re-check against the event as it *is*, not only as it is being
+        // rewritten: without this, a track Lead could take over an
+        // association-wide event by submitting it with their own track.
+        let current = crate::db::queries::events::find(state.pool(), existing)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::ManageEvents(scope_of(&current))) {
+            return Err(ServerFnError::new(
+                "cet événement ne relève pas de votre portée",
+            ));
+        }
+
+        crate::db::queries::events::update(state.pool(), existing, &new)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(existing.to_string());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = draft;
+        Ok(String::new())
+    }
+}
+
+/// Read a `datetime-local` value into an instant.
+///
+/// The browser sends `2026-09-16T14:00` with no zone. The association is
+/// one campus in one timezone, so reading it as UTC keeps the number the
+/// organiser typed the number everyone sees — converting through a
+/// guessed local zone would shift every event by an hour twice a year.
+#[cfg(feature = "ssr")]
+fn parse_local(raw: &str) -> Result<chrono::DateTime<chrono::Utc>, ServerFnError> {
+    use chrono::TimeZone;
+
+    let raw = raw.trim();
+    let naive = chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S"))
+        .map_err(|_| ServerFnError::new(format!("date illisible : {raw}")))?;
+    Ok(chrono::Utc.from_utc_datetime(&naive))
+}
+
+/// Call an event off, or put it back on.
+///
+/// # Errors
+/// Returns a `ServerFnError` on a missing right or an unknown event.
+#[server(CancelEvent, "/_fn")]
+pub async fn cancel_event(id: String, cancelled: bool) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+        let event_id = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("événement inconnu"))?;
+
+        let current = crate::db::queries::events::find(state.pool(), event_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::ManageEvents(scope_of(&current))) {
+            return Err(ServerFnError::new(
+                "cet événement ne relève pas de votre portée",
+            ));
+        }
+
+        crate::db::queries::events::set_cancelled(state.pool(), state.channels(), event_id, cancelled)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (id, cancelled);
+        Ok(())
+    }
+}
+
+/// Remove an event from the calendar.
+///
+/// Only possible while nobody has scanned in; after that the event can
+/// be cancelled but not erased.
+///
+/// # Errors
+/// Returns a `ServerFnError` on a missing right, an unknown event, or an
+/// event that already has attendance.
+#[server(DeleteEvent, "/_fn")]
+pub async fn delete_event(id: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+        let event_id = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("événement inconnu"))?;
+
+        let current = crate::db::queries::events::find(state.pool(), event_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::ManageEvents(scope_of(&current))) {
+            return Err(ServerFnError::new(
+                "cet événement ne relève pas de votre portée",
+            ));
+        }
+
+        crate::db::queries::events::delete(state.pool(), event_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = id;
+        Ok(())
+    }
+}
+
+/// Who turned up to an event.
+///
+/// Visible to whoever may manage the event — an attendance sheet is not
+/// something every member needs to read.
+///
+/// # Errors
+/// Returns a `ServerFnError` on a missing right or an unknown event.
+#[server(GetEventAttendees, "/_fn")]
+pub async fn get_event_attendees(id: String) -> Result<Vec<EventAttendee>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+        let event_id = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("événement inconnu"))?;
+
+        let current = crate::db::queries::events::find(state.pool(), event_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::ManageEvents(scope_of(&current))) {
+            return Err(ServerFnError::new("réservé aux organisateurs"));
+        }
+
+        let rows = crate::db::queries::events::attendees(state.pool(), event_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(rows
+            .into_iter()
+            .map(|a| EventAttendee {
+                display_name: a.display_name,
+                when: ctx::stamp(a.scanned_at),
+                xp_rewarded: a.xp_rewarded,
+            })
+            .collect());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = id;
+        Ok(Vec::new())
+    }
+}
+
+/// Mint a QR code for an event.
+///
+/// The code encodes a *link* to the scan page, not the raw token: every
+/// phone camera opens a link, and almost none can hand a decoded string
+/// to a web page. Firefox and Safari have no `BarcodeDetector` at all,
+/// so a design that needed one would work for roughly nobody.
+///
+/// Generating is gated twice — on `GenerateQrToken`, and on being able
+/// to manage the event in question — because the two are genuinely
+/// different rights: the event managers mint codes, but a track Lead who
+/// runs their own session should be able to mint one for it without
+/// being handed the association's whole event calendar.
+///
+/// # Errors
+/// Returns a `ServerFnError` on a missing right or an unknown event.
+#[server(GenerateEventQr, "/_fn")]
+pub async fn generate_event_qr(
+    event_id: String,
+    minutes: i32,
+    max_scans: Option<i32>,
+) -> Result<QrTicket, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+        use qrcode::{render::svg, QrCode};
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+        let id = event_id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("événement inconnu"))?;
+
+        let event = crate::db::queries::events::find(state.pool(), id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        if !(authority.can(Action::GenerateQrToken)
+            || authority.can(Action::ManageEvents(scope_of(&event))))
+        {
+            return Err(ServerFnError::new(
+                "vous ne pouvez pas générer de code pour cet événement",
+            ));
+        }
+        if event.cancelled_at.is_some() {
+            return Err(ServerFnError::new("cet événement est annulé"));
+        }
+        if let Some(max) = max_scans {
+            if max <= 0 {
+                return Err(ServerFnError::new("le nombre de scans doit être positif"));
+            }
+        }
+
+        // Capped at a day: a code that outlives the session it admits to
+        // is a code somebody can claim from home a week later.
+        let ttl = u64::try_from(minutes.clamp(1, 1440)).unwrap_or(60) * 60;
+
+        let qr_id = uuid::Uuid::new_v4();
+        let (token, exp) = crate::services::jwt::issue_qr(
+            &state.config().jwt_secret,
+            qr_id,
+            &event.title,
+            &event.kind,
+            event.xp_reward,
+            ttl,
+        )
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        crate::db::queries::qr::insert_qr_token(
+            state.pool(),
+            &crate::db::queries::qr::NewQrToken {
+                token: &token,
+                event_name: &event.title,
+                event_type: &event.kind,
+                xp_value: event.xp_reward,
+                created_by: user_id,
+                expires_at: exp,
+                max_scans,
+                event_id: Some(id),
+            },
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        let scan_url = format!(
+            "{}/scan?token={}",
+            state.config().public_origin.trim_end_matches('/'),
+            crate::routes::qr::urlencoding(&token)
+        );
+        let svg = QrCode::new(&scan_url)
+            .map_err(|e| ServerFnError::new(format!("qr encode: {e}")))?
+            .render::<svg::Color>()
+            .min_dimensions(280, 280)
+            .build();
+
+        return Ok(QrTicket {
+            svg,
+            scan_url,
+            expires_label: ctx::stamp(exp),
+            max_scans,
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (event_id, minutes, max_scans);
+        Err(ServerFnError::new("ssr only"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Track board
+// ---------------------------------------------------------------------------
+
+/// French label for a track role.
+#[cfg(feature = "ssr")]
+fn track_role_label(role: &str) -> &'static str {
+    match role {
+        "Lead" => "Responsable",
+        "CoLead" => "Co-responsable",
+        "Mentor" => "Mentor",
+        "Reviewer" => "Relecteur",
+        "Contributor" => "Contributeur",
+        _ => "Observateur",
+    }
+}
+
+/// Everything one track's page shows: its people, its projects and the
+/// marks it has given, plus its own sessions.
+///
+/// # Errors
+/// Returns a `ServerFnError` on an unknown track or an unreachable
+/// database.
+#[server(GetTrackBoard, "/_fn")]
+pub async fn get_track_board(track: String) -> Result<TrackBoard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::api::{TrackMemberRow, TrackProjectRow};
+        use gamecloud_shared::roles::{specializations_for, Action, Authority, Track};
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let parsed = Track::parse(&track).ok_or_else(|| ServerFnError::new("track inconnue"))?;
+
+        let (authority, user_id) = match ctx::current_user_id(&state).await {
+            Some(id) => (
+                crate::db::queries::users::load_authority(state.pool(), id)
+                    .await
+                    .map_err(|e| ServerFnError::new(e.to_string()))?,
+                Some(id),
+            ),
+            None => (Authority::anonymous(), None),
+        };
+
+        let board = crate::db::queries::tracks::board(state.pool(), parsed.as_str(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        let events = crate::db::queries::events::upcoming_for_track(
+            state.pool(),
+            parsed.as_str(),
+            6,
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        return Ok(TrackBoard {
+            id: parsed.as_str().to_string(),
+            emoji: parsed.emoji().to_string(),
+            color: parsed.color_hex().to_string(),
+            specializations: specializations_for(parsed)
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+            joined: board.my_role.is_some(),
+            my_role: board.my_role.as_deref().map(|r| track_role_label(r).to_string()),
+            can_review: authority.can(Action::ReviewProjectForTrack(parsed)),
+            can_manage_events: authority
+                .can(Action::ManageEvents(gamecloud_shared::roles::EventScope::Track(parsed))),
+            total_xp: board.total_xp,
+            average_score: board.average_score,
+            members: board
+                .members
+                .into_iter()
+                .map(|m| TrackMemberRow {
+                    display_name: m.display_name,
+                    role_label: track_role_label(&m.track_role).to_string(),
+                    role: m.track_role,
+                    track_xp: m.track_xp,
+                    specialization: m.specialization,
+                })
+                .collect(),
+            projects: board
+                .projects
+                .into_iter()
+                .map(|p| TrackProjectRow {
+                    id: p.id.to_string(),
+                    name: p.name,
+                    status: p.status,
+                    verdict: p.verdict,
+                    score: p.score,
+                    reviewer_name: p.reviewer_name,
+                    file_count: p.file_count,
+                })
+                .collect(),
+            events: events.iter().map(|e| present_event(e, &authority)).collect(),
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = track;
+        Err(ServerFnError::new("ssr only"))
     }
 }

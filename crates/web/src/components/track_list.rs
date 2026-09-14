@@ -6,18 +6,13 @@
 
 use leptos::prelude::*;
 
-use crate::api::{format_xp, TrackView};
+use gamecloud_shared::roles::TrackRole;
 
-/// French label for a track role.
+use crate::api::{format_xp, level_percent, TrackView};
+
+/// Title for a track role — the same one the bot shows on Discord.
 fn role_label(role: &str) -> &'static str {
-    match role {
-        "Contributor" => "Contributeur",
-        "Reviewer" => "Relecteur",
-        "Mentor" => "Mentor",
-        "CoLead" => "Co-responsable",
-        "Lead" => "Responsable",
-        _ => "Observateur",
-    }
+    TrackRole::title_of(role)
 }
 
 /// Track list component.
@@ -48,6 +43,23 @@ pub fn TrackList(
                 {tracks
                     .into_iter()
                     .map(|t| {
+                        // How far the next title in this track is. From
+                        // Mentor up there is no bar: those titles are
+                        // appointed, not earned.
+                        let progress = TrackRole::next_milestone(&t.role).map(|(next, floor, target)| {
+                            let pct = level_percent((t.xp - floor).max(0), target - floor);
+                            let left = (target - t.xp).max(0);
+                            view! {
+                                <span class="gc-track__progress">
+                                    <span class="gc-track__bar" aria-hidden="true">
+                                        <span class="gc-track__fill" style=format!("width: {pct:.1}%;")></span>
+                                    </span>
+                                    <span class="gc-track__next">
+                                        {format!("{} XP avant {next}", format_xp(left))}
+                                    </span>
+                                </span>
+                            }
+                        });
                         view! {
                             <li class="gc-track" style=format!("--gc-track: {};", t.color)>
                                 <span class="gc-track__emoji">{t.emoji}</span>
@@ -57,6 +69,7 @@ pub fn TrackList(
                                         {role_label(&t.role)}
                                         {t.specialization.map(|s| format!(" · {s}"))}
                                     </span>
+                                    {progress}
                                 </span>
                                 <span class="gc-track__xp">{format_xp(t.xp)} " XP"</span>
                             </li>

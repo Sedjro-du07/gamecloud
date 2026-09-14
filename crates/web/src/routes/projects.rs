@@ -63,22 +63,30 @@ async fn list(
     user: Option<CurrentUser>,
     Query(q): Query<ListQuery>,
 ) -> WebResult<Json<Vec<projects::ProjectSummary>>> {
-    let mut include_internal = false;
+    // `?internal=true` asks to see work in progress. What comes back is
+    // still decided per track by the permission matrix — asking for it
+    // grants nothing on its own.
+    let mut tracks = Vec::new();
+    let mut viewer = None;
 
     if q.internal.unwrap_or(false) {
         if let Some(user) = &user {
             let authority = users::load_authority(state.pool(), user.id).await?;
-            include_internal = match q.track.as_deref().and_then(Track::parse) {
-                Some(track) => authority.can(Action::ViewTrackInternalProjects(track)),
-                // Without a track filter, only somebody who can see the
-                // admin panel gets the unfiltered internal view.
-                None => authority.can(Action::AccessAdminPanel),
-            };
+            tracks = users::visible_tracks(&authority);
+            viewer = Some(user.id);
         }
     }
 
     Ok(Json(
-        projects::list(state.pool(), q.track.as_deref(), include_internal).await?,
+        projects::list(
+            state.pool(),
+            q.track.as_deref(),
+            &projects::Visibility {
+                tracks: &tracks,
+                viewer,
+            },
+        )
+        .await?,
     ))
 }
 
@@ -111,7 +119,16 @@ async fn create(
     // The repository is a convenience, not a precondition. GitHub being
     // down must not stop a member starting a project, so a failure here
     // is logged and the project stands without a repository.
-    let github_repo_url = provision_repo(&state, &user, id, &body).await;
+    let github_repo_url = crate::services::github::provision_project_repo(
+        &state,
+        &crate::services::github::NewRepo {
+            project_id: id,
+            name: &body.name,
+            description: body.short_description.as_deref(),
+            author_login: user.record.github_username.as_deref(),
+        },
+    )
+    .await;
 
     Ok(Json(CreatedResponse {
         id,
@@ -119,70 +136,6 @@ async fn create(
     }))
 }
 
-/// Create the project's repository, add the author, install the webhook.
-///
-/// Returns the repository URL when everything that matters succeeded.
-/// Each step is independent: a repository with no webhook is still more
-/// useful than no repository, so a webhook failure does not discard it.
-async fn provision_repo(
-    state: &AppState,
-    user: &CurrentUser,
-    project_id: Uuid,
-    body: &projects::NewProject,
-) -> Option<String> {
-    let github = state.github()?;
-
-    let repo = match github
-        .create_repo(&body.name, body.short_description.as_deref())
-        .await
-    {
-        Ok(repo) => repo,
-        Err(e) => {
-            tracing::warn!(error = %e, project = %project_id, "github: repository not created");
-            return None;
-        }
-    };
-
-    // Push access for the author, when they have linked a GitHub login.
-    // Without one there is nobody to add — and linking it is also what
-    // makes their commits pay XP, so the profile page nags for it.
-    if let Some(login) = user.record.github_username.as_deref() {
-        if let Err(e) = github.add_collaborator(&repo.name, login).await {
-            tracing::warn!(error = %e, login, "github: collaborator not added");
-        }
-    } else {
-        tracing::info!(
-            project = %project_id,
-            "github: author has no linked GitHub login; repository left without a collaborator"
-        );
-    }
-
-    // The webhook is what makes commits in this repository pay XP. A
-    // localhost origin can never receive one, so do not install a hook
-    // that would only ever fail.
-    let cfg = state.config();
-    let origin = &cfg.public_origin;
-    match (&cfg.github_webhook_secret, origin.contains("localhost")) {
-        (Some(secret), false) => {
-            let callback = format!("{}/api/webhooks/github", origin.trim_end_matches('/'));
-            if let Err(e) = github
-                .add_webhook(&repo.name, &callback, &String::from_utf8_lossy(secret))
-                .await
-            {
-                tracing::warn!(error = %e, repo = %repo.name, "github: webhook not installed");
-            }
-        }
-        (_, true) => tracing::info!(
-            "github: PUBLIC_ORIGIN is localhost, skipping webhook (it could never be delivered)"
-        ),
-        (None, _) => tracing::info!("github: GITHUB_WEBHOOK_SECRET unset, skipping webhook"),
-    }
-
-    if let Err(e) = projects::set_repo_url(state.pool(), project_id, &repo.html_url).await {
-        tracing::warn!(error = %e, "github: repository created but URL not recorded");
-    }
-    Some(repo.html_url)
-}
 
 #[derive(Deserialize)]
 struct ContributorBody {
@@ -203,6 +156,7 @@ async fn add_contributor(
     }
     projects::add_contributor(
         state.pool(),
+        state.channels(),
         id,
         body.user_id,
         &body.track,
@@ -243,6 +197,9 @@ struct ReviewBody {
     /// `Approved`, `Rejected` or `NotApplicable`.
     verdict: String,
     feedback: Option<String>,
+    /// Mark out of 100 for this track's share of the work. Optional: a
+    /// reviewer may gate without grading.
+    score: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -283,10 +240,13 @@ async fn review(
         state.pool(),
         state.channels(),
         user.id,
-        id,
-        track.as_str(),
-        verdict,
-        body.feedback.as_deref(),
+        &projects::Judgement {
+            project_id: id,
+            track: track.as_str(),
+            verdict,
+            feedback: body.feedback.as_deref(),
+            score: body.score,
+        },
     )
     .await?;
 

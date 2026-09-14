@@ -141,12 +141,27 @@ pub async fn finalize_email_verification(
         ));
     }
 
+    // A member whose tracks were already set — the Bureau is enrolled in
+    // every track ahead of time — has nothing left to onboard, and joining
+    // a track is otherwise the only step onto the XP ladder. They go
+    // straight to the title their XP is worth instead of stalling at
+    // Visitor.
+    let xp_total: i64 = sqlx::query_scalar("SELECT xp_total FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let reached = gamecloud_shared::roles::GlobalRank::from_xp(xp_total);
+
     sqlx::query(
         r#"
         UPDATE users
             SET email = $2,
                 email_verified = TRUE,
                 global_rank = CASE
+                    WHEN global_rank = 'Pending'
+                     AND EXISTS (SELECT 1 FROM track_memberships m
+                                  WHERE m.user_id = users.id AND m.left_at IS NULL)
+                        THEN $3
                     WHEN global_rank = 'Pending' THEN 'Visitor'
                     ELSE global_rank
                 END
@@ -155,8 +170,10 @@ pub async fn finalize_email_verification(
     )
     .bind(user_id)
     .bind(email)
+    .bind(reached.as_str())
     .execute(&mut *tx)
     .await?;
+    crate::services::notifications::request_role_sync(&mut *tx).await?;
 
     sqlx::query("DELETE FROM email_otps WHERE user_id = $1")
         .bind(user_id)

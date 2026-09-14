@@ -38,6 +38,9 @@ pub struct Config {
     pub gamecloud_sync_url: String,
     /// Shared API key sent in `X-API-Key` to that endpoint.
     pub draftbot_api_key: String,
+    /// Whether DraftBot level-ups are turned into platform XP. Off while
+    /// DraftBot is suspended: the platform is the only XP system.
+    pub draftbot_enabled: bool,
     /// Poll interval for the `notifications_outbox`, in seconds.
     pub outbox_poll_seconds: u64,
     /// Guild whose roles mirror platform ranks. When absent, rank-role
@@ -45,6 +48,21 @@ pub struct Config {
     pub guild_id: Option<u64>,
     /// How often to reconcile every member's rank role, in seconds.
     pub role_sync_seconds: u64,
+    /// Channel holding the live leaderboard the bot keeps up to date.
+    pub leaderboard_channel_id: Option<u64>,
+    /// Channel holding the guide the bot keeps up to date.
+    pub guide_channel_id: Option<u64>,
+    /// Channels the guide points members to. Read from the same
+    /// variables the web process routes announcements with.
+    pub announce_channel_id: Option<u64>,
+    /// Newly opened quests.
+    pub quests_channel_id: Option<u64>,
+    /// Released projects.
+    pub hall_channel_id: Option<u64>,
+    /// Submissions waiting for validation.
+    pub reviews_channel_id: Option<u64>,
+    /// Attendance recorded at sessions.
+    pub presences_channel_id: Option<u64>,
 }
 
 impl Config {
@@ -62,9 +80,17 @@ impl Config {
             draftbot_user_id: parse("DRAFTBOT_USER_ID")?,
             gamecloud_sync_url: required("GAMECLOUD_SYNC_URL")?,
             draftbot_api_key: required("DRAFTBOT_API_KEY")?,
+            draftbot_enabled: parse_or("DRAFTBOT_ENABLED", true)?,
             outbox_poll_seconds: parse_or("OUTBOX_POLL_SECONDS", 5)?,
             guild_id: parse_optional("DISCORD_GUILD_ID")?,
             role_sync_seconds: parse_or("ROLE_SYNC_SECONDS", 900)?,
+            leaderboard_channel_id: parse_optional("DISCORD_LEADERBOARD_CHANNEL_ID")?,
+            guide_channel_id: parse_optional("DISCORD_GUIDE_CHANNEL_ID")?,
+            announce_channel_id: parse_optional("DISCORD_ANNOUNCE_CHANNEL_ID")?,
+            quests_channel_id: parse_optional("DISCORD_QUESTS_CHANNEL_ID")?,
+            hall_channel_id: parse_optional("DISCORD_HALL_CHANNEL_ID")?,
+            reviews_channel_id: parse_optional("DISCORD_REVIEWS_CHANNEL_ID")?,
+            presences_channel_id: parse_optional("DISCORD_PRESENCES_CHANNEL_ID")?,
         })
     }
 }

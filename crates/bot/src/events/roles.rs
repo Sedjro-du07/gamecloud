@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use gamecloud_shared::roles::{GlobalRank, Track};
+use gamecloud_shared::roles::{BureauRole, GlobalRank, Track};
 use serenity::all::{GuildId, Http, RoleId, UserId};
 use sqlx::PgPool;
 
@@ -29,9 +29,8 @@ use crate::state::BotState;
 
 /// The Discord role names the platform owns for tracks.
 ///
-/// Kept next to [`super::import::track_for_role`], which parses the same
-/// names in the other direction. A track whose role does not exist in
-/// the guild is skipped rather than created.
+/// A track whose role does not exist in the guild is skipped rather than
+/// created.
 #[must_use]
 pub fn track_role_name(track: Track) -> String {
     format!("{} {}", track.emoji(), readable(track))
@@ -83,13 +82,12 @@ async fn track_roles(http: &Http, guild: GuildId) -> HashMap<String, RoleId> {
         .collect()
 }
 
-/// Bring one member's Discord *track* roles in line with the platform.
+/// Bring a set of platform-owned Discord roles in line with the platform.
 ///
-/// This is the half that was missing: offices and tracks were read from
-/// Discord, and ranks were pushed to Discord, but a track joined on the
-/// platform never appeared on the member's Discord profile. Both
-/// directions now converge — the import applies what Discord says, this
-/// applies what the platform says, and each pass leaves the two equal.
+/// Used for track roles and for Bureau office roles alike: `roles` is the
+/// set the platform owns, `wanted` the names the member should hold.
+/// Anything outside `roles` is never touched, so roles the association
+/// hands out by hand for other reasons survive every pass.
 ///
 /// # Errors
 /// Returns the Discord API error if a role add/remove fails.
@@ -163,10 +161,11 @@ pub async fn sync_member(
     Ok(true)
 }
 
-/// Sync every verified member of the guild.
+/// Sync every platform account's Discord roles: member title, tracks and
+/// Bureau office.
 ///
-/// Called once at startup and after each outbox batch that announced a
-/// rank change. Failures on individual members are logged and skipped:
+/// Runs on the periodic pass and whenever the platform queues a
+/// `RoleSync`. Failures on individual members are logged and skipped:
 /// one member with a role above the bot in the hierarchy must not stop
 /// the other ninety-nine from being updated.
 pub async fn sync_all(state: &BotState, http: &Http) {
@@ -196,10 +195,6 @@ pub async fn sync_all(state: &BotState, http: &Http) {
         };
         let user = UserId::new(raw);
 
-        // Everything below rewrites this member's roles, so silence the
-        // GuildMemberUpdate echoes it will produce.
-        state.suppress_echo(raw);
-
         match sync_member(http, guild, user, rank, &roles).await {
             Ok(true) => changed += 1,
             Ok(false) => {}
@@ -220,9 +215,67 @@ pub async fn sync_all(state: &BotState, http: &Http) {
         }
     }
 
+    // Offices are handed out on the platform. Discord carries the office
+    // role — and the role that opens the Bureau's channels — for exactly
+    // as long as the platform says so. Unverified accounts are included:
+    // an office can be given before its holder has finished signing up.
+    let (bureau, access) = bureau_roles(http, guild).await;
+    match fetch_offices(state.pool()).await {
+        Ok(rows) => {
+            for (discord_id, office) in rows {
+                let Ok(raw) = discord_id.parse::<u64>() else {
+                    continue;
+                };
+                let mut wanted = HashSet::new();
+                if let Some(office) = office.as_deref().and_then(BureauRole::parse) {
+                    wanted.insert(office.title().to_string());
+                    if let Some(access) = &access {
+                        wanted.insert(access.clone());
+                    }
+                }
+                match sync_member_tracks(http, guild, UserId::new(raw), &wanted, &bureau).await {
+                    Ok(true) => changed += 1,
+                    Ok(false) => {}
+                    Err(e) => tracing::debug!(error = %e, discord_id, "office sync: skipping member"),
+                }
+            }
+        }
+        Err(e) => tracing::error!(error = ?e, "office sync: could not read offices"),
+    }
+
     if changed > 0 {
         tracing::info!(changed, "sync: updated Discord roles");
     }
+}
+
+/// Map the office titles (the provisional one included), and the role that opens the Bureau's
+/// channels, to guild roles.
+///
+/// Returns the map and the access role's name. The access role is the
+/// one whose name contains "Bureau" without being an office — the same
+/// rule the outbox uses to ping the Bureau.
+async fn bureau_roles(http: &Http, guild: GuildId) -> (HashMap<String, RoleId>, Option<String>) {
+    let Ok(roles) = guild.roles(http).await else {
+        return (HashMap::new(), None);
+    };
+    let titles: Vec<&str> = BureauRole::ALL.iter().map(|b| b.title()).collect();
+    let access = roles
+        .values()
+        .find(|r| r.name.contains("Bureau") && !titles.contains(&r.name.as_str()))
+        .map(|r| r.name.clone());
+    let map = roles
+        .into_iter()
+        .filter(|(_, r)| titles.contains(&r.name.as_str()) || access.as_ref() == Some(&r.name))
+        .map(|(id, r)| (r.name, id))
+        .collect();
+    (map, access)
+}
+
+/// Every platform account and the office it holds, if any.
+async fn fetch_offices(pool: &PgPool) -> sqlx::Result<Vec<(String, Option<String>)>> {
+    sqlx::query_as("SELECT discord_id, bureau_role FROM users")
+        .fetch_all(pool)
+        .await
 }
 
 /// The track role names a member should currently hold.
@@ -246,13 +299,20 @@ async fn active_tracks(pool: &PgPool, discord_id: &str) -> sqlx::Result<HashSet<
         .collect())
 }
 
-/// Every verified member and the rank they should hold.
+/// Every platform account and the member title Discord should show.
+///
+/// A verified member shows the rank the platform holds. An account that
+/// has not verified its email yet — a Bureau member created ahead of their
+/// first login, say — is gated on the platform, but the title is earned
+/// by progression on the server: with XP it shows the title that XP is
+/// worth, and without any it shows nothing. Email verification gates
+/// platform rights, not recognition.
 async fn fetch_ranked_members(pool: &PgPool) -> sqlx::Result<Vec<(String, GlobalRank)>> {
-    let rows: Vec<(String, String)> = sqlx::query_as(
+    let rows: Vec<(String, String, bool, i64)> = sqlx::query_as(
         r#"
-        SELECT discord_id, global_rank
+        SELECT discord_id, global_rank, email_verified, xp_total
           FROM users
-         WHERE email_verified = TRUE
+         WHERE email_verified OR xp_total > 0
         "#,
     )
     .fetch_all(pool)
@@ -260,8 +320,36 @@ async fn fetch_ranked_members(pool: &PgPool) -> sqlx::Result<Vec<(String, Global
 
     Ok(rows
         .into_iter()
-        .map(|(id, rank)| (id, GlobalRank::parse(&rank)))
+        .map(|(id, rank, verified, xp)| (id, discord_title(&rank, verified, xp)))
         .collect())
+}
+
+/// The member title shown on Discord for an account.
+fn discord_title(stored: &str, verified: bool, xp_total: i64) -> GlobalRank {
+    if verified {
+        GlobalRank::parse(stored)
+    } else {
+        GlobalRank::from_xp(xp_total).max(GlobalRank::Initiate)
+    }
+}
+
+#[cfg(test)]
+mod title_tests {
+    use gamecloud_shared::roles::GlobalRank;
+
+    use super::discord_title;
+
+    #[test]
+    fn an_unverified_account_shows_the_title_its_xp_is_worth() {
+        // Fred: created ahead of his first login, 15 344 XP from Kumo.
+        assert_eq!(discord_title("Pending", false, 15_344), GlobalRank::Legend);
+    }
+
+    #[test]
+    fn a_verified_member_shows_the_platform_rank() {
+        assert_eq!(discord_title("Visitor", true, 15_344), GlobalRank::Visitor);
+        assert_eq!(discord_title("Veteran", true, 7_830), GlobalRank::Veteran);
+    }
 }
 
 #[cfg(test)]

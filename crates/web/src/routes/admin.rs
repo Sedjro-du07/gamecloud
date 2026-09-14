@@ -229,7 +229,7 @@ async fn set_track_role(
     };
     require(&state, &user, action).await?;
 
-    tracks::set_role(state.pool(), body.user_id, track, role).await?;
+    tracks::set_role(state.pool(), state.channels(), body.user_id, track, role).await?;
 
     audit::record(
         state.pool(),

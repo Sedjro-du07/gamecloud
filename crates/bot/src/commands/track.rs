@@ -1,6 +1,6 @@
 //! `/track` — show track memberships of a user.
 
-use gamecloud_shared::roles::Track;
+use gamecloud_shared::roles::{Track, TrackRole};
 use poise::serenity_prelude as serenity;
 
 use crate::state::Context;
@@ -20,7 +20,10 @@ pub async fn track(
         FROM track_memberships m
         JOIN users u ON u.id = m.user_id
         WHERE u.discord_id = $1 AND m.left_at IS NULL
-        ORDER BY m.track_xp DESC
+        ORDER BY array_position(
+                     ARRAY['Lead', 'CoLead', 'Mentor', 'Reviewer', 'Contributor', 'Observer'],
+                     m.track_role),
+                 m.track_xp DESC
         "#,
     )
     .bind(&discord_id)
@@ -37,7 +40,8 @@ pub async fn track(
         let emoji = Track::parse(&track).map_or("•", Track::emoji);
         let spec_label = spec.map_or(String::new(), |s| format!(" — *{s}*"));
         body.push_str(&format!(
-            "{emoji} **{track}** ({role}) — {xp} XP{spec_label}\n",
+            "{emoji} **{track}** — {} — {xp} XP{spec_label}\n",
+            TrackRole::title_of(&role)
         ));
     }
 

@@ -34,6 +34,54 @@ pub struct Announcement {
     /// Track the announcement concerns, when it is track-scoped. Drives
     /// routing: a review request belongs in that discipline's channel.
     pub track: Option<Track>,
+    /// Send this to the member privately instead of a channel.
+    ///
+    /// For anything that is nobody else's business: the feedback on a
+    /// rejected project, an XP adjustment, an appointment. A public
+    /// channel is the wrong place to tell somebody their work was
+    /// refused.
+    pub dm: bool,
+    /// Who should be pinged, if anyone.
+    ///
+    /// Carried as an intent rather than a Discord role id, because the
+    /// web process has no business knowing role ids — the bot reads the
+    /// guild and is the only side that can resolve one correctly. It
+    /// also means a renamed or recreated role fixes itself.
+    pub mention: Mention,
+}
+
+/// Who an announcement should ping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mention {
+    /// Ping nobody. The default, and right for most announcements: a
+    /// rank-up is pleasant, not urgent.
+    #[default]
+    Nobody,
+    /// Ping the whole association.
+    Everyone,
+    /// Ping the role belonging to the announcement's track.
+    Track,
+    /// Ping the Bureau role.
+    Bureau,
+    /// Ping the member the announcement is about.
+    ///
+    /// Requires `user_id` to be set; the bot resolves it to a Discord id
+    /// itself, because the web process stores platform ids and only the
+    /// bot knows how to address somebody on Discord.
+    Member,
+}
+
+impl Mention {
+    /// The wire form the bot reads back.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Nobody => "none",
+            Self::Everyone => "everyone",
+            Self::Track => "track",
+            Self::Bureau => "bureau",
+            Self::Member => "member",
+        }
+    }
 }
 
 impl Announcement {
@@ -47,6 +95,8 @@ impl Announcement {
             color: hex_to_rgb(ring_color_hex).unwrap_or(0x9c_4dff),
             user_id: Some(user_id),
             track: None,
+            mention: Mention::Member,
+            dm: false,
         }
     }
 
@@ -60,6 +110,8 @@ impl Announcement {
             color: 0xff_d700,
             user_id: Some(user_id),
             track: None,
+            mention: Mention::Member,
+            dm: false,
         }
     }
 
@@ -73,6 +125,8 @@ impl Announcement {
             color: 0x00_f2ff,
             user_id: Some(user_id),
             track: None,
+            mention: Mention::Member,
+            dm: false,
         }
     }
 
@@ -88,6 +142,8 @@ impl Announcement {
             color: 0x34_d058,
             user_id: None,
             track: None,
+            mention: Mention::Nobody,
+            dm: false,
         }
     }
 
@@ -101,6 +157,8 @@ impl Announcement {
             color: 0x3f_a9ff,
             user_id: Some(user_id),
             track: None,
+            mention: Mention::Nobody,
+            dm: false,
         }
     }
 }
@@ -123,6 +181,8 @@ impl Announcement {
             color: hex_to_rgb(track.color_hex()).unwrap_or(0xff_aa00),
             user_id: None,
             track: Some(track),
+            mention: Mention::Nobody,
+            dm: false,
         }
     }
 
@@ -136,6 +196,256 @@ impl Announcement {
             color: 0x00_ff88,
             user_id: None,
             track,
+            mention: Mention::Nobody,
+            dm: false,
+        }
+    }
+
+    /// An event went on the calendar.
+    ///
+    /// This is one of the few announcements that pings, because it is
+    /// one of the few that is *actionable*: a session nobody knows
+    /// about is a session nobody attends. Scoped events ping their own
+    /// track's role; association-wide ones ping everyone.
+    #[must_use]
+    pub fn event_scheduled(
+        title: &str,
+        kind_label: &str,
+        when: &str,
+        location: Option<&str>,
+        xp: i32,
+        track: Option<Track>,
+    ) -> Self {
+        use std::fmt::Write as _;
+
+        let mut description = format!("**{title}**\n🗓️ {when}");
+        if let Some(place) = location {
+            let _ = write!(description, "\n📍 {place}");
+        }
+        if xp > 0 {
+            let _ = write!(
+                description,
+                "\n⭐ {xp} XP de présence — scannez le code sur place."
+            );
+        }
+        Self {
+            kind: "EventScheduled",
+            title: format!("📅 {kind_label} au calendrier"),
+            description,
+            color: 0x00_c2ff,
+            user_id: None,
+            track,
+            mention: if track.is_some() {
+                Mention::Track
+            } else {
+                Mention::Everyone
+            },
+            dm: false,
+        }
+    }
+
+    /// A track rendered its verdict on somebody's project.
+    ///
+    /// Sent privately. A rejection carries the reason it was rejected,
+    /// and telling somebody in public that their work was refused is a
+    /// different act from telling them.
+    #[must_use]
+    pub fn verdict_rendered(
+        author: Uuid,
+        project: &str,
+        track: Track,
+        verdict: &str,
+        feedback: Option<&str>,
+        score: Option<i32>,
+    ) -> Self {
+        use std::fmt::Write as _;
+
+        let (label, color) = match verdict {
+            "Approved" => ("✅ approuvé", 0x34_d058),
+            "Rejected" => ("❌ refusé", 0xff_003c),
+            _ => ("— non applicable", 0x9a_a0b3),
+        };
+        let mut description = format!(
+            "La track **{}** a {label} votre projet **{project}**.",
+            track.as_str()
+        );
+        if let Some(n) = score {
+            let _ = write!(description, "\n\n**Note : {n}/100**");
+        }
+        if let Some(f) = feedback {
+            let _ = write!(description, "\n\n**Retour de l'équipe**\n{f}");
+        }
+        Self {
+            kind: "VerdictRendered",
+            title: "🔍 Verdict sur votre projet".to_string(),
+            description,
+            color,
+            user_id: Some(author),
+            track: Some(track),
+            mention: Mention::Member,
+            dm: true,
+        }
+    }
+
+    /// Somebody was appointed Lead or CoLead of a track.
+    #[must_use]
+    pub fn track_appointment(member: Uuid, track: Track, role: &str) -> Self {
+        let label = match role {
+            "Lead" => "responsable",
+            "CoLead" => "co-responsable",
+            _ => "observateur",
+        };
+        Self {
+            kind: "TrackAppointment",
+            title: "🎖️ Nomination".to_string(),
+            description: format!(
+                "Vous êtes désormais **{label}** de la track **{}**.",
+                track.as_str()
+            ),
+            color: 0x00_f2ff,
+            user_id: Some(member),
+            track: Some(track),
+            mention: Mention::Member,
+            dm: true,
+        }
+    }
+
+    /// The Bureau adjusted somebody's XP by hand.
+    ///
+    /// Private, and it always names the reason: an unexplained XP change
+    /// is the fastest way to make a scoring system feel arbitrary.
+    #[must_use]
+    pub fn manual_xp(member: Uuid, amount: i32, reason: &str) -> Self {
+        let (verb, color) = if amount >= 0 {
+            ("crédité de", 0x34_d058)
+        } else {
+            ("débité de", 0xff_aa00)
+        };
+        Self {
+            kind: "ManualXp",
+            title: "⚖️ Ajustement d'XP".to_string(),
+            description: format!(
+                "Le Bureau vous a {verb} **{} XP**.\n\n**Motif**\n{reason}",
+                amount.abs()
+            ),
+            color,
+            user_id: Some(member),
+            track: None,
+            mention: Mention::Member,
+            dm: true,
+        }
+    }
+
+    /// Somebody was credited on a project.
+    #[must_use]
+    pub fn contributor_added(member: Uuid, project: &str, track: Track, role: &str) -> Self {
+        Self {
+            kind: "ContributorAdded",
+            title: "🤝 Vous êtes crédité·e".to_string(),
+            description: format!(
+                "Vous avez été ajouté·e au projet **{project}**                  comme **{role}** sur la track **{}**.",
+                track.as_str()
+            ),
+            color: 0x00_f2ff,
+            user_id: Some(member),
+            track: Some(track),
+            mention: Mention::Member,
+            dm: true,
+        }
+    }
+
+    /// A submitted resource was accepted or turned down.
+    #[must_use]
+    pub fn resource_reviewed(member: Uuid, title: &str, accepted: bool) -> Self {
+        Self {
+            kind: "ResourceReviewed",
+            title: if accepted {
+                "📚 Ressource validée".to_string()
+            } else {
+                "📚 Ressource écartée".to_string()
+            },
+            description: if accepted {
+                format!("Votre proposition « {title} » rejoint la bibliothèque.")
+            } else {
+                format!("Votre proposition « {title} » n'a pas été retenue.")
+            },
+            color: if accepted { 0x34_d058 } else { 0x9a_a0b3 },
+            user_id: Some(member),
+            track: None,
+            mention: Mention::Member,
+            dm: true,
+        }
+    }
+
+    /// A meeting was called for the Bureau.
+    ///
+    /// Separate from [`Self::event_scheduled`] rather than a flag on it,
+    /// because it is routed to a different channel, pings a different
+    /// role, and must never fall back to the public announce channel.
+    /// Folding the two together would make that fallback one careless
+    /// edit away.
+    #[must_use]
+    pub fn bureau_meeting(
+        title: &str,
+        when: &str,
+        location: Option<&str>,
+        agenda: Option<&str>,
+    ) -> Self {
+        use std::fmt::Write as _;
+
+        let mut description = format!("**{title}**\n🗓️ {when}");
+        if let Some(place) = location {
+            let _ = write!(description, "\n📍 {place}");
+        }
+        if let Some(agenda) = agenda {
+            let _ = write!(description, "\n\n**Ordre du jour**\n{agenda}");
+        }
+        Self {
+            kind: "BureauMeeting",
+            title: "🏛️ Réunion du Bureau".to_string(),
+            description,
+            color: 0xff_aa00,
+            user_id: None,
+            track: None,
+            mention: Mention::Bureau,
+            dm: false,
+        }
+    }
+
+    /// A Bureau meeting was called off.
+    #[must_use]
+    pub fn bureau_meeting_cancelled(title: &str, when: &str) -> Self {
+        Self {
+            kind: "BureauMeetingCancelled",
+            title: "🏛️ Réunion du Bureau annulée".to_string(),
+            description: format!("**{title}** ({when}) n'aura pas lieu."),
+            color: 0xff_003c,
+            user_id: None,
+            track: None,
+            mention: Mention::Bureau,
+            dm: false,
+        }
+    }
+
+    /// An event was called off.
+    ///
+    /// Pings for the same reason the scheduling did: somebody has
+    /// planned their afternoon around it.
+    #[must_use]
+    pub fn event_cancelled(title: &str, when: &str, track: Option<Track>) -> Self {
+        Self {
+            kind: "EventCancelled",
+            title: "🚫 Événement annulé".to_string(),
+            description: format!("**{title}** ({when}) n'aura pas lieu."),
+            color: 0xff_003c,
+            user_id: None,
+            track,
+            mention: if track.is_some() {
+                Mention::Track
+            } else {
+                Mention::Everyone
+            },
+            dm: false,
         }
     }
 
@@ -149,6 +459,31 @@ impl Announcement {
             color: 0xbf_00ff,
             user_id: None,
             track: None,
+            mention: Mention::Nobody,
+            dm: false,
+        }
+    }
+
+    /// A member's attendance was recorded by QR scan.
+    ///
+    /// Public and silent: it lands in the attendance channel, pings
+    /// nobody, and lets organisers watch the room fill up in real time.
+    #[must_use]
+    pub fn attendance(user_id: Uuid, display: &str, event: &str, xp: i32) -> Self {
+        let reward = if xp > 0 {
+            format!(" — **+{xp} XP**")
+        } else {
+            String::new()
+        };
+        Self {
+            kind: "AttendanceRecorded",
+            title: "✅ Présence".to_string(),
+            description: format!("**{display}** est présent·e à **{event}**{reward}."),
+            color: 0x34_d058,
+            user_id: Some(user_id),
+            track: None,
+            mention: Mention::Nobody,
+            dm: false,
         }
     }
 
@@ -166,8 +501,29 @@ impl Announcement {
             color: 0x9a_a0b3,
             user_id: None,
             track: None,
+            mention: Mention::Nobody,
+            dm: false,
         }
     }
+}
+
+/// Ask the bot to bring Discord roles in line with the platform now,
+/// rather than at its next periodic pass.
+///
+/// Offices, tracks and ranks are decided on the platform and Discord
+/// only mirrors them. The row posts nothing: the bot handles `RoleSync`
+/// silently, and several requests in one batch cost a single pass.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn request_role_sync<'e>(executor: impl sqlx::PgExecutor<'e>) -> WebResult<()> {
+    sqlx::query(
+        "INSERT INTO notifications_outbox (kind, payload, status) \
+         VALUES ('RoleSync', '{}', 'Pending')",
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
 }
 
 /// Parse `#rrggbb` into a packed integer.
@@ -208,6 +564,10 @@ pub async fn enqueue(
         "title": announcement.title,
         "description": announcement.description,
         "color": announcement.color,
+        "mention": announcement.mention.as_str(),
+        "dm": announcement.dm,
+        "user_id": announcement.user_id,
+        "track": announcement.track.map(Track::as_str),
     });
 
     sqlx::query(

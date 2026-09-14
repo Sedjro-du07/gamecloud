@@ -31,17 +31,23 @@ pub fn CharacterCard(
     let displayed_title = title.unwrap_or_else(|| rank.title().to_string());
     let aria_label = format!("{name}, {}", rank.title());
 
-    let avatar = avatar_url.unwrap_or_else(|| {
-        // Inline 1×1 transparent PNG so we never render a broken
-        // <img> on missing avatars.
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=".to_string()
-    });
+    // Without a picture, the member's initial in their rank's colour — an
+    // empty black disc read as a broken image.
+    let initial = name
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default();
+    let avatar = avatar_url.map_or_else(
+        || view! { <span class="gc-card__avatar gc-card__initial">{initial}</span> }.into_any(),
+        |src| view! { <img class="gc-card__avatar" src=src alt="" /> }.into_any(),
+    );
 
     view! {
         <article class="gc-card" tabindex="0" aria-label=aria_label>
             <div class="gc-card__ring"
                  style=format!("--gc-ring: {ring};")>
-                <img class="gc-card__avatar" src=avatar alt="" />
+                {avatar}
             </div>
             <header class="gc-card__header">
                 <h2 class="gc-card__name">{name}</h2>

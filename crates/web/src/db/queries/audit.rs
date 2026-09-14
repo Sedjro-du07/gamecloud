@@ -102,7 +102,7 @@ pub async fn recent(pool: &PgPool, limit: i64) -> WebResult<Vec<AuditEntry>> {
         r#"
         SELECT a.id,
                a.actor_id,
-               COALESCE(u.current_title, u.discord_id) AS actor_name,
+               member_display_name(u.current_title, u.discord_global_name, u.discord_username, u.discord_id) AS actor_name,
                a.action,
                a.target_type,
                a.target_id,

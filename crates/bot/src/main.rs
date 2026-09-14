@@ -86,14 +86,13 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Periodically reconcile Discord roles and platform state, both ways.
+/// Periodically bring Discord roles in line with the platform.
 ///
-/// **Discord → platform**: Bureau offices and track memberships. The
-/// association decides those in Discord, so Discord is the source of
-/// truth and the import only ever grants — see [`events::import`].
-///
-/// **Platform → Discord**: the global rank, which the platform computes
-/// from XP and mirrors onto a coloured role.
+/// The platform is the source of truth: members choose their tracks
+/// there, the Bureau hands out offices there, and ranks follow XP. The
+/// bot mirrors all three onto Discord roles and reads back only names —
+/// see [`events::import`]. A role changed by hand in Discord is put back
+/// on the next pass.
 ///
 /// A no-op unless `DISCORD_GUILD_ID` is configured — the bot should
 /// never touch roles in a guild it was not explicitly pointed at. The
@@ -107,11 +106,9 @@ fn spawn_role_sync(state: BotState, http: std::sync::Arc<serenity::Http>) {
     let interval = Duration::from_secs(state.config().role_sync_seconds.max(60));
     tokio::spawn(async move {
         loop {
-            // Pull first, then push: an office or track granted in
-            // Discord should be reflected on the platform before we
-            // mirror the resulting rank back out.
             events::import::run(&state, &http).await;
             events::roles::sync_all(&state, &http).await;
+            events::boards::refresh(&state, &http).await;
             tokio::time::sleep(interval).await;
         }
     });
@@ -122,30 +119,11 @@ async fn handle_event(
     event: &FullEvent,
     state: BotState,
 ) -> Result<(), anyhow::Error> {
-    match event {
-        FullEvent::Message { new_message } => {
-            events::draftbot::on_message_create(ctx, new_message, &state).await;
-        }
-
-        // A role changed in Discord. Unlike the periodic pass, this is a
-        // known change rather than a snapshot, so a *removal* can be
-        // propagated to the platform without risking a mass strip.
-        FullEvent::GuildMemberUpdate { event: update, .. } => {
-            if state.config().guild_id != Some(update.guild_id.get()) {
-                return Ok(());
-            }
-            let Ok(roles) = update.guild_id.roles(&ctx.http).await else {
-                return Ok(());
-            };
-            let names: Vec<String> = update
-                .roles
-                .iter()
-                .filter_map(|id| roles.get(id).map(|r| r.name.clone()))
-                .collect();
-            events::import::on_member_update(&state, &update.user.id.to_string(), &names).await;
-        }
-
-        _ => {}
+    // Role changes made in Discord are not read back: the platform decides
+    // roles and the next sync puts back anything edited by hand.
+    if let FullEvent::Message { new_message } = event {
+        events::draftbot::on_message_create(ctx, new_message, &state).await;
+        events::mention::on_message(ctx, new_message, &state).await;
     }
     Ok(())
 }

@@ -54,12 +54,12 @@ pub struct MeView {
     pub avatar_url: Option<String>,
     /// Total XP.
     pub xp_total: i64,
-    /// Current level.
-    pub level: i32,
-    /// XP earned inside the current level.
-    pub level_xp_into: i64,
-    /// XP needed to finish the current level.
-    pub level_xp_needed: i64,
+    /// Title of the next rank earned by XP; `None` at the top.
+    pub next_rank_title: Option<String>,
+    /// XP earned since the current rank began.
+    pub rank_xp_into: i64,
+    /// XP between the current rank and the next.
+    pub rank_xp_needed: i64,
     /// Rank identifier.
     pub global_rank: String,
     /// Rank display title.
@@ -161,6 +161,11 @@ pub struct LeaderboardEntry {
     pub xp: i64,
     /// Rank (or track role, on a track board).
     pub rank: String,
+    /// The title to show for `rank`: the member title, or the track title
+    /// on a track board.
+    pub rank_title: String,
+    /// Accent colour for the row: the rank's ring, or the track's colour.
+    pub rank_color: String,
     /// Level.
     pub level: i32,
     /// Streak.
@@ -508,6 +513,201 @@ pub fn quest_percent(progress: i32, target: i32) -> f64 {
     }
     let raw = (f64::from(progress) / f64::from(target)) * 100.0;
     raw.clamp(0.0, 100.0)
+}
+
+/// What the viewer is allowed to put on the calendar.
+///
+/// Asked of the server directly rather than inferred from the events
+/// already on screen. The page used to decide "you may schedule
+/// something" by looking for an existing event you could manage, which
+/// meant the very first event of a month could never be created: the
+/// form only appeared once an event was already there.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CalendarRights {
+    /// Whether the viewer may schedule association-wide events.
+    pub association: bool,
+    /// Tracks whose own sessions the viewer may schedule.
+    pub tracks: Vec<String>,
+    /// Whether the viewer may call a Bureau meeting.
+    pub bureau: bool,
+    /// Whether the viewer may schedule anything at all.
+    pub any: bool,
+}
+
+/// An event as the scheduling form submits it.
+///
+/// The form's nine fields travel as one value rather than nine
+/// arguments. Beyond keeping the call sites readable, it means adding a
+/// tenth field later is a change in one place instead of four.
+///
+/// Times arrive as the browser's `datetime-local` strings —
+/// `2026-09-16T14:00` — and are parsed on the server, where the
+/// association's timezone convention is decided once.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EventDraft {
+    /// Empty to create; an id to update that event.
+    pub id: String,
+    /// What it is called.
+    pub title: String,
+    /// Longer description; empty for none.
+    pub description: String,
+    /// `Session`, `Workshop`, `Jam`, `Meeting`, `Deadline`, `Showcase`.
+    pub kind: String,
+    /// Track identifier. Only meaningful when `audience` is `Track`.
+    pub track: String,
+    /// `Association`, `Track` or `Bureau`. Empty is read as `Association`.
+    pub audience: String,
+    /// Start, as `YYYY-MM-DDTHH:MM`.
+    pub starts_at: String,
+    /// End, as `YYYY-MM-DDTHH:MM`.
+    pub ends_at: String,
+    /// Room, campus, or a link; empty for none.
+    pub location: String,
+    /// XP handed to whoever scans in.
+    pub xp_reward: i32,
+}
+
+/// One entry on the calendar.
+///
+/// Everything is pre-formatted on the server. The browser should not be
+/// deciding how a French date reads, and more importantly it should not
+/// be deciding *who may edit this* — `can_manage` is the server's answer
+/// to that question, computed from the viewer's authority and the
+/// event's track, so the page can hide a control it already knows the
+/// server would refuse.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CalendarEvent {
+    /// Row id.
+    pub id: String,
+    /// What it is called.
+    pub title: String,
+    /// Longer description, if there is one.
+    pub description: Option<String>,
+    /// `Session`, `Workshop`, `Jam`, `Meeting`, `Deadline`, `Showcase`.
+    pub kind: String,
+    /// French label for the kind.
+    pub kind_label: String,
+    /// Track identifier, or `None` when the event is not track-scoped.
+    pub track: Option<String>,
+    /// `Association`, `Track` or `Bureau`.
+    pub audience: String,
+    /// French label for the audience, for the badge on the card.
+    pub audience_label: String,
+    /// Track emoji, when scoped to a track.
+    pub track_emoji: Option<String>,
+    /// `YYYY-MM-DD`, so the month grid can bucket without parsing a date.
+    pub day: String,
+    /// `14:00 – 16:00`, or `14:00` when the event has no duration.
+    pub time_label: String,
+    /// Full date and time, for the detail panel.
+    pub when_label: String,
+    /// Room, campus, or a link.
+    pub location: Option<String>,
+    /// XP handed to whoever scans in.
+    pub xp_reward: i32,
+    /// How many members have scanned in.
+    pub attendee_count: i64,
+    /// Whether the event has been called off.
+    pub cancelled: bool,
+    /// Whether it has already finished.
+    pub past: bool,
+    /// Whether the viewer may edit or cancel it.
+    pub can_manage: bool,
+}
+
+/// A member who scanned in at an event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EventAttendee {
+    /// Name to show.
+    pub display_name: String,
+    /// When they scanned in.
+    pub when: String,
+    /// XP they were credited.
+    pub xp_rewarded: i32,
+}
+
+/// A freshly minted QR code for an event.
+///
+/// Carries the rendered SVG rather than the raw token, because the point
+/// of generating one is to put it on a projector. The token is included
+/// too for the rare case of reading it out loud.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QrTicket {
+    /// Inline SVG, ready to drop into the page.
+    pub svg: String,
+    /// The link the code encodes.
+    pub scan_url: String,
+    /// When the code stops working, formatted.
+    pub expires_label: String,
+    /// Ceiling on claims, when one was set.
+    pub max_scans: Option<i32>,
+}
+
+/// One member of a track, as the track board lists them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrackMemberRow {
+    /// Name to show.
+    pub display_name: String,
+    /// `Lead`, `CoLead`, `Mentor`, `Reviewer`, `Contributor`, `Observer`.
+    pub role: String,
+    /// French label for the role.
+    pub role_label: String,
+    /// XP earned inside this track.
+    pub track_xp: i64,
+    /// Chosen specialization, when set.
+    pub specialization: Option<String>,
+}
+
+/// One project as it stands with respect to a single track.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrackProjectRow {
+    /// Project id.
+    pub id: String,
+    /// Project name.
+    pub name: String,
+    /// Project status.
+    pub status: String,
+    /// This track's verdict: `Pending`, `Approved`, `Rejected`, `NotApplicable`.
+    pub verdict: String,
+    /// This track's mark out of 100, when one was given.
+    pub score: Option<i32>,
+    /// Who rendered the verdict.
+    pub reviewer_name: Option<String>,
+    /// How many builds are attached.
+    pub file_count: i64,
+}
+
+/// Everything one track's page shows.
+// No `Eq`: the average mark is a float, and an average is exactly the
+// kind of value that should never be compared for exact equality anyway.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TrackBoard {
+    /// Canonical identifier.
+    pub id: String,
+    /// Emoji.
+    pub emoji: String,
+    /// Theme colour.
+    pub color: String,
+    /// Canonical specializations.
+    pub specializations: Vec<String>,
+    /// Whether the viewer belongs to this track.
+    pub joined: bool,
+    /// The viewer's role in it, when they belong.
+    pub my_role: Option<String>,
+    /// Whether the viewer may render verdicts for this track.
+    pub can_review: bool,
+    /// Whether the viewer may schedule this track's sessions.
+    pub can_manage_events: bool,
+    /// Total XP the track has pooled.
+    pub total_xp: i64,
+    /// Members, strongest role first.
+    pub members: Vec<TrackMemberRow>,
+    /// Projects this track has a say in.
+    pub projects: Vec<TrackProjectRow>,
+    /// The track's own upcoming sessions.
+    pub events: Vec<CalendarEvent>,
+    /// Average of the marks this track has given, when it has given any.
+    pub average_score: Option<f64>,
 }
 
 #[cfg(test)]

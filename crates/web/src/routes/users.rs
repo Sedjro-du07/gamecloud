@@ -91,10 +91,7 @@ async fn build_profile(state: &AppState, user_id: Uuid) -> WebResult<ProfileResp
 
     Ok(ProfileResponse {
         id: record.id,
-        display_name: record
-            .current_title
-            .clone()
-            .unwrap_or_else(|| record.discord_id.clone()),
+        display_name: record.display_name(),
         discord_id: record.discord_id,
         github_username: record.github_username,
         email: record.email,

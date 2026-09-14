@@ -43,6 +43,12 @@ pub struct UserRecord {
     pub id: Uuid,
     /// Discord user ID (snowflake stored as text).
     pub discord_id: String,
+    /// Discord handle, e.g. `aevaryn`. `None` for rows created before
+    /// the platform started recording it, or by the bot's importer.
+    pub discord_username: Option<String>,
+    /// Discord display name — what the member actually chose to be
+    /// called. Preferred over the handle when both are present.
+    pub discord_global_name: Option<String>,
     /// GitHub login, set during onboarding.
     pub github_username: Option<String>,
     /// Epitech email. `None` for `Pending` users.
@@ -119,6 +125,29 @@ impl UserRecord {
             _ => return None,
         })
     }
+
+    /// The name to show a human.
+    ///
+    /// Mirrors the `member_display_name` SQL function so a record read
+    /// through `sqlx::query_as` and a row read through a hand-written
+    /// `SELECT` agree. The order is deliberate: the title a member
+    /// earned outranks the name they chose, which outranks their handle;
+    /// the raw snowflake appears only when the platform genuinely knows
+    /// nothing else about them.
+    #[must_use]
+    pub fn display_name(&self) -> String {
+        [
+            self.current_title.as_deref(),
+            self.discord_global_name.as_deref(),
+            self.discord_username.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .unwrap_or(&self.discord_id)
+        .to_string()
+    }
 }
 
 /// Insert payload for `users`.
@@ -126,6 +155,10 @@ impl UserRecord {
 pub struct NewUser {
     /// Discord ID (required; we always create users from OAuth).
     pub discord_id: String,
+    /// Discord handle at signup.
+    pub discord_username: Option<String>,
+    /// Discord display name at signup.
+    pub discord_global_name: Option<String>,
     /// Discord avatar at signup.
     pub avatar_url: Option<String>,
 }

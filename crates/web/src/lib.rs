@@ -1,3 +1,9 @@
+// The calendar nests components four deep inside `Show` and
+// `Suspense`, and each layer wraps the last in another generic
+// `HtmlElement<..>`. The resulting type is legitimate but deeper
+// than rustc's default query limit, which is tuned for hand-written
+// types rather than macro-generated view trees.
+#![recursion_limit = "512"]
 //! GameCloud OS web crate.
 //!
 //! Hybrid SSR / hydration crate built by `cargo-leptos`. The native
@@ -51,3 +57,4 @@ pub fn hydrate() {
     console_error_panic_hook::set_once();
     leptos::mount::hydrate_body(crate::app::App);
 }
+

@@ -34,6 +34,7 @@ fn TrackOptionCard(
     pending: Memo<bool>,
 ) -> impl IntoView {
     let id = option.id.clone();
+    let board_href = format!("/tracks/{id}");
     let specs = option.specializations.clone();
     let (specialization, set_specialization) = signal(String::new());
 
@@ -77,6 +78,13 @@ fn TrackOptionCard(
                     .joined
                     .then(|| view! { <span class="gc-chip">"Déjà rejointe"</span> })}
             </button>
+
+            // Readable by anyone, joined or not: seeing who is in a
+            // track and what it has shipped is most of how somebody
+            // decides whether to join it.
+            <a class="gc-link gc-track-option__board" href=board_href>
+                "Voir le tableau →"
+            </a>
 
             <Show when=is_selected.clone()>
                 <div class="gc-track-option__detail">

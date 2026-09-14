@@ -81,6 +81,10 @@ struct DiscordTokenResponse {
 #[derive(Deserialize)]
 struct DiscordUser {
     id: String,
+    /// Globally unique handle. Always present on `/users/@me`.
+    username: Option<String>,
+    /// Display name, `null` for accounts that never set one.
+    global_name: Option<String>,
     avatar: Option<String>,
 }
 
@@ -178,7 +182,32 @@ async fn callback(
         )
     });
 
-    let user = users::upsert_from_discord(state.pool(), &me.id, avatar_url.as_deref()).await?;
+    let user = users::upsert_from_discord(
+        state.pool(),
+        &users::DiscordIdentity {
+            discord_id: &me.id,
+            username: me.username.as_deref(),
+            global_name: me.global_name.as_deref(),
+            avatar_url: avatar_url.as_deref(),
+        },
+    )
+    .await?;
+
+    // DraftBot level-ups earned on the server before this member ever
+    // signed in were queued rather than dropped; pay them now. Best
+    // effort: a failure here must not stop somebody logging in.
+    if let Err(e) =
+        super::webhooks::credit_draftbot_backlog(&state, user.id, &user.discord_id).await
+    {
+        tracing::warn!(error = %e, user = %user.id, "draftbot backlog not credited");
+    }
+    // Likewise the XP earned with Kumo before the platform existed.
+    if let Err(e) =
+        crate::db::queries::xp::credit_legacy_xp(state.pool(), user.id, &user.discord_id).await
+    {
+        tracing::warn!(error = %e, user = %user.id, "legacy XP not credited");
+    }
+
     let target = post_login_target(&user);
 
     let (jar, _exp) = issue_session(&state, jar, user.id, None, None).await?;

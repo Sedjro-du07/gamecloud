@@ -33,7 +33,7 @@ use crate::{
 /// A JWT is base64url, so only `=` padding and the separators need
 /// escaping in practice — but encoding everything outside the unreserved
 /// set keeps this correct whatever the token format becomes.
-fn urlencoding(input: &str) -> String {
+pub(crate) fn urlencoding(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for b in input.bytes() {
         match b {
@@ -76,6 +76,11 @@ struct GenerateBody {
     /// `None` means "everyone who is in the room before it expires",
     /// which is the right default for a code on a projector.
     max_scans: Option<i32>,
+    /// Calendar event this code admits to. When set, the attendance it
+    /// produces is answerable to the calendar rather than to a loose
+    /// string, and a member cannot be paid twice for one session by
+    /// scanning a reprinted code.
+    event_id: Option<Uuid>,
 }
 
 #[derive(Serialize)]
@@ -145,6 +150,7 @@ async fn generate(
             created_by: user.id,
             expires_at: exp,
             max_scans: body.max_scans,
+            event_id: body.event_id,
         },
     )
     .await?;

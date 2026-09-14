@@ -82,7 +82,7 @@ pub async fn list(
                r.tracks,
                r.specializations,
                r.level,
-               COALESCE(u.current_title, u.discord_id) AS submitted_by_name,
+               member_display_name(u.current_title, u.discord_global_name, u.discord_username, u.discord_id) AS submitted_by_name,
                (r.validated_by IS NOT NULL) AS is_validated,
                r.is_official,
                r.votes,
@@ -251,6 +251,13 @@ pub async fn validate_entry(
             XpSource::Discord,
         )
         .describe(&format!("Ressource validée : {title}")),
+    )
+    .await?;
+
+    crate::services::notifications::enqueue(
+        &mut tx,
+        channels,
+        &crate::services::notifications::Announcement::resource_reviewed(submitter, &title, true),
     )
     .await?;
 

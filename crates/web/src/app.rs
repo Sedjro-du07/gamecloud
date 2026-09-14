@@ -1,7 +1,7 @@
 //! Top-level Leptos `App` component and document `<head>` shell.
 
 use leptos::prelude::*;
-use leptos_meta::{provide_meta_context, Meta, MetaTags, Stylesheet, Title};
+use leptos_meta::{provide_meta_context, Link, Meta, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
     ParamSegment, StaticSegment,
@@ -11,6 +11,7 @@ use crate::{
     components::hud_shell::HudShell,
     pages::{
         admin::AdminPage,
+        calendar::CalendarPage,
         home::HomePage,
         new_project::NewProjectPage,
         leaderboard::LeaderboardPage,
@@ -22,6 +23,7 @@ use crate::{
         resources::ResourcesPage,
         reviews::ReviewsPage,
         scan::ScanPage,
+        track_detail::TrackDetailPage,
         tracks::TrackPickerPage,
     },
 };
@@ -59,6 +61,18 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Stylesheet id="leptos" href="/pkg/gamecloud.css" />
+        // The display, body and mono faces the stylesheet names. Without
+        // them every heading fell back to the system font.
+        <Link rel="preconnect" href="https://fonts.googleapis.com" />
+        <Link rel="preconnect" href="https://fonts.gstatic.com" />
+        <Link
+            rel="stylesheet"
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Orbitron:wght@600;700;800&display=swap"
+        />
+        // Without this the browser asks for /favicon.ico on every page
+        // and gets a 404 each time — harmless, but it fills the console
+        // and hides the errors that matter.
+        <Link rel="icon" type_="image/svg+xml" href="/favicon.svg" />
         <Title text="GameCloud OS" />
         <Meta name="description"
               content="GameCloud OS — l'OS gamifié de l'association game-dev d'Epitech Bénin." />
@@ -69,6 +83,14 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("") view=HomePage />
                     <Route path=StaticSegment("profile") view=ProfilePage />
                     <Route path=StaticSegment("projects") view=ProjectsPage />
+                    // Declared *before* the `:id` route below. The
+                    // router takes the first match, so with the
+                    // parameter first `/projects/new` resolved to the
+                    // detail page for a project called "new" and every
+                    // member who clicked "Nouveau projet" landed on
+                    // "Projet introuvable".
+                    <Route path=(StaticSegment("projects"), StaticSegment("new"))
+                           view=NewProjectPage />
                     <Route path=(StaticSegment("projects"), ParamSegment("id"))
                            view=ProjectDetailPage />
                     <Route path=StaticSegment("leaderboard") view=LeaderboardPage />
@@ -76,9 +98,14 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("resources") view=ResourcesPage />
                     <Route path=StaticSegment("reviews") view=ReviewsPage />
                     <Route path=StaticSegment("admin") view=AdminPage />
-                    <Route path=(StaticSegment("projects"), StaticSegment("new"))
-                           view=NewProjectPage />
                     <Route path=StaticSegment("scan") view=ScanPage />
+                    <Route path=StaticSegment("calendar") view=CalendarPage />
+                    // The picker lives under /onboarding; this is the
+                    // board for a track you already belong to, which is
+                    // a different page for a different moment.
+                    <Route path=StaticSegment("tracks") view=TrackPickerPage />
+                    <Route path=(StaticSegment("tracks"), ParamSegment("id"))
+                           view=TrackDetailPage />
                     <Route path=(StaticSegment("onboarding"), StaticSegment("email"))
                            view=OnboardingEmailPage />
                     <Route path=(StaticSegment("onboarding"), StaticSegment("verify"))

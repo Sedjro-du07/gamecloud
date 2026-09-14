@@ -273,6 +273,28 @@ pub async fn grant_in_tx(
     // --- 7: badges ---------------------------------------------------
     let new_badges = refresh_badges(tx, request.user_id, streak_after).await?;
 
+    // A hand-made adjustment is the one XP movement with no visible
+    // cause: nothing the member did produced it. Telling them, with the
+    // reason the Bureau gave, is what keeps the ledger from feeling
+    // arbitrary. Everything else is announced by `announce` below.
+    if request.source == XpSource::Manual {
+        notifications::enqueue(
+            tx,
+            channels,
+            &Announcement::manual_xp(
+                request.user_id,
+                awarded,
+                request.description.unwrap_or("Ajustement du Bureau"),
+            ),
+        )
+        .await?;
+    }
+
+    // A new title changes the member's rank role on Discord.
+    if rank_final != rank_before {
+        notifications::request_role_sync(&mut **tx).await?;
+    }
+
     // --- 8: announcements --------------------------------------------
     announce(
         tx,
@@ -462,8 +484,7 @@ async fn announce(
 
 #[derive(Debug, sqlx::FromRow)]
 struct MemberRow {
-    discord_id: String,
-    current_title: Option<String>,
+    display_name: String,
     xp_total: i64,
     level: i32,
     global_rank: String,
@@ -475,10 +496,11 @@ struct MemberRow {
 }
 
 impl MemberRow {
+    /// Name for announcements. Resolved in SQL by `member_display_name`
+    /// so a rank-up posted to Discord reads the same as the leaderboard
+    /// the member checks straight afterwards.
     fn display_name(&self) -> String {
-        self.current_title
-            .clone()
-            .unwrap_or_else(|| self.discord_id.clone())
+        self.display_name.clone()
     }
 }
 
@@ -489,8 +511,8 @@ async fn load_member(
 ) -> WebResult<Option<MemberSnapshot>> {
     let row: Option<MemberRow> = sqlx::query_as(
         r#"
-        SELECT u.discord_id,
-               u.current_title,
+        SELECT member_display_name(u.current_title, u.discord_global_name,
+                                   u.discord_username, u.discord_id) AS display_name,
                u.xp_total,
                u.level,
                u.global_rank,
@@ -555,6 +577,65 @@ fn next_rank(current: GlobalRank, xp_total: i64, email_verified: bool) -> Global
         return current;
     }
     GlobalRank::from_xp(xp_total).max(GlobalRank::Initiate)
+}
+
+/// Credit XP carried over from before the platform, at most once.
+///
+/// It goes to the global total only — it lifts the member title, never a
+/// track title, and grants no office — and it bypasses multipliers, caps
+/// and quests: it is a balance being brought across, not something the
+/// member just did. Setting `credited_at` in the same transaction is what
+/// makes a second login pay nothing.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn credit_legacy_xp(pool: &PgPool, user_id: Uuid, discord_id: &str) -> WebResult<()> {
+    let mut tx = pool.begin().await?;
+    let carried: Option<(i32, String)> = sqlx::query_as(
+        "UPDATE legacy_xp SET credited_at = NOW() \
+          WHERE discord_id = $1 AND credited_at IS NULL \
+          RETURNING xp, source",
+    )
+    .bind(discord_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((xp, source)) = carried else {
+        return Ok(());
+    };
+
+    let (total, rank, verified): (i64, String, bool) = sqlx::query_as(
+        "SELECT xp_total, global_rank, email_verified FROM users WHERE id = $1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let total = total + i64::from(xp);
+    let rank = next_rank(GlobalRank::parse(&rank), total, verified);
+
+    sqlx::query("UPDATE users SET xp_total = $2, level = $3, global_rank = $4 WHERE id = $1")
+        .bind(user_id)
+        .bind(total)
+        .bind(level_for_xp(total))
+        .bind(rank.as_str())
+        .execute(&mut *tx)
+        .await?;
+    // Stamped with the open season, or the season board would leave out
+    // the XP that put the member on it.
+    let season_id = current_season_id(&mut tx).await?;
+    sqlx::query(
+        "INSERT INTO xp_logs (user_id, amount, source, description, season_id) \
+         VALUES ($1, $2, 'Discord', $3, $4)",
+    )
+    .bind(user_id)
+    .bind(xp)
+    .bind(format!("Report de l'XP {source}"))
+    .bind(season_id)
+    .execute(&mut *tx)
+    .await?;
+    notifications::request_role_sync(&mut *tx).await?;
+
+    tx.commit().await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

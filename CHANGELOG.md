@@ -1,5 +1,222 @@
 # Changelog
 
+## Septembre 2026 (suite) — réunions du Bureau, rail de navigation, bot qui répond
+
+### Réunions du Bureau
+
+Un événement a désormais une **portée** : toute l'association, une track,
+ou le Bureau seul. Une réunion de bureau n'apparaît sur le calendrier de
+personne d'autre — le filtrage se fait en SQL, parce qu'une ligne qui
+arrive dans le navigateur et n'est simplement pas dessinée n'est pas
+privée.
+
+L'annonce part dans `🏛bureau`, le salon du Bureau qui existait déjà, en
+taguant le rôle Bureau. Un second salon `🏛gc-bureau` avait d'abord été
+créé parce que le bot n'avait pas accès au premier ; il a les droits
+administrateur désormais, et deux salons Bureau n'avaient pas lieu
+d'être. Le journal d'audit y retombe aussi quand aucun salon dédié n'est
+configuré, ce qui retire `🏛gc-journal`, resté vide.
+
+### Une interface de jeu
+
+- **Accueil** : un visiteur voit le pitch, les trois gestes du jeu
+  (choisir ses tracks, gagner de l'XP, monter en titre), l'échelle des
+  titres et les tracks. Un membre connecté voit à la place son panneau de
+  mission : ses titres, l'XP avant le prochain, sa série, sa place.
+- **Échelle des titres** partout où l'on progresse, avec le titre atteint
+  marqué « VOUS » et le dernier titre caché tant que personne ne l'a.
+- **Classement** : podium des trois premiers, titre et couleur de chacun.
+  Les comptes créés d'avance y figurent avec le titre que vaut leur XP.
+- **Profil** : avatar remplacé par l'initiale quand il manque, progression
+  vers le prochain titre de chaque track, badges verrouillés ou brillants.
+- **Barre du haut** : une jauge vers le prochain titre sous le nom.
+- **Quêtes** : récompense mise en avant, tampon « ACCOMPLIE ».
+- Polices du design enfin chargées, fond en grille, panneaux et lueurs aux
+  couleurs du rang ou de la track, animations désactivées pour qui a
+  demandé moins de mouvement.
+
+**Corrigé** : sur téléphone, les pages débordaient en largeur (bouton de
+connexion et titre coupés) ; le classement « Saison » était vide parce que
+l'XP reportée n'était rattachée à aucune saison ; sur le profil, les
+tracks s'écrasaient en colonne étroite.
+
+### Des titres, pas des niveaux
+
+La plateforme n'affiche plus de « Niveau 7 ». Le profil montre la
+progression vers le **prochain titre** (« Prochain titre : ⚡ Compagnon de
+Guilde — 230 / 400 XP »), la barre du haut le titre actuel, et le
+classement n'a plus de colonne niveau. Dans chaque track, on porte un
+titre : 👁️ Observateur, 🔨 Contributeur, 🔍 Relecteur, 🧭 Mentor,
+⚔️ Co-responsable, 👑 Responsable. `/profil`, `/track` et la réponse
+quand on tague le bot montrent les mêmes titres.
+
+### L'XP d'avant l'inscription n'est plus perdue
+
+Toute l'XP passe par `xp::grant` sur la plateforme — GitHub, DraftBot,
+présences, quêtes, ajustements du Bureau — et c'est lui qui recalcule
+titre, badges et annonces. Mais une montée de niveau DraftBot d'un membre
+qui ne s'était pas encore inscrit était **ignorée**. Elle est maintenant
+gardée (`draftbot_pending_levels`) et payée à sa première connexion.
+
+### La plateforme décide, Discord suit
+
+Les tracks se choisissent sur la plateforme, les postes du Bureau s'y
+attribuent, les titres suivent l'XP. Le bot ne lit plus les rôles Discord
+pour les appliquer à la plateforme : il recopie la plateforme sur Discord
+(poste, accès `👑✨️Bureau✨️`, titre global, tracks), tout de suite après
+chaque changement (`RoleSync` dans l'outbox) et à chaque passe périodique.
+Un rôle modifié à la main sur Discord est remis en place.
+
+Les rôles Discord sont rangés du plus important au moins important —
+postes du Bureau, titres de membre, tracks — et partout où l'on voit un
+membre (profil, barre du haut, `/profil`, `/track`, classement), ses
+titres apparaissent dans ce même ordre.
+
+### Report de l'XP Kumo
+
+`scripts/reset-progression.sql` remet la progression à zéro, sauf les
+postes du Président et du Vice-président, et reporte l'XP Kumo de chacun
+dans son XP globale — le titre de membre, jamais un titre de track.
+Un membre qui n'est pas encore inscrit la reçoit à sa première connexion
+(`legacy_xp`). Les membres du Bureau ont leur compte créé d'avance (Fred
+Vice-président, Kim Secrétaire, et Erwan, Yan, Yann-Ange, crimad sans
+poste pour l'instant) ; sur Discord, un compte qui n'a pas encore validé
+son email montre déjà le titre que vaut son XP — la validation ouvre les
+droits sur la plateforme, pas la reconnaissance. En terminant son inscription, un membre prend directement
+le titre que son XP lui vaut, au lieu de repartir d'Initié.
+
+### Poste provisoire du Bureau
+
+`🏛 Membre du Bureau` (`Provisional`) garde l'accès aux salons du Bureau à
+un membre dont le poste n'est pas encore décidé, sans rien ouvrir sur la
+plateforme : ni panneau d'administration, ni réunions du Bureau. Erwan,
+Yan, Yann-Ange et crimad le portent en attendant leur poste.
+
+### Présences
+
+`✅presences` (📌 Informations) reçoit une ligne à chaque présence scannée
+par QR, avec l'XP gagnée. Sans repli vers les annonces : une ligne par
+scan y noierait tout le reste.
+
+### DraftBot suspendu
+
+La plateforme est le seul système d'XP. Le pont DraftBot → XP est coupé
+(`DRAFTBOT_ENABLED=false`), le rôle DraftBot n'a plus aucune permission
+et n'a plus accès à `🏆level`. Pour le réactiver : remettre les
+permissions du rôle à `396579302911`, retirer l'exception sur `🏆level`,
+et `DRAFTBOT_ENABLED=true`.
+
+### Classement et guide tenus par le bot
+
+`🏅classement` et `📖guide` existaient mais restaient vides. Le bot y
+tient chacun un message unique, modifié sur place à chaque passe de
+synchronisation plutôt que republié.
+
+### Accès Bureau
+
+Les salons du Bureau s'ouvrent au rôle `👑✨️Bureau✨️`, pas aux seize
+postes. Un poste attribué sur Discord sans ce rôle donnait des droits sur
+la plateforme mais pas l'accès à `🏛bureau` : le bot l'ajoute désormais.
+Il ne le retire jamais.
+
+### Plus de catégorie « GAMECLOUD OS »
+
+Tous les salons sont pilotés par la plateforme ; ils ont rejoint les
+catégories existantes et perdu le préfixe `gc-` (`🎯quetes`,
+`🏅classement` et `📖guide` dans 📌 Informations ; `🏆hall-of-fame` et
+`🔍a-valider` dans 🗃 Projet et développement).
+
+### Salons en doublon
+
+`scripts/migrate-legacy-channels.sh` supprime les salons qui en doublent
+un autre, `📣gc-annonces`, `🏛gc-bureau` et `🏛gc-journal` compris. Il ne
+supprime plus `🏆level` : c'est le salon où le bot lit les montées de
+niveau de DraftBot (`DRAFTBOT_CHANNEL_ID`), et le retirer aurait coupé la
+synchronisation de l'XP.
+
+### Navigation
+
+La barre horizontale est devenue un **rail vertical groupé** (Moi ·
+Association · Responsabilités). Dix destinations sur une ligne finissaient
+soit par passer à la ligne, soit par défiler horizontalement sur
+téléphone. Le rail devient une barre d'icônes en dessous de 1080 px, puis
+une barre basse sur téléphone, où le pouce l'atteint.
+
+### Le bot répond quand on le tague
+
+Il reconnaît quatre intentions — profil, classement, quêtes, agenda — en
+tolérant les accents et les formulations approximatives, et répond
+directement plutôt que de renvoyer vers un menu. Les réunions du Bureau
+sont exclues de sa réponse « agenda » : il répond dans le salon où la
+question est posée, qui peut être public.
+
+### Corrigé
+
+- `EventScope::parse` acceptait une track sur une réunion de bureau ;
+  elle aurait pu être classée sous une discipline et apparaître dans
+  l'agenda de cette track. C'est un test ajouté pour l'occasion qui a
+  trouvé l'écart entre le modèle Rust et la contrainte SQL.
+
+---
+
+## Septembre 2026 (suite) — calendrier, présence, notation par track
+
+Les fonctions serveur ne répondaient à aucune route : elles étaient
+déclarées sous `/api`, où elles entraient en collision avec l'API REST,
+et le gestionnaire `handle_server_fns` n'était jamais enregistré. Aucune
+page ne pouvait donc charger quoi que ce soit dans le navigateur. Elles
+vivent maintenant sous `/_fn`, qui leur est réservé.
+
+### Ce qui a été ajouté
+
+**Calendrier** (`/calendar`) — séances, ateliers, game jams, réunions,
+échéances, présentations. Grille mensuelle qui se replie en agenda sur
+téléphone. Les événements s'annulent, ne se suppriment pas : des
+présences pointent dessus.
+
+**Présence par QR** — celui qui a les droits génère le code depuis la
+page de l'événement ; il est valable pour une durée qu'il choisit
+(plafonnée à 24 h). Le code encode un **lien**, pas le jeton brut :
+n'importe quel appareil photo l'ouvre, alors que presque aucun ne sait
+passer une chaîne décodée à une page web — Firefox et Safari n'ont même
+pas `BarcodeDetector`.
+
+**Tableau par track** (`/tracks/{id}`) — ses membres classés par rôle,
+les projets qu'elle juge, ses notes, sa moyenne, ses séances.
+
+**Notation** — une note sur 100 accompagne le verdict de chaque track.
+Elle est facultative : approuver est une barrière, noter est un
+jugement, et un relecteur qui ne veut qu'ouvrir la barrière n'a pas à
+inventer un chiffre.
+
+### Ce qui a été corrigé
+
+**Le nom affiché était l'identifiant Discord.** La base ne stockait que
+le matricule ; chaque liste, chaque ligne de journal affichait dix-huit
+chiffres. Le pseudo et le nom d'affichage sont désormais enregistrés à
+la connexion **et** par le bot pour les membres qui ne se sont jamais
+connectés.
+
+**Un membre ne revoyait jamais son propre projet.** La liste passait
+`false` en dur pour « inclure le non publié », donc elle ne montrait que
+les projets publiés — même à l'auteur et au responsable de la track. La
+visibilité est maintenant calculée : publié = public, en cours = visible
+aux tracks concernées et à l'auteur.
+
+**Créer un projet depuis l'interface ne créait pas de dépôt GitHub.** La
+documentation de la fonction le promettait, mais seule la route REST
+provisionnait. La logique est partagée ; les deux chemins créent le
+dépôt.
+
+**Un membre pouvait être payé deux fois pour une séance** si
+l'organisateur réimprimait le code : chaque impression est un jeton
+distinct. Un index unique sur `(user_id, event_id)` le rend impossible.
+
+**`events::create` ne liait jamais son `created_by`.** L'insertion aurait
+échoué à la première utilisation.
+
+---
+
 ## Septembre 2026 — audit, corrections, et fin de la plateforme
 
 Cette version part d'un audit complet du code et corrige ce qu'il a
