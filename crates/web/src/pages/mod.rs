@@ -9,6 +9,7 @@ pub mod profile;
 pub mod project_detail;
 pub mod projects;
 pub mod quests;
+pub mod resources;
 pub mod reviews;
 pub mod scan;
 pub mod tracks;

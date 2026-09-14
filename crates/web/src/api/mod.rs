@@ -351,6 +351,33 @@ pub struct AttendanceEntry {
     pub when: String,
 }
 
+/// A resource-library entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResourceItem {
+    /// Entry id.
+    pub id: String,
+    /// Title.
+    pub title: String,
+    /// Link.
+    pub url: String,
+    /// `Tutorial`, `Tool`, `Asset`, `Doc` or `Video`.
+    pub kind: Option<String>,
+    /// Tracks it is relevant to.
+    pub tracks: Vec<String>,
+    /// Difficulty band.
+    pub level: Option<String>,
+    /// Who proposed it.
+    pub submitted_by: String,
+    /// Whether a validator signed off.
+    pub validated: bool,
+    /// Vote tally.
+    pub votes: i32,
+    /// Whether the viewer has voted.
+    pub has_voted: bool,
+    /// Whether the viewer may validate entries.
+    pub may_validate: bool,
+}
+
 /// One line of the audit trail, as the Bureau panel shows it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AuditLine {

@@ -24,8 +24,8 @@ use leptos::prelude::*;
 
 // Types that appear in the function signatures, so both targets need them.
 use crate::api::{
-    AuditLine, LeaderboardView, MeView, ProjectCard, ProjectDetailView, QuestItem, ReviewItem,
-    SheetView, TrackOption,
+    AuditLine, LeaderboardView, MeView, ProjectCard, ProjectDetailView, QuestItem, ResourceItem,
+    ReviewItem, SheetView, TrackOption,
 };
 
 // Types only constructed inside the server bodies.
@@ -1045,4 +1045,220 @@ pub async fn get_audit() -> Result<Vec<AuditLine>, ServerFnError> {
 
     #[cfg(not(feature = "ssr"))]
     Ok(Vec::new())
+}
+
+// ---------------------------------------------------------------------------
+// Resource library
+// ---------------------------------------------------------------------------
+
+/// The resource library, as the viewer may see it.
+///
+/// # Errors
+/// Returns a `ServerFnError` on database failure.
+#[server(GetResources, "/api")]
+pub async fn get_resources() -> Result<Vec<ResourceItem>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let Some(state) = ctx::state() else {
+            return Ok(Vec::new());
+        };
+        let Some(user_id) = ctx::current_user_id(&state).await else {
+            return Ok(Vec::new());
+        };
+
+        // Unvalidated submissions are shown only to members who can
+        // validate them, so what everyone else browses is a library the
+        // club has vouched for.
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let may_validate = authority.can(Action::ValidateResource);
+
+        let rows = crate::db::queries::resources::list(state.pool(), user_id, None, may_validate)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        return Ok(rows
+            .into_iter()
+            .map(|r| ResourceItem {
+                id: r.id.to_string(),
+                title: r.title,
+                url: r.url,
+                kind: r.resource_type,
+                tracks: r.tracks,
+                level: r.level,
+                submitted_by: r.submitted_by_name,
+                validated: r.is_validated,
+                votes: r.votes,
+                has_voted: r.has_voted,
+                may_validate,
+            })
+            .collect());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(Vec::new())
+}
+
+/// Submit a resource to the library.
+///
+/// # Errors
+/// Returns a `ServerFnError` on a validation failure.
+#[server(SubmitResource, "/api")]
+pub async fn submit_resource(
+    title: String,
+    url: String,
+    kind: String,
+    track: String,
+) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+
+        let new = crate::db::queries::resources::NewResource {
+            title,
+            url,
+            resource_type: (!kind.trim().is_empty()).then_some(kind),
+            tracks: if track.trim().is_empty() {
+                Vec::new()
+            } else {
+                vec![track]
+            },
+            specializations: Vec::new(),
+            level: None,
+        };
+
+        crate::db::queries::resources::submit(state.pool(), state.channels(), user_id, &new)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (title, url, kind, track);
+        Ok(())
+    }
+}
+
+/// Vote for a resource, or validate it when entitled.
+///
+/// # Errors
+/// Returns a `ServerFnError` carrying the domain message.
+#[server(ActOnResource, "/api")]
+pub async fn act_on_resource(id: String, action: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+        let resource_id = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("unknown resource"))?;
+
+        match action.as_str() {
+            "vote" => crate::db::queries::resources::vote(state.pool(), user_id, resource_id)
+                .await
+                .map(|_| ())
+                .map_err(|e| ServerFnError::new(e.to_string())),
+            "unvote" => crate::db::queries::resources::unvote(state.pool(), user_id, resource_id)
+                .await
+                .map(|_| ())
+                .map_err(|e| ServerFnError::new(e.to_string())),
+            "validate" => {
+                let authority =
+                    crate::db::queries::users::load_authority(state.pool(), user_id)
+                        .await
+                        .map_err(|e| ServerFnError::new(e.to_string()))?;
+                if !authority.can(Action::ValidateResource) {
+                    return Err(ServerFnError::new(
+                        "réservé à l'Archiviste et aux responsables de track",
+                    ));
+                }
+                crate::db::queries::resources::validate_entry(
+                    state.pool(),
+                    state.channels(),
+                    user_id,
+                    resource_id,
+                )
+                .await
+                .map(|_| ())
+                .map_err(|e| ServerFnError::new(e.to_string()))
+            }
+            other => Err(ServerFnError::new(format!("unknown action {other}"))),
+        }
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (id, action);
+        Ok(())
+    }
+}
+
+/// Open a quest. Bureau only.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller lacks `GrantManualXp`.
+#[server(OpenQuest, "/api")]
+pub async fn open_quest(
+    title: String,
+    condition: String,
+    target: i32,
+    xp_reward: i32,
+    days: i32,
+) -> Result<String, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::GrantManualXp) {
+            return Err(ServerFnError::new("réservé au Bureau exécutif"));
+        }
+
+        let now = chrono::Utc::now();
+        let quest = crate::db::queries::quests::NewQuest {
+            title,
+            description: None,
+            xp_reward,
+            quest_type: "Weekly".to_string(),
+            condition_type: condition,
+            condition_value: target,
+            track: None,
+            starts_at: now,
+            ends_at: now + chrono::Duration::days(i64::from(days.clamp(1, 90))),
+        };
+
+        let id = crate::db::queries::quests::create(
+            state.pool(),
+            state.channels(),
+            user_id,
+            &quest,
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(id.to_string());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (title, condition, target, xp_reward, days);
+        Ok(String::new())
+    }
 }

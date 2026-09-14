@@ -30,6 +30,7 @@ pub fn HudShell(children: Children) -> impl IntoView {
                     <A href="/profile">"Profil"</A>
                     <A href="/projects">"Projets"</A>
                     <A href="/quests">"Quêtes"</A>
+                    <A href="/resources">"Ressources"</A>
                     <A href="/leaderboard">"Classement"</A>
                     <Suspense fallback=|| ()>
                         {move || {
