@@ -54,14 +54,33 @@ const ALIASES: &[(&str, Track)] = &[
 ];
 
 /// Resolve a Discord role name to a platform track.
+///
+/// Matching is deliberately tolerant, because a Discord role wants a
+/// readable name (`⚙️ Engineering`, `🎨 Visual Art`) while the platform
+/// identifier is a bare CamelCase token (`Engineering`, `VisualArt`).
+/// Rather than maintain a table for every cosmetic variant, we strip the
+/// decoration and close the spaces:
+///
+/// - `⚙️ Engineering`  → `Engineering`
+/// - `🎮 Game Design`  → `GameDesign`
+/// - `🐛 QA`           → `QA`
+///
+/// [`ALIASES`] then covers names that are not a spelling of the track at
+/// all, like the guild's own `💻Developer`.
 #[must_use]
 pub fn track_for_role(name: &str) -> Option<Track> {
-    Track::parse(name).or_else(|| {
-        ALIASES
-            .iter()
-            .find(|(alias, _)| *alias == name)
-            .map(|(_, track)| *track)
-    })
+    let stripped = name
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .trim();
+
+    Track::parse(stripped)
+        .or_else(|| Track::parse(&stripped.replace(' ', "")))
+        .or_else(|| {
+            ALIASES
+                .iter()
+                .find(|(alias, _)| *alias == name)
+                .map(|(_, track)| *track)
+        })
 }
 
 /// Resolve a Discord role name to a Bureau office.
@@ -245,6 +264,27 @@ mod tests {
     fn canonical_track_names_resolve() {
         for track in Track::ALL {
             assert_eq!(track_for_role(track.as_str()), Some(track));
+        }
+    }
+
+    #[test]
+    fn decorated_role_names_resolve() {
+        // The names we give the Discord roles themselves.
+        assert_eq!(track_for_role("⚙️ Engineering"), Some(Track::Engineering));
+        assert_eq!(track_for_role("🎮 Game Design"), Some(Track::GameDesign));
+        assert_eq!(track_for_role("🎨 Visual Art"), Some(Track::VisualArt));
+        assert_eq!(track_for_role("🐛 QA"), Some(Track::Qa));
+        assert_eq!(track_for_role("📊 Production"), Some(Track::Production));
+        assert_eq!(track_for_role("📣 Marketing"), Some(Track::Marketing));
+        assert_eq!(track_for_role("📖 Narrative"), Some(Track::Narrative));
+        assert_eq!(track_for_role("🎵 Audio"), Some(Track::Audio));
+    }
+
+    #[test]
+    fn stripping_decoration_does_not_invent_matches() {
+        // Loosening the match must not start swallowing unrelated roles.
+        for name in ["✨️Elder", "👾Noobie", "🛒Boutique🛒", "🥽VR/AR", "Game"] {
+            assert_eq!(track_for_role(name), None, "{name} matched a track");
         }
     }
 
