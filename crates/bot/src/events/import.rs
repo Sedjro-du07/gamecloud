@@ -1,0 +1,276 @@
+//! Discord → platform role import.
+//!
+//! The companion to [`super::roles`], which pushes *ranks* out to
+//! Discord. This module pulls *offices and disciplines* the other way:
+//! Discord is where the association actually decides who is Treasurer
+//! and who works on audio, so Discord is the source of truth for those,
+//! and the platform follows.
+//!
+//! ## What it reads
+//!
+//! - **Bureau offices** — a Discord role whose name matches a
+//!   [`BureauRole::title`] exactly. The 16 titles are distinct, so the
+//!   match is unambiguous.
+//! - **Tracks** — either a role named after the canonical track
+//!   identifier (`Engineering`, `Audio`, …) or one of the server's own
+//!   discipline roles, via [`ALIASES`].
+//!
+//! ## What it deliberately does not do
+//!
+//! **It never removes anything.** Two reasons, and they are different:
+//!
+//! - Dropping a *track* would orphan the XP earned in it —
+//!   `track_memberships` holds the pool, not just the membership.
+//! - Dropping an *office* on a member whose Discord role simply has not
+//!   been assigned yet would silently demote them. On a server where
+//!   the roles were only just created, that would strip every office on
+//!   the first pass.
+//!
+//! Revoking an office is therefore an explicit act, through
+//! `POST /api/admin/bureau-role`. The import only ever grants.
+
+use gamecloud_shared::roles::{BureauRole, Track};
+use serenity::all::{GuildId, Http};
+use sqlx::PgPool;
+use uuid::Uuid;
+
+use crate::state::BotState;
+
+/// How many members to pull per page from the Discord API.
+const PAGE: u64 = 1000;
+
+/// Server-specific discipline roles mapped onto platform tracks.
+///
+/// These are the names as they exist in the Game Cloud guild. A role
+/// named after the canonical track identifier is matched first, so
+/// renaming a role to `Engineering` works without touching this table.
+const ALIASES: &[(&str, Track)] = &[
+    ("💻Developer", Track::Engineering),
+    ("🔩game engineering", Track::Engineering),
+    ("🎮Game design", Track::GameDesign),
+    ("✍️Story writing", Track::Narrative),
+    ("🎨UI Artist", Track::VisualArt),
+    ("🎤🎧Sound Designer", Track::Audio),
+];
+
+/// Resolve a Discord role name to a platform track.
+#[must_use]
+pub fn track_for_role(name: &str) -> Option<Track> {
+    Track::parse(name).or_else(|| {
+        ALIASES
+            .iter()
+            .find(|(alias, _)| *alias == name)
+            .map(|(_, track)| *track)
+    })
+}
+
+/// Resolve a Discord role name to a Bureau office.
+#[must_use]
+pub fn bureau_for_role(name: &str) -> Option<BureauRole> {
+    BureauRole::ALL.iter().copied().find(|b| b.title() == name)
+}
+
+/// What one pass changed.
+#[derive(Debug, Default)]
+pub struct ImportReport {
+    /// Guild members that matched a platform account.
+    pub matched: usize,
+    /// Members whose office was set or corrected.
+    pub offices_set: usize,
+    /// Track memberships created.
+    pub tracks_added: usize,
+}
+
+/// Read every guild member's roles and apply them to the platform.
+///
+/// Members without a platform account are skipped — there is nothing to
+/// grant rights to until they have signed in once through Discord.
+pub async fn run(state: &BotState, http: &Http) {
+    let Some(guild_id) = state.config().guild_id else {
+        return;
+    };
+    let guild = GuildId::new(guild_id);
+
+    let roles = match guild.roles(http).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "import: could not read guild roles");
+            return;
+        }
+    };
+
+    // Paginate the member list. This needs the GUILD_MEMBERS privileged
+    // intent, which must also be enabled in the Developer portal — a
+    // failure here is almost always that, so say so plainly.
+    let mut after = None;
+    let mut report = ImportReport::default();
+
+    loop {
+        let members = match guild.members(http, Some(PAGE), after).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "import: could not list members — check that the SERVER MEMBERS INTENT \
+                     is enabled for this application in the Discord Developer portal"
+                );
+                return;
+            }
+        };
+        if members.is_empty() {
+            break;
+        }
+        after = members.last().map(|m| m.user.id);
+
+        for member in &members {
+            let discord_id = member.user.id.to_string();
+            let Some(user_id) = platform_account(state.pool(), &discord_id).await else {
+                continue;
+            };
+            report.matched += 1;
+
+            let names: Vec<&str> = member
+                .roles
+                .iter()
+                .filter_map(|id| roles.get(id).map(|r| r.name.as_str()))
+                .collect();
+
+            if let Some(office) = names.iter().find_map(|n| bureau_for_role(n)) {
+                if set_office(state.pool(), user_id, office).await {
+                    report.offices_set += 1;
+                    tracing::info!(user = %discord_id, office = office.as_str(), "import: office set");
+                }
+            }
+
+            for track in names.iter().filter_map(|n| track_for_role(n)) {
+                if add_track(state.pool(), user_id, track).await {
+                    report.tracks_added += 1;
+                    tracing::info!(user = %discord_id, track = track.as_str(), "import: track added");
+                }
+            }
+        }
+
+        if members.len() < usize::try_from(PAGE).unwrap_or(usize::MAX) {
+            break;
+        }
+    }
+
+    if report.offices_set > 0 || report.tracks_added > 0 {
+        tracing::info!(
+            matched = report.matched,
+            offices = report.offices_set,
+            tracks = report.tracks_added,
+            "import: applied Discord roles to the platform"
+        );
+    }
+}
+
+/// The platform account for a Discord id, if one exists.
+async fn platform_account(pool: &PgPool, discord_id: &str) -> Option<Uuid> {
+    sqlx::query_scalar::<_, Uuid>("SELECT id FROM users WHERE discord_id = $1")
+        .bind(discord_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Set a member's office. Returns whether anything changed.
+async fn set_office(pool: &PgPool, user_id: Uuid, office: BureauRole) -> bool {
+    sqlx::query(
+        r#"
+        UPDATE users
+           SET bureau_role = $2
+         WHERE id = $1
+           AND bureau_role IS DISTINCT FROM $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(office.as_str())
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected() > 0)
+    .unwrap_or(false)
+}
+
+/// Join a track if the member is not already in it. Never removes one:
+/// `track_memberships` carries the XP pool, so dropping a row would
+/// destroy earned progress.
+async fn add_track(pool: &PgPool, user_id: Uuid, track: Track) -> bool {
+    sqlx::query(
+        r#"
+        INSERT INTO track_memberships (user_id, track, track_role, track_xp, last_active_at)
+        VALUES ($1, $2, 'Observer', 0, NOW())
+        ON CONFLICT (user_id, track) DO NOTHING
+        "#,
+    )
+    .bind(user_id)
+    .bind(track.as_str())
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected() > 0)
+    .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_bureau_title_resolves() {
+        for office in BureauRole::ALL {
+            assert_eq!(bureau_for_role(office.title()), Some(office));
+        }
+    }
+
+    #[test]
+    fn bureau_titles_are_distinct() {
+        // The match is by name, so two offices sharing a title would make
+        // the import ambiguous.
+        let mut titles: Vec<&str> = BureauRole::ALL.iter().map(|b| b.title()).collect();
+        let before = titles.len();
+        titles.sort_unstable();
+        titles.dedup();
+        assert_eq!(titles.len(), before);
+    }
+
+    #[test]
+    fn an_ordinary_role_is_not_an_office() {
+        for name in ["👑✨️Bureau✨️", "✨️Elder", "@everyone", "DraftBot"] {
+            assert_eq!(bureau_for_role(name), None, "{name} matched an office");
+        }
+    }
+
+    #[test]
+    fn canonical_track_names_resolve() {
+        for track in Track::ALL {
+            assert_eq!(track_for_role(track.as_str()), Some(track));
+        }
+    }
+
+    #[test]
+    fn server_specific_aliases_resolve() {
+        assert_eq!(track_for_role("💻Developer"), Some(Track::Engineering));
+        assert_eq!(track_for_role("🔩game engineering"), Some(Track::Engineering));
+        assert_eq!(track_for_role("🎨UI Artist"), Some(Track::VisualArt));
+        assert_eq!(track_for_role("🎤🎧Sound Designer"), Some(Track::Audio));
+    }
+
+    #[test]
+    fn unrelated_roles_map_to_no_track() {
+        for name in ["🥽VR/AR", "🎖Alumni", "👾Noobie", "Punition"] {
+            assert_eq!(track_for_role(name), None, "{name} matched a track");
+        }
+    }
+
+    #[test]
+    fn a_rank_role_is_neither_an_office_nor_a_track() {
+        // The rank roles this bot creates must not be read back as
+        // something else on the return trip.
+        use gamecloud_shared::roles::GlobalRank;
+        for rank in GlobalRank::ALL {
+            assert_eq!(bureau_for_role(rank.title()), None);
+            assert_eq!(track_for_role(rank.title()), None);
+        }
+    }
+}

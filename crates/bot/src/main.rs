@@ -82,7 +82,14 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Periodically mirror platform ranks onto Discord roles.
+/// Periodically reconcile Discord roles and platform state, both ways.
+///
+/// **Discord → platform**: Bureau offices and track memberships. The
+/// association decides those in Discord, so Discord is the source of
+/// truth and the import only ever grants — see [`events::import`].
+///
+/// **Platform → Discord**: the global rank, which the platform computes
+/// from XP and mirrors onto a coloured role.
 ///
 /// A no-op unless `DISCORD_GUILD_ID` is configured — the bot should
 /// never touch roles in a guild it was not explicitly pointed at. The
@@ -96,6 +103,10 @@ fn spawn_role_sync(state: BotState, http: std::sync::Arc<serenity::Http>) {
     let interval = Duration::from_secs(state.config().role_sync_seconds.max(60));
     tokio::spawn(async move {
         loop {
+            // Pull first, then push: an office or track granted in
+            // Discord should be reflected on the platform before we
+            // mirror the resulting rank back out.
+            events::import::run(&state, &http).await;
             events::roles::sync_all(&state, &http).await;
             tokio::time::sleep(interval).await;
         }
