@@ -24,13 +24,15 @@ use leptos::prelude::*;
 
 // Types that appear in the function signatures, so both targets need them.
 use crate::api::{
-    LeaderboardView, MeView, ProjectCard, ProjectDetailView, QuestItem, SheetView, TrackOption,
+    AuditLine, LeaderboardView, MeView, ProjectCard, ProjectDetailView, QuestItem, ReviewItem,
+    SheetView, TrackOption,
 };
 
 // Types only constructed inside the server bodies.
 #[cfg(feature = "ssr")]
 use crate::api::{
-    AttendanceEntry, BadgeItem, ContributorItem, LeaderboardEntry, TrackView, VerdictItem, XpEntry,
+    AttendanceEntry, BadgeItem, ContributorItem, LeaderboardEntry, ProjectRights, TrackView,
+    VerdictItem, XpEntry,
 };
 
 // ---------------------------------------------------------------------------
@@ -182,6 +184,10 @@ pub async fn get_me() -> Result<Option<MeView>, ServerFnError> {
             needs_onboarding: record.email_verified && authority.tracks.is_empty(),
             can_access_admin: authority.can(Action::AccessAdminPanel),
             can_generate_qr: authority.can(Action::GenerateQrToken),
+            can_review: authority
+                .tracks
+                .iter()
+                .any(|m| m.role >= gamecloud_shared::roles::TrackRole::Reviewer),
         }));
     }
 
@@ -571,8 +577,10 @@ pub async fn get_project(id: String) -> Result<Option<ProjectDetailView>, Server
             Err(e) => return Err(ServerFnError::new(e.to_string())),
         };
 
+        let rights = project_rights(&state, &detail).await;
+
         return Ok(Some(ProjectDetailView {
-            card: to_card(detail.summary),
+            card: to_card(detail.summary.clone()),
             long_description: detail.long_description,
             github_repo_url: detail.github_repo_url,
             itch_url: detail.itch_url,
@@ -590,14 +598,15 @@ pub async fn get_project(id: String) -> Result<Option<ProjectDetailView>, Server
                 .collect(),
             validations: detail
                 .validations
-                .into_iter()
+                .iter()
                 .map(|v| VerdictItem {
-                    track: v.track,
-                    status: v.status,
-                    reviewer_name: v.reviewer_name,
-                    feedback: v.feedback,
+                    track: v.track.clone(),
+                    status: v.status.clone(),
+                    reviewer_name: v.reviewer_name.clone(),
+                    feedback: v.feedback.clone(),
                 })
                 .collect(),
+            rights,
         }));
     }
 
@@ -605,6 +614,53 @@ pub async fn get_project(id: String) -> Result<Option<ProjectDetailView>, Server
     {
         let _ = id;
         Ok(None)
+    }
+}
+
+/// What the signed-in member may do on this project.
+///
+/// Computed here rather than in the browser: the UI decides what to
+/// draw, never what is permitted. Every button these flags reveal calls
+/// an endpoint that checks the same right again.
+#[cfg(feature = "ssr")]
+async fn project_rights(
+    state: &crate::state::AppState,
+    detail: &crate::db::queries::projects::ProjectDetail,
+) -> ProjectRights {
+    use gamecloud_shared::{projects::ProjectStatus, roles::Action, roles::Track};
+
+    let Some(user_id) = ctx::current_user_id(state).await else {
+        return ProjectRights::default();
+    };
+    let Ok(authority) = crate::db::queries::users::load_authority(state.pool(), user_id).await
+    else {
+        return ProjectRights::default();
+    };
+
+    let status = ProjectStatus::parse(&detail.summary.status);
+    let primary = Track::parse(&detail.summary.primary_track);
+
+    // A verdict is only invited for a track that is actually waiting on
+    // one, from somebody holding the rank in that track, and never on
+    // your own project.
+    let is_author = detail.contributors.iter().any(|c| c.user_id == user_id);
+    let reviewable_tracks = detail
+        .validations
+        .iter()
+        .filter(|v| v.status == "Pending")
+        .filter_map(|v| Track::parse(&v.track))
+        .filter(|t| authority.can(Action::ReviewProjectForTrack(*t)))
+        .filter(|_| !is_author && status == Some(ProjectStatus::InReview))
+        .map(|t| t.as_str().to_string())
+        .collect();
+
+    ProjectRights {
+        can_submit: status.is_some_and(|s| {
+            s.allowed_next().contains(&ProjectStatus::InReview)
+        }) && authority.can(Action::SubmitProjectForReview),
+        can_release: status == Some(ProjectStatus::Approved)
+            && primary.is_some_and(|t| authority.can(Action::PublishProjectAsReleased(t))),
+        reviewable_tracks,
     }
 }
 
@@ -678,4 +734,315 @@ pub async fn scan_qr(token: String) -> Result<String, ServerFnError> {
         let _ = token;
         Ok(String::new())
     }
+}
+
+// ---------------------------------------------------------------------------
+// The review circuit
+// ---------------------------------------------------------------------------
+
+/// Projects waiting for the caller's verdict.
+///
+/// # Errors
+/// Returns a `ServerFnError` on database failure.
+#[server(GetReviewQueue, "/api")]
+pub async fn get_review_queue() -> Result<Vec<ReviewItem>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let Some(state) = ctx::state() else {
+            return Ok(Vec::new());
+        };
+        let Some(user_id) = ctx::current_user_id(&state).await else {
+            return Ok(Vec::new());
+        };
+        let rows = crate::db::queries::projects::review_queue(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(rows
+            .into_iter()
+            .map(|r| ReviewItem {
+                project_id: r.project_id.to_string(),
+                name: r.name,
+                short_description: r.short_description,
+                track: r.track,
+                author_name: r.author_name,
+            })
+            .collect());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(Vec::new())
+}
+
+/// Render a verdict on one track of a project.
+///
+/// # Errors
+/// Returns a `ServerFnError` carrying the domain message — a rejection
+/// with no feedback, a track the caller cannot judge, a project no
+/// longer in review.
+#[server(ReviewProject, "/api")]
+pub async fn review_project(
+    project_id: String,
+    track: String,
+    verdict: String,
+    feedback: Option<String>,
+) -> Result<String, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::{projects::Verdict, roles::Action, roles::Track};
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+
+        let id = project_id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("unknown project"))?;
+        let parsed_track =
+            Track::parse(&track).ok_or_else(|| ServerFnError::new("unknown track"))?;
+        let parsed_verdict = Verdict::parse(&verdict)
+            .ok_or_else(|| ServerFnError::new("unknown verdict"))?;
+
+        // The same check the REST route makes. The UI hides what you
+        // cannot do; this is what stops you doing it anyway.
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::ReviewProjectForTrack(parsed_track)) {
+            return Err(ServerFnError::new(
+                "vous n'avez pas le rang de relecteur sur cette track",
+            ));
+        }
+
+        let status = crate::db::queries::projects::record_verdict(
+            state.pool(),
+            state.channels(),
+            user_id,
+            id,
+            parsed_track.as_str(),
+            parsed_verdict,
+            feedback.as_deref().filter(|f| !f.trim().is_empty()),
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        return Ok(status.as_str().to_string());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (project_id, track, verdict, feedback);
+        Ok(String::new())
+    }
+}
+
+/// Open a review round on a project.
+///
+/// # Errors
+/// Returns a `ServerFnError` on a refused transition or a missing right.
+#[server(SubmitProject, "/api")]
+pub async fn submit_project(project_id: String) -> Result<Vec<String>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+        let id = project_id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("unknown project"))?;
+
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::SubmitProjectForReview) {
+            return Err(ServerFnError::new("rang insuffisant pour soumettre"));
+        }
+
+        return crate::db::queries::projects::submit_for_review(
+            state.pool(),
+            state.channels(),
+            user_id,
+            id,
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()));
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = project_id;
+        Ok(Vec::new())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Authoring and Bureau actions
+// ---------------------------------------------------------------------------
+
+/// Create a project, and its GitHub repository when configured.
+///
+/// # Errors
+/// Returns a `ServerFnError` on a validation failure or a missing right.
+#[server(CreateProject, "/api")]
+pub async fn create_project(
+    name: String,
+    short_description: String,
+    primary_track: String,
+    epitech_level: String,
+) -> Result<String, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::CreateProject) {
+            return Err(ServerFnError::new(
+                "il faut le rang Compagnon de Guilde (400 XP) pour créer un projet",
+            ));
+        }
+
+        let new = crate::db::queries::projects::NewProject {
+            name,
+            short_description: (!short_description.trim().is_empty())
+                .then_some(short_description),
+            long_description: None,
+            primary_track,
+            epitech_level: (!epitech_level.trim().is_empty()).then_some(epitech_level),
+            block_number: None,
+            github_repo_url: None,
+            itch_url: None,
+        };
+
+        let id = crate::db::queries::projects::create(state.pool(), user_id, &new)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(id.to_string());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (name, short_description, primary_track, epitech_level);
+        Ok(String::new())
+    }
+}
+
+/// Grant or revoke XP by hand. Bureau only.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller lacks `GrantManualXp`.
+#[server(GrantXp, "/api")]
+pub async fn grant_xp(
+    member: String,
+    amount: i32,
+    reason: String,
+) -> Result<i32, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::{roles::Action, xp::XpSource};
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::GrantManualXp) {
+            return Err(ServerFnError::new("réservé au Bureau exécutif"));
+        }
+        if reason.trim().is_empty() {
+            return Err(ServerFnError::new("une attribution manuelle doit être motivée"));
+        }
+
+        // Accept a platform id or a Discord id, because the Bureau reads
+        // names in Discord and ids on the platform.
+        let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("membre introuvable"))?;
+
+        let outcome = crate::db::queries::xp::grant(
+            state.pool(),
+            state.channels(),
+            &crate::db::queries::xp::XpGrant::new(target, amount, XpSource::Manual)
+                .describe(reason.trim())
+                .exact(),
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        crate::db::queries::audit::record(
+            state.pool(),
+            Some(user_id),
+            "admin.grant_xp",
+            Some("user"),
+            Some(target),
+            serde_json::json!({ "amount": amount, "reason": reason }),
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        return Ok(outcome.awarded);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (member, amount, reason);
+        Ok(0)
+    }
+}
+
+/// Recent audit entries, for the Bureau panel.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller lacks `ViewAuditLogs`.
+#[server(GetAudit, "/api")]
+pub async fn get_audit() -> Result<Vec<AuditLine>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let Some(state) = ctx::state() else {
+            return Ok(Vec::new());
+        };
+        let Some(user_id) = ctx::current_user_id(&state).await else {
+            return Ok(Vec::new());
+        };
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::ViewAuditLogs) {
+            return Err(ServerFnError::new("réservé au Bureau exécutif"));
+        }
+
+        let rows = crate::db::queries::audit::recent(state.pool(), 50)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(rows
+            .into_iter()
+            .map(|a| AuditLine {
+                actor: a.actor_name.unwrap_or_else(|| "la plateforme".into()),
+                action: a.action,
+                detail: a
+                    .metadata
+                    .map(|m| m.to_string())
+                    .unwrap_or_default(),
+                when: ctx::stamp(a.created_at),
+            })
+            .collect());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(Vec::new())
 }

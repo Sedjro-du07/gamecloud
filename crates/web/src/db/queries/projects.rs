@@ -975,3 +975,57 @@ mod repo_url_tests {
         }
     }
 }
+
+/// A project waiting for one track's verdict.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+pub struct PendingReview {
+    /// Project id.
+    pub project_id: Uuid,
+    /// Project name.
+    pub name: String,
+    /// One-liner.
+    pub short_description: Option<String>,
+    /// The track being asked.
+    pub track: String,
+    /// Who submitted it.
+    pub author_name: String,
+    /// When the round opened.
+    pub submitted_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Projects awaiting a verdict from this member.
+///
+/// Only tracks where they hold `Reviewer` or above are listed: a review
+/// queue that shows work you have no standing to judge is noise.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn review_queue(pool: &PgPool, user_id: Uuid) -> WebResult<Vec<PendingReview>> {
+    let rows = sqlx::query_as::<_, PendingReview>(
+        r#"
+        SELECT p.id AS project_id,
+               p.name,
+               p.short_description,
+               v.track,
+               COALESCE(author.current_title, author.discord_id) AS author_name,
+               p.created_at AS submitted_at
+          FROM track_validations v
+          JOIN projects p ON p.id = v.project_id
+          JOIN users author ON author.id = p.created_by
+          JOIN track_memberships m
+            ON m.user_id = $1
+           AND m.track = v.track
+           AND m.left_at IS NULL
+           AND m.track_role IN ('Reviewer', 'Mentor', 'CoLead', 'Lead')
+         WHERE v.status = 'Pending'
+           AND p.status = 'InReview'
+           -- Reviewing your own work is not review.
+           AND p.created_by <> $1
+         ORDER BY p.created_at ASC
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}

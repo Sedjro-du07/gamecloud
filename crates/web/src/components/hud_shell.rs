@@ -21,12 +21,34 @@ pub fn HudShell(children: Children) -> impl IntoView {
                 <div class="gc-hud__brand">
                     <A href="/">"GameCloud OS"</A>
                 </div>
+                // The navigation shows what the member can actually use.
+                // This is courtesy, not a control: every page behind these
+                // links re-checks the right server-side, so typing the URL
+                // gains nothing. Hiding a dead link is just kinder than
+                // letting somebody click into a refusal.
                 <nav class="gc-hud__nav">
                     <A href="/profile">"Profil"</A>
                     <A href="/projects">"Projets"</A>
                     <A href="/quests">"Quêtes"</A>
                     <A href="/leaderboard">"Classement"</A>
-                    <A href="/scan">"Scanner"</A>
+                    <Suspense fallback=|| ()>
+                        {move || {
+                            let me = me.get().and_then(Result::ok).flatten();
+                            me.map(|user| {
+                                view! {
+                                    <Show when=move || user.can_review>
+                                        <A href="/reviews">"À relire"</A>
+                                    </Show>
+                                    <Show when=move || user.can_generate_qr>
+                                        <A href="/scan">"Scanner"</A>
+                                    </Show>
+                                    <Show when=move || user.can_access_admin>
+                                        <A href="/admin">"Bureau"</A>
+                                    </Show>
+                                }
+                            })
+                        }}
+                    </Suspense>
                 </nav>
                 <div class="gc-hud__auth">
                     <Suspense fallback=move || view! { <span class="gc-pill">"…"</span> }>

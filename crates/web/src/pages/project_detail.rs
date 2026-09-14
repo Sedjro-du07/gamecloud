@@ -8,7 +8,11 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
-use crate::{api::VerdictItem, server_fns::get_project};
+use crate::{
+    api::{ProjectRights, VerdictItem},
+    components::review_form::ReviewForm,
+    server_fns::{get_project, submit_project},
+};
 
 /// French label and CSS modifier for a verdict.
 fn verdict_style(status: &str) -> (&'static str, &'static str) {
@@ -68,6 +72,173 @@ fn VerdictTable(validations: Vec<VerdictItem>) -> impl IntoView {
     .into_any()
 }
 
+/// Everything the viewer is entitled to do here.
+///
+/// The flags come from the server; this only decides what to draw. Each
+/// button calls an endpoint that re-checks the same right, so a crafted
+/// request gains nothing.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn ActionPanel(
+    project_id: String,
+    rights: ProjectRights,
+    on_changed: Callback<String>,
+) -> impl IntoView {
+    let submit = Action::new(move |id: &String| {
+        let id = id.clone();
+        async move { submit_project(id).await }
+    });
+    let (notice, set_notice) = signal(Option::<String>::None);
+
+    Effect::new(move |_| {
+        if let Some(result) = submit.value().get() {
+            match result {
+                Ok(tracks) => {
+                    set_notice
+                        .set(Some(format!("Revue ouverte auprès de : {}", tracks.join(", "))));
+                    on_changed.run("InReview".to_string());
+                }
+                Err(e) => set_notice.set(Some(e.to_string())),
+            }
+        }
+    });
+
+    let nothing_to_do = rights.reviewable_tracks.is_empty()
+        && !rights.can_submit
+        && !rights.can_release;
+    if nothing_to_do {
+        return ().into_any();
+    }
+
+    let id_for_submit = project_id.clone();
+    view! {
+        <section class="gc-actions">
+            <h2>"Vos actions"</h2>
+            {move || {
+                notice.get().map(|n| view! { <div class="gc-banner">{n}</div> })
+            }}
+
+            <Show when=move || rights.can_submit>
+                <button
+                    class="gc-btn gc-btn--primary"
+                    disabled=move || submit.pending().get()
+                    on:click={
+                        let id = id_for_submit.clone();
+                        move |_| { submit.dispatch(id.clone()); }
+                    }
+                >
+                    {move || {
+                        if submit.pending().get() { "Soumission…" } else { "Soumettre en revue" }
+                    }}
+                </button>
+                <p class="gc-actions__hint">
+                    "Chaque track concernée sera sollicitée dans son propre salon Discord."
+                </p>
+            </Show>
+
+            <Show when=move || rights.can_release>
+                <p class="gc-actions__hint">
+                    "Ce projet est approuvé. En tant que responsable de la track
+                     principale, vous pouvez le publier — l'équipe sera récompensée
+                     et le dépôt GitHub passera public."
+                </p>
+            </Show>
+
+            {rights
+                .reviewable_tracks
+                .clone()
+                .into_iter()
+                .map(|track| {
+                    view! {
+                        <ReviewForm
+                            project_id=project_id.clone()
+                            track=track
+                            on_done=on_changed
+                        />
+                    }
+                })
+                .collect_view()}
+        </section>
+    }
+        .into_any()
+}
+
+/// The project, once loaded.
+///
+/// Split out of [`ProjectDetailPage`] so that component stays a thin
+/// load-state switch and this one owns the layout.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn ProjectBody(
+    /// The loaded project.
+    detail: crate::api::ProjectDetailView,
+    /// Refetch hook, called after an action changes the project.
+    on_changed: Callback<String>,
+) -> impl IntoView {
+    let card = detail.card.clone();
+    view! {
+        <>
+            <header
+                class="gc-project-detail__head"
+                style=format!("--gc-rarity: {};", card.rarity_color)
+            >
+                <p class="gc-project-detail__track">
+                    {card.track_emoji} " " {card.track}
+                </p>
+                <h1>{card.name}</h1>
+                {card.short_description.map(|d| view! { <p class="gc-lead">{d}</p> })}
+                <p class="gc-project-detail__meta">
+                    {card.rarity} " · " {card.status} " · "
+                    {format!("{} contributeur(s)", card.contributor_count)}
+                </p>
+            </header>
+
+            {detail.long_description.map(|d| view! { <p class="gc-project-detail__desc">{d}</p> })}
+
+            <div class="gc-project-detail__links">
+                {detail
+                    .github_repo_url
+                    .map(|url| {
+                        view! {
+                            <a class="gc-btn" href=url rel="external noopener">"Dépôt GitHub"</a>
+                        }
+                    })}
+                {detail
+                    .itch_url
+                    .map(|url| {
+                        view! {
+                            <a class="gc-btn" href=url rel="external noopener">"Page itch.io"</a>
+                        }
+                    })}
+            </div>
+
+            <h2>"Équipe"</h2>
+            <ul class="gc-contributors">
+                {detail
+                    .contributors
+                    .into_iter()
+                    .map(|c| {
+                        view! {
+                            <li class="gc-contributor">
+                                <span class="gc-contributor__name">{c.display_name}</span>
+                                <span class="gc-contributor__role">
+                                    {c.track}
+                                    {c.role.map(|r| format!(" · {r}"))}
+                                </span>
+                            </li>
+                        }
+                    })
+                    .collect_view()}
+            </ul>
+
+            <h2>"Revue par track"</h2>
+            <VerdictTable validations=detail.validations />
+
+            <ActionPanel project_id=card.id rights=detail.rights on_changed />
+        </>
+    }
+}
+
 /// Project detail page.
 #[component]
 pub fn ProjectDetailPage() -> impl IntoView {
@@ -76,6 +247,7 @@ pub fn ProjectDetailPage() -> impl IntoView {
         move || params.read().get("id").unwrap_or_default(),
         |id| async move { get_project(id).await },
     );
+    let on_changed = Callback::new(move |_status: String| project.refetch());
 
     view! {
         <section class="gc-project-detail">
@@ -96,77 +268,7 @@ pub fn ProjectDetailPage() -> impl IntoView {
                             .into_any()
                     }
                     Some(Ok(Some(detail))) => {
-                        let card = detail.card;
-                        view! {
-                            <>
-                                <header
-                                    class="gc-project-detail__head"
-                                    style=format!("--gc-rarity: {};", card.rarity_color)
-                                >
-                                    <p class="gc-project-detail__track">
-                                        {card.track_emoji} " " {card.track}
-                                    </p>
-                                    <h1>{card.name}</h1>
-                                    {card
-                                        .short_description
-                                        .map(|d| view! { <p class="gc-lead">{d}</p> })}
-                                    <p class="gc-project-detail__meta">
-                                        {card.rarity} " · " {card.status} " · "
-                                        {format!("{} contributeur(s)", card.contributor_count)}
-                                    </p>
-                                </header>
-
-                                {detail
-                                    .long_description
-                                    .map(|d| view! { <p class="gc-project-detail__desc">{d}</p> })}
-
-                                <div class="gc-project-detail__links">
-                                    {detail
-                                        .github_repo_url
-                                        .map(|url| {
-                                            view! {
-                                                <a class="gc-btn" href=url rel="external noopener">
-                                                    "Dépôt GitHub"
-                                                </a>
-                                            }
-                                        })}
-                                    {detail
-                                        .itch_url
-                                        .map(|url| {
-                                            view! {
-                                                <a class="gc-btn" href=url rel="external noopener">
-                                                    "Page itch.io"
-                                                </a>
-                                            }
-                                        })}
-                                </div>
-
-                                <h2>"Équipe"</h2>
-                                <ul class="gc-contributors">
-                                    {detail
-                                        .contributors
-                                        .into_iter()
-                                        .map(|c| {
-                                            view! {
-                                                <li class="gc-contributor">
-                                                    <span class="gc-contributor__name">
-                                                        {c.display_name}
-                                                    </span>
-                                                    <span class="gc-contributor__role">
-                                                        {c.track}
-                                                        {c.role.map(|r| format!(" · {r}"))}
-                                                    </span>
-                                                </li>
-                                            }
-                                        })
-                                        .collect_view()}
-                                </ul>
-
-                                <h2>"Revue par track"</h2>
-                                <VerdictTable validations=detail.validations />
-                            </>
-                        }
-                            .into_any()
+                        view! { <ProjectBody detail on_changed /> }.into_any()
                     }
                 }}
             </Suspense>

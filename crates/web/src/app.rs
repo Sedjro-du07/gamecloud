@@ -10,13 +10,16 @@ use leptos_router::{
 use crate::{
     components::hud_shell::HudShell,
     pages::{
+        admin::AdminPage,
         home::HomePage,
+        new_project::NewProjectPage,
         leaderboard::LeaderboardPage,
         onboarding::{OnboardingEmailPage, OnboardingVerifyPage},
         profile::ProfilePage,
         project_detail::ProjectDetailPage,
         projects::ProjectsPage,
         quests::QuestsPage,
+        reviews::ReviewsPage,
         scan::ScanPage,
         tracks::TrackPickerPage,
     },
@@ -69,6 +72,10 @@ pub fn App() -> impl IntoView {
                            view=ProjectDetailPage />
                     <Route path=StaticSegment("leaderboard") view=LeaderboardPage />
                     <Route path=StaticSegment("quests") view=QuestsPage />
+                    <Route path=StaticSegment("reviews") view=ReviewsPage />
+                    <Route path=StaticSegment("admin") view=AdminPage />
+                    <Route path=(StaticSegment("projects"), StaticSegment("new"))
+                           view=NewProjectPage />
                     <Route path=StaticSegment("scan") view=ScanPage />
                     <Route path=(StaticSegment("onboarding"), StaticSegment("email"))
                            view=OnboardingEmailPage />

@@ -88,6 +88,9 @@ pub struct MeView {
     pub can_access_admin: bool,
     /// Whether this member can mint QR codes.
     pub can_generate_qr: bool,
+    /// Whether this member holds `Reviewer` or above in any track, and
+    /// therefore has a review queue worth showing.
+    pub can_review: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +287,38 @@ pub struct ProjectDetailView {
     pub contributors: Vec<ContributorItem>,
     /// Per-track verdicts.
     pub validations: Vec<VerdictItem>,
+    /// What the viewer may do here.
+    pub rights: ProjectRights,
+}
+
+/// A project waiting for the viewer's verdict.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewItem {
+    /// Project id.
+    pub project_id: String,
+    /// Project name.
+    pub name: String,
+    /// One-liner.
+    pub short_description: Option<String>,
+    /// The track being asked of the viewer.
+    pub track: String,
+    /// Who submitted it.
+    pub author_name: String,
+}
+
+/// What the viewer is allowed to do on a project detail page.
+///
+/// Computed server-side from `Authority`, because the browser must never
+/// be the thing deciding what somebody may do — it only decides what to
+/// draw. Every action behind these flags is re-checked by the API.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectRights {
+    /// May open a review round on this project.
+    pub can_submit: bool,
+    /// May publish it.
+    pub can_release: bool,
+    /// Tracks the viewer may render a verdict for, right now.
+    pub reviewable_tracks: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +347,19 @@ pub struct AttendanceEntry {
     pub event_name: String,
     /// XP credited.
     pub xp: i32,
+    /// Pre-formatted timestamp.
+    pub when: String,
+}
+
+/// One line of the audit trail, as the Bureau panel shows it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuditLine {
+    /// Who acted. "la plateforme" when the platform acted on its own.
+    pub actor: String,
+    /// Dotted action name.
+    pub action: String,
+    /// Free-form details.
+    pub detail: String,
     /// Pre-formatted timestamp.
     pub when: String,
 }

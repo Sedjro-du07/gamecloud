@@ -29,6 +29,7 @@ pub fn ProjectsPage() -> impl IntoView {
         <section class="gc-projects">
             <header class="gc-projects__head">
                 <h1>"Hall of Fame"</h1>
+                <a class="gc-btn gc-btn--primary" href="/projects/new">"Nouveau projet"</a>
                 <label class="gc-field gc-field--inline">
                     <span>"Track"</span>
                     <select

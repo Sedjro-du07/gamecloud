@@ -280,6 +280,31 @@ pub struct XpHistoryRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Resolve a member from either a platform UUID or a Discord id.
+///
+/// The Bureau reads names and ids in Discord but acts on the platform,
+/// so accepting both saves a lookup step that would otherwise be done by
+/// hand every time.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn find_by_reference(pool: &PgPool, reference: &str) -> WebResult<Option<Uuid>> {
+    if let Ok(id) = reference.parse::<Uuid>() {
+        let found: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    let found: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE discord_id = $1")
+        .bind(reference)
+        .fetch_optional(pool)
+        .await?;
+    Ok(found)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
