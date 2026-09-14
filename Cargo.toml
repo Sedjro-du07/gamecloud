@@ -55,7 +55,7 @@ axum-extra  = { version = "0.10", features = ["cookie", "cookie-private", "typed
 tower       = { version = "0.5", features = ["full"] }
 tower-http  = { version = "0.6", features = ["fs", "trace", "cors", "compression-gzip", "limit"] }
 http        = "1.2"
-reqwest     = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest     = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
 
 # --- database -------------------------------------------------------------
 sqlx = { version = "0.8", default-features = false, features = [

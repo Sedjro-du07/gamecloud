@@ -4,12 +4,7 @@ use axum::Router;
 use leptos::config::LeptosOptions;
 use leptos::prelude::provide_context;
 use leptos_axum::{generate_route_list, LeptosRoutes};
-use tower_http::{
-    compression::CompressionLayer,
-    cors::CorsLayer,
-    limit::RequestBodyLimitLayer,
-    trace::TraceLayer,
-};
+use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
 use crate::{app::App, middleware::rate_limit, routes, state::AppState};
 
@@ -19,7 +14,11 @@ impl axum::extract::FromRef<AppState> for LeptosOptions {
     }
 }
 
-/// Largest request body accepted, in bytes.
+/// Largest request body accepted by an ordinary endpoint, in bytes.
+///
+/// Build uploads opt out of this — see `routes::projects`, which streams
+/// to a temporary file and enforces its own 500 MB ceiling, so the size
+/// of what members upload never becomes the size of this process.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 /// Build the CORS layer.
@@ -103,7 +102,9 @@ pub fn build(state: AppState) -> Router {
             state.clone(),
             rate_limit::layer,
         ))
-        .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
+        // axum's own limit rather than tower-http's, because this one
+        // can be overridden per route — which the upload endpoint needs.
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(CompressionLayer::new())
         .layer(cors(&state))
         .layer(TraceLayer::new_for_http())

@@ -319,6 +319,8 @@ pub struct ProjectRights {
     pub can_release: bool,
     /// Tracks the viewer may render a verdict for, right now.
     pub reviewable_tracks: Vec<String>,
+    /// May attach a build: credited on the project, or leads its track.
+    pub can_upload: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +350,25 @@ pub struct AttendanceEntry {
     /// XP credited.
     pub xp: i32,
     /// Pre-formatted timestamp.
+    pub when: String,
+}
+
+/// A build attached to a project.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileItem {
+    /// Row id, used to build the download link.
+    pub id: String,
+    /// Original filename.
+    pub filename: String,
+    /// Kind, guessed from the extension.
+    pub kind: String,
+    /// Human-readable size, e.g. "42,3 Mo".
+    pub size: String,
+    /// Release tag.
+    pub version: String,
+    /// What changed.
+    pub changelog: Option<String>,
+    /// Pre-formatted upload date.
     pub when: String,
 }
 
@@ -440,6 +461,31 @@ pub fn format_xp(xp: i64) -> String {
     }
 }
 
+/// Render a byte count the way a person reads it.
+///
+/// Builds are megabytes, so the unit matters more than the precision:
+/// "42,3 Mo" tells a member whether the download is worth starting on
+/// their connection, which `44346573` does not.
+#[must_use]
+pub fn format_bytes(bytes: i64) -> String {
+    const KO: f64 = 1024.0;
+    // A file size is bounded by the 500 MB upload cap, far inside the
+    // f64 mantissa, and the result is a label rounded to one decimal.
+    #[allow(clippy::cast_precision_loss)]
+    let b = bytes.max(0) as f64;
+    if b < KO {
+        return format!("{bytes} o");
+    }
+    let (value, unit) = if b < KO * KO {
+        (b / KO, "Ko")
+    } else if b < KO * KO * KO {
+        (b / (KO * KO), "Mo")
+    } else {
+        (b / (KO * KO * KO), "Go")
+    };
+    format!("{value:.1} {unit}").replace('.', ",")
+}
+
 /// Percentage of a level bar that should be filled, clamped to 0-100.
 #[must_use]
 pub fn level_percent(into: i64, needed: i64) -> f64 {
@@ -481,6 +527,22 @@ mod tests {
     fn formats_negative_xp() {
         // Manual revokes are negative and must still read correctly.
         assert_eq!(format_xp(-1_500), "-1\u{202f}500");
+    }
+
+    #[test]
+    fn formats_byte_counts_for_people() {
+        assert_eq!(format_bytes(0), "0 o");
+        assert_eq!(format_bytes(512), "512 o");
+        assert_eq!(format_bytes(2048), "2,0 Ko");
+        assert_eq!(format_bytes(44_346_573), "42,3 Mo");
+        assert_eq!(format_bytes(3_221_225_472), "3,0 Go");
+    }
+
+    #[test]
+    fn a_negative_size_does_not_produce_nonsense() {
+        // The column is BIGINT and constrained positive, but a decode
+        // slip should read oddly rather than panic or print "-4,0 Go".
+        assert_eq!(format_bytes(-1), "-1 o");
     }
 
     #[test]

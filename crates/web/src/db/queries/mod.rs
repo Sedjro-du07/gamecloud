@@ -3,6 +3,7 @@
 pub mod audit;
 pub mod auth;
 pub mod badges;
+pub mod files;
 pub mod leaderboard;
 pub mod projects;
 pub mod quests;

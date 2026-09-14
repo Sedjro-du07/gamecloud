@@ -24,8 +24,8 @@ use leptos::prelude::*;
 
 // Types that appear in the function signatures, so both targets need them.
 use crate::api::{
-    AuditLine, LeaderboardView, MeView, ProjectCard, ProjectDetailView, QuestItem, ResourceItem,
-    ReviewItem, SheetView, TrackOption,
+    AuditLine, FileItem, LeaderboardView, MeView, ProjectCard, ProjectDetailView, QuestItem,
+    ResourceItem, ReviewItem, SheetView, TrackOption,
 };
 
 // Types only constructed inside the server bodies.
@@ -654,7 +654,13 @@ async fn project_rights(
         .map(|t| t.as_str().to_string())
         .collect();
 
+    let on_team = detail.contributors.iter().any(|c| c.user_id == user_id);
+    let leads_it = primary.is_some_and(|t| {
+        authority.has_track_role(t, gamecloud_shared::roles::TrackRole::CoLead)
+    });
+
     ProjectRights {
+        can_upload: on_team || leads_it,
         can_submit: status.is_some_and(|s| {
             s.allowed_next().contains(&ProjectStatus::InReview)
         }) && authority.can(Action::SubmitProjectForReview),
@@ -1390,5 +1396,46 @@ pub async fn appoint_track_role(
     {
         let _ = (member, track, role);
         Ok(())
+    }
+}
+
+/// Builds attached to a project.
+///
+/// # Errors
+/// Returns a `ServerFnError` on database failure.
+#[server(GetProjectFiles, "/api")]
+pub async fn get_project_files(project_id: String) -> Result<Vec<FileItem>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::api::format_bytes;
+
+        let Some(state) = ctx::state() else {
+            return Ok(Vec::new());
+        };
+        let Ok(id) = project_id.parse::<uuid::Uuid>() else {
+            return Ok(Vec::new());
+        };
+        let rows = crate::db::queries::files::list(state.pool(), id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        return Ok(rows
+            .into_iter()
+            .map(|f| FileItem {
+                id: f.id.to_string(),
+                filename: f.filename,
+                kind: f.file_type,
+                size: format_bytes(f.size_bytes),
+                version: f.version,
+                changelog: f.changelog,
+                when: ctx::day(f.uploaded_at),
+            })
+            .collect());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = project_id;
+        Ok(Vec::new())
     }
 }

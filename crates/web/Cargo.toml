@@ -51,6 +51,7 @@ ssr = [
     "dep:time",
     "dep:serde_urlencoded",
     "dep:http-body-util",
+    "dep:tokio-util",
     "leptos/ssr",
     "leptos_axum",
     "leptos_meta/ssr",
@@ -108,6 +109,7 @@ anyhow      = { workspace = true, optional = true }
 time        = { version = "0.3", optional = true }
 serde_urlencoded = { version = "0.7", optional = true }
 http-body-util  = { version = "0.1", optional = true }
+tokio-util      = { version = "0.7", features = ["io"], optional = true }
 
 [package.metadata.cargo-machete]
 ignored = ["wasm-bindgen", "console_error_panic_hook"]

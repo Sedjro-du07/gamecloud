@@ -233,6 +233,191 @@ impl GitHub {
     }
 }
 
+/// A release asset, as GitHub reports it after upload.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Asset {
+    /// Asset id, used to download it back through the API.
+    pub id: u64,
+    /// Filename.
+    pub name: String,
+    /// Size in bytes.
+    pub size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct Release {
+    id: u64,
+    upload_url: String,
+}
+
+impl GitHub {
+    /// Find the release for a version tag, creating it when absent.
+    ///
+    /// Uploading a build is the common case and creating the release is
+    /// the rare one, so we look first and only create on a miss.
+    ///
+    /// # Errors
+    /// `Upstream` when GitHub refuses or is unreachable.
+    async fn ensure_release(&self, repo: &str, version: &str) -> WebResult<Release> {
+        let existing = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/repos/{}/{repo}/releases/tags/{version}", self.org),
+            )
+            .send()
+            .await
+            .map_err(|e| WebError::Upstream(format!("github find release: {e}")))?;
+
+        if existing.status().is_success() {
+            return existing
+                .json::<Release>()
+                .await
+                .map_err(|e| WebError::Upstream(format!("github decode release: {e}")));
+        }
+
+        let response = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/repos/{}/{repo}/releases", self.org),
+            )
+            .json(&serde_json::json!({
+                "tag_name": version,
+                "name": version,
+                "body": "Publié depuis GameCloud OS.",
+                // A draft release would be invisible to the download
+                // proxy, and a prerelease flag says something we do not
+                // mean. Neither.
+                "draft": false,
+                "prerelease": false,
+            }))
+            .send()
+            .await
+            .map_err(|e| WebError::Upstream(format!("github create release: {e}")))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let detail = response.text().await.unwrap_or_default();
+            return Err(WebError::Upstream(format!(
+                "github create release: {status} {}",
+                detail.chars().take(200).collect::<String>()
+            )));
+        }
+
+        response
+            .json::<Release>()
+            .await
+            .map_err(|e| WebError::Upstream(format!("github decode release: {e}")))
+    }
+
+    /// Attach a build to a release.
+    ///
+    /// The body is a file rather than a buffer: a 500 MB build held in
+    /// memory would be a denial of service against our own server, so
+    /// the upload streams from disk with a known length.
+    ///
+    /// # Errors
+    /// `Upstream` when GitHub refuses or is unreachable.
+    pub async fn upload_asset(
+        &self,
+        repo: &str,
+        version: &str,
+        filename: &str,
+        file: tokio::fs::File,
+        size: u64,
+    ) -> WebResult<Asset> {
+        let release = self.ensure_release(repo, version).await?;
+
+        // `upload_url` is a URI template: ".../assets{?name,label}".
+        let base = release
+            .upload_url
+            .split('{')
+            .next()
+            .unwrap_or(&release.upload_url)
+            .to_string();
+        let url = format!("{base}?name={}", urlencode(filename));
+
+        let stream = tokio_util::io::ReaderStream::new(file);
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .header("User-Agent", UA)
+            .header("Accept", "application/vnd.github+json")
+            .header("Content-Type", "application/octet-stream")
+            .header(reqwest::header::CONTENT_LENGTH, size)
+            .body(reqwest::Body::wrap_stream(stream))
+            .send()
+            .await
+            .map_err(|e| WebError::Upstream(format!("github upload asset: {e}")))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let detail = response.text().await.unwrap_or_default();
+            return Err(WebError::Upstream(format!(
+                "github upload asset: {status} {}",
+                detail.chars().take(200).collect::<String>()
+            )));
+        }
+
+        let _ = release.id;
+        response
+            .json::<Asset>()
+            .await
+            .map_err(|e| WebError::Upstream(format!("github decode asset: {e}")))
+    }
+
+    /// Stream a release asset back.
+    ///
+    /// Assets of a private repository are not publicly fetchable, so the
+    /// platform proxies the bytes rather than handing out a link. That
+    /// is the better shape anyway: access control stays with the
+    /// permission model instead of leaking to GitHub's.
+    ///
+    /// # Errors
+    /// `Upstream` when GitHub refuses or is unreachable.
+    pub async fn download_asset(&self, repo: &str, asset_id: u64) -> WebResult<reqwest::Response> {
+        let response = self
+            .client
+            .get(format!(
+                "{API}/repos/{}/{repo}/releases/assets/{asset_id}",
+                self.org
+            ))
+            .bearer_auth(&self.token)
+            .header("User-Agent", UA)
+            // This header is what turns the metadata call into the bytes.
+            .header("Accept", "application/octet-stream")
+            .send()
+            .await
+            .map_err(|e| WebError::Upstream(format!("github download asset: {e}")))?;
+
+        if response.status().is_success() {
+            Ok(response)
+        } else {
+            Err(WebError::Upstream(format!(
+                "github download asset: {}",
+                response.status()
+            )))
+        }
+    }
+}
+
+/// Percent-encode a filename for a query string.
+fn urlencode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(&mut out, "%{b:02X}");
+            }
+        }
+    }
+    out
+}
+
 /// Turn a project title into a repository name.
 ///
 /// GitHub accepts letters, digits, `.`, `-` and `_`. French titles bring

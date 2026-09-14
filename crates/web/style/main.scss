@@ -1555,3 +1555,60 @@ button { font: inherit; }
 
   @page { margin: 1.5cm; }
 }
+
+// ===========================================================================
+// Project builds
+// ===========================================================================
+
+.gc-files {
+  margin-top: 2.5rem;
+
+  h2 { font-family: var(--gc-font-display); font-size: 1.1rem; margin: 0 0 1rem; }
+
+  &__list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.6rem; }
+
+  &__upload {
+    margin-top: 1.5rem;
+    padding: 1.1rem;
+    background: var(--gc-bg-elev);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--gc-radius-md);
+
+    h3 { margin: 0 0 0.9rem; font-size: 0.98rem; font-family: var(--gc-font-display); }
+
+    input[type="text"] {
+      background: var(--gc-bg);
+      color: var(--gc-fg);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: var(--gc-radius-sm);
+      padding: 0.5rem 0.65rem;
+      font-family: inherit;
+      width: 100%;
+    }
+
+    input[type="file"] { color: var(--gc-fg-mute); font-family: inherit; }
+  }
+
+  &__hint {
+    margin: 0.8rem 0 0;
+    font-size: 0.8rem;
+    color: var(--gc-fg-mute);
+    line-height: 1.5;
+  }
+}
+
+.gc-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 1rem;
+  background: var(--gc-bg-elev);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--gc-radius-md);
+
+  &__body { flex: 1; min-width: 0; }
+  &__name { display: block; font-weight: 600; }
+  &__meta { display: block; font-size: 0.8rem; color: var(--gc-fg-mute); }
+  &__log { margin: 0.35rem 0 0; font-size: 0.82rem; color: var(--gc-fg-mute); }
+}

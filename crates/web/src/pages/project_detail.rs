@@ -11,7 +11,7 @@ use leptos_router::hooks::use_params_map;
 use crate::{
     api::{ProjectRights, VerdictItem},
     components::review_form::ReviewForm,
-    server_fns::{add_contributor, get_project, submit_project},
+    server_fns::{add_contributor, get_project, get_project_files, submit_project},
 };
 
 /// French label and CSS modifier for a verdict.
@@ -163,6 +163,113 @@ fn ActionPanel(
         .into_any()
 }
 
+/// Builds attached to the project, and the form to add one.
+///
+/// The upload is a plain multipart form rather than a server function:
+/// it posts a file straight to the API, works without JavaScript, and
+/// keeps a 500 MB build out of the WASM boundary entirely.
+///
+/// Downloads go through the platform rather than linking to GitHub. A
+/// private repository's release asset is not fetchable by link, so a
+/// direct link would simply fail — and proxying keeps the decision about
+/// who may download where the permission model lives.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn FilesPanel(
+    /// Project whose builds these are.
+    project_id: String,
+    /// Whether the viewer may attach a build.
+    can_upload: bool,
+) -> impl IntoView {
+    let id = project_id.clone();
+    let files = Resource::new(
+        move || id.clone(),
+        |id| async move { get_project_files(id).await },
+    );
+    let action = format!("/api/projects/{project_id}/files");
+
+    view! {
+        <section class="gc-files">
+            <h2>"Builds"</h2>
+
+            <Suspense fallback=move || view! { <p class="gc-empty">"Chargement…"</p> }>
+                {move || match files.get() {
+                    Some(Ok(list)) if !list.is_empty() => {
+                        view! {
+                            <ul class="gc-files__list">
+                                {list
+                                    .into_iter()
+                                    .map(|f| {
+                                        let href = format!(
+                                            "/api/projects/files/{}/download",
+                                            f.id,
+                                        );
+                                        view! {
+                                            <li class="gc-file">
+                                                <div class="gc-file__body">
+                                                    <span class="gc-file__name">{f.filename}</span>
+                                                    <span class="gc-file__meta">
+                                                        {f.version} " · " {f.kind} " · " {f.size}
+                                                        " · " {f.when}
+                                                    </span>
+                                                    {f
+                                                        .changelog
+                                                        .map(|c| {
+                                                            view! { <p class="gc-file__log">{c}</p> }
+                                                        })}
+                                                </div>
+                                                <a class="gc-btn" href=href rel="external">
+                                                    "Télécharger"
+                                                </a>
+                                            </li>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </ul>
+                        }
+                            .into_any()
+                    }
+                    Some(Ok(_)) => {
+                        view! {
+                            <p class="gc-empty">"Aucun build publié pour l'instant."</p>
+                        }
+                            .into_any()
+                    }
+                    _ => view! { <p class="gc-empty">"Chargement…"</p> }.into_any(),
+                }}
+            </Suspense>
+
+            <Show when=move || can_upload>
+                <form
+                    class="gc-form gc-files__upload"
+                    method="post"
+                    action=action.clone()
+                    enctype="multipart/form-data"
+                >
+                    <h3>"Publier un build"</h3>
+                    <label class="gc-field">
+                        <span>"Fichier (500 Mo maximum)"</span>
+                        <input type="file" name="file" required=true />
+                    </label>
+                    <label class="gc-field">
+                        <span>"Version"</span>
+                        <input type="text" name="version" value="v1.0" required=true />
+                    </label>
+                    <label class="gc-field">
+                        <span>"Ce qui change (optionnel)"</span>
+                        <input type="text" name="changelog" placeholder="Correction du boss final" />
+                    </label>
+                    <button class="gc-btn gc-btn--primary" type="submit">"Envoyer"</button>
+                    <p class="gc-files__hint">
+                        "Le fichier part dans une release du dépôt GitHub du projet.
+                         Il ne devient téléchargeable par tous qu'à la publication."
+                    </p>
+                </form>
+            </Show>
+        </section>
+    }
+}
+
 /// Credit a teammate on the project.
 ///
 /// Contributors are what the release pays out to, and what decides which
@@ -265,6 +372,7 @@ fn ProjectBody(
 ) -> impl IntoView {
     let card = detail.card.clone();
     let card_id = card.id.clone();
+    let files_id = card.id.clone();
     // Crediting only makes sense while the project can still be edited;
     // once it is in review the team is fixed for that round.
     let can_credit = detail.rights.can_submit;
@@ -329,6 +437,8 @@ fn ProjectBody(
             <Show when=move || can_credit>
                 <ContributorForm project_id=card_id.clone() on_changed />
             </Show>
+
+            <FilesPanel project_id=files_id can_upload=detail.rights.can_upload />
 
             <ActionPanel project_id=card.id rights=detail.rights on_changed />
         </>

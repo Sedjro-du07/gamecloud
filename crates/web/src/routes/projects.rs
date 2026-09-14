@@ -39,6 +39,15 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/submit", post(submit))
         .route("/{id}/review", post(review))
         .route("/{id}/release", post(release))
+        .route(
+            "/{id}/files",
+            get(list_files).post(upload_file)
+                // Builds are large by nature. The handler streams to a
+                // temporary file and rejects anything over 500 MB itself,
+                // so the framework limit would only get in the way.
+                .layer(axum::extract::DefaultBodyLimit::disable()),
+        )
+        .route("/files/{file_id}/download", get(download_file))
 }
 
 #[derive(Deserialize)]
@@ -334,4 +343,252 @@ async fn release(
     }
 
     Ok(Json(report))
+}
+
+// ---------------------------------------------------------------------------
+// Builds
+// ---------------------------------------------------------------------------
+
+/// What a build upload carried.
+struct Upload {
+    version: String,
+    changelog: Option<String>,
+    /// Filename, temp path, size and checksum of the received file.
+    file: Option<(String, std::path::PathBuf, u64, String)>,
+}
+
+/// Drain a multipart body into a temporary file.
+///
+/// Streaming to disk rather than buffering is the whole point: a 500 MB
+/// build held in memory would be a denial of service against our own
+/// server. The SHA-256 is computed on the way past, which costs nothing
+/// and lets a download be checked against the record later.
+async fn consume_upload(mut multipart: axum::extract::Multipart) -> WebResult<Upload> {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncWriteExt;
+
+    let mut out = Upload {
+        version: "v1.0".to_string(),
+        changelog: None,
+        file: None,
+    };
+
+    while let Some(mut field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| WebError::Validation(format!("formulaire illisible : {e}")))?
+    {
+        match field.name().unwrap_or_default() {
+            "version" => out.version = field.text().await.unwrap_or(out.version),
+            "changelog" => {
+                out.changelog = field.text().await.ok().filter(|t| !t.trim().is_empty());
+            }
+            "file" => {
+                let filename = field
+                    .file_name()
+                    .map(ToString::to_string)
+                    .ok_or_else(|| WebError::Validation("fichier sans nom".into()))?;
+
+                let path = std::env::temp_dir().join(format!("gc-upload-{}", Uuid::new_v4()));
+                let mut sink = tokio::fs::File::create(&path)
+                    .await
+                    .map_err(|e| WebError::Internal(anyhow::anyhow!("temp file: {e}")))?;
+
+                let mut hasher = Sha256::new();
+                let mut size: u64 = 0;
+                while let Some(chunk) = field
+                    .chunk()
+                    .await
+                    .map_err(|e| WebError::Validation(format!("lecture interrompue : {e}")))?
+                {
+                    size += chunk.len() as u64;
+                    if size > crate::db::queries::files::MAX_FILE_BYTES {
+                        let _ = tokio::fs::remove_file(&path).await;
+                        return Err(WebError::Validation(
+                            "fichier trop volumineux (500 Mo maximum)".into(),
+                        ));
+                    }
+                    hasher.update(&chunk);
+                    sink.write_all(&chunk)
+                        .await
+                        .map_err(|e| WebError::Internal(anyhow::anyhow!("temp write: {e}")))?;
+                }
+                sink.flush()
+                    .await
+                    .map_err(|e| WebError::Internal(anyhow::anyhow!("temp flush: {e}")))?;
+
+                let digest = hasher.finalize();
+                let mut checksum = String::with_capacity(digest.len() * 2);
+                for byte in digest {
+                    use std::fmt::Write;
+                    let _ = write!(&mut checksum, "{byte:02x}");
+                }
+                out.file = Some((filename, path, size, checksum));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(out)
+}
+
+/// Upload a build for a project.
+///
+/// The bytes go to a GitHub release beside the code, streamed through a
+/// temporary file so a 500 MB build never sits in this process's memory.
+/// The SHA-256 is computed on the way past, which costs nothing extra
+/// and lets a download be checked against the record afterwards.
+async fn upload_file(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+    multipart: axum::extract::Multipart,
+) -> WebResult<Json<serde_json::Value>> {
+    let detail = projects::detail(state.pool(), id).await?;
+    let authority = users::load_authority(state.pool(), user.id).await?;
+
+    // Publishing a build speaks for the whole team, so it is not open to
+    // any member who happens to have the rank to create projects. Either
+    // you are credited on this project, or you lead the discipline that
+    // owns it.
+    let on_team = detail.contributors.iter().any(|c| c.user_id == user.id);
+    let leads_it = Track::parse(&detail.summary.primary_track).is_some_and(|t| {
+        authority.has_track_role(t, gamecloud_shared::roles::TrackRole::CoLead)
+    });
+    if !on_team && !leads_it {
+        return Err(WebError::Forbidden);
+    }
+
+    let repo = detail
+        .github_repo_url
+        .as_deref()
+        .and_then(projects::repo_name_from_url)
+        .ok_or_else(|| {
+            WebError::Validation("ce projet n'a pas de dépôt GitHub associé".into())
+        })?;
+    let github = state
+        .github()
+        .ok_or_else(|| WebError::Validation("l'intégration GitHub n'est pas configurée".into()))?;
+
+    let Upload {
+        version,
+        changelog,
+        file,
+    } = consume_upload(multipart).await?;
+
+    let (filename, path, size, checksum) =
+        file.ok_or_else(|| WebError::Validation("aucun fichier reçu".into()))?;
+
+    let handle = tokio::fs::File::open(&path)
+        .await
+        .map_err(|e| WebError::Internal(anyhow::anyhow!("temp reopen: {e}")))?;
+
+    let result = github
+        .upload_asset(repo, &version, &filename, handle, size)
+        .await;
+    // The temp file has done its job either way.
+    let _ = tokio::fs::remove_file(&path).await;
+    let asset = result?;
+
+    let file_id = crate::db::queries::files::record(
+        state.pool(),
+        &crate::db::queries::files::NewFile {
+            project_id: id,
+            uploaded_by: user.id,
+            filename: &filename,
+            size_bytes: i64::try_from(size).unwrap_or(i64::MAX),
+            checksum: &checksum,
+            asset_id: asset.id,
+            version: &version,
+            changelog: changelog.as_deref(),
+        },
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "id": file_id,
+        "filename": asset.name,
+        "size_bytes": asset.size,
+        "version": version,
+        "checksum_sha256": checksum,
+    })))
+}
+
+/// List a project's builds.
+async fn list_files(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> WebResult<Json<Vec<crate::db::queries::files::ProjectFile>>> {
+    Ok(Json(crate::db::queries::files::list(state.pool(), id).await?))
+}
+
+/// Stream a build back to the member.
+///
+/// The platform proxies rather than redirecting. A private repository's
+/// release asset is not fetchable by link, so a redirect would simply
+/// fail — and proxying keeps the decision about who may download inside
+/// the permission model rather than delegating it to GitHub's.
+async fn download_file(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(file_id): Path<Uuid>,
+) -> WebResult<axum::response::Response> {
+    use axum::response::IntoResponse;
+
+    let file = crate::db::queries::files::find(state.pool(), file_id).await?;
+    let detail = projects::detail(state.pool(), file.project_id).await?;
+
+    // Published work is open to every member. Work still in progress is
+    // for the people concerned: those credited on it, and the tracks
+    // actually being asked for a verdict — not merely the primary one,
+    // since an Audio reviewer needs the build to judge the audio.
+    let status = gamecloud_shared::projects::ProjectStatus::parse(&detail.summary.status);
+    let is_public = status.is_some_and(gamecloud_shared::projects::ProjectStatus::is_public);
+    if !is_public {
+        let authority = users::load_authority(state.pool(), user.id).await?;
+        let on_team = detail.contributors.iter().any(|c| c.user_id == user.id);
+
+        let concerned = detail
+            .validations
+            .iter()
+            .map(|v| v.track.as_str())
+            .chain(std::iter::once(detail.summary.primary_track.as_str()))
+            .filter_map(Track::parse)
+            .any(|t| authority.can(Action::ViewTrackInternalProjects(t)));
+
+        if !on_team && !concerned {
+            return Err(WebError::Forbidden);
+        }
+    }
+
+    let repo = detail
+        .github_repo_url
+        .as_deref()
+        .and_then(projects::repo_name_from_url)
+        .ok_or(WebError::NotFound)?;
+    let asset_id: u64 = file
+        .storage_path
+        .parse()
+        .map_err(|_| WebError::Internal(anyhow::anyhow!("bad asset id")))?;
+
+    let github = state.github().ok_or(WebError::NotFound)?;
+    let upstream = github.download_asset(repo, asset_id).await?;
+
+    let stream = upstream.bytes_stream();
+    let body = axum::body::Body::from_stream(stream);
+
+    Ok((
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/octet-stream".to_string(),
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", file.filename),
+            ),
+        ],
+        body,
+    )
+        .into_response())
 }
