@@ -86,6 +86,14 @@ pub struct Config {
     /// Where each kind of announcement is posted.
     pub channels: DiscordChannels,
 
+    /// GitHub organisation that hosts project repositories. Optional:
+    /// without it (or without a token) projects are created without a
+    /// repository and the field can be filled in by hand.
+    pub github_org: Option<String>,
+    /// Fine-grained PAT with `Administration: read & write` on that
+    /// organisation. Server-side only.
+    pub github_token: Option<String>,
+
     /// Requests permitted per IP per minute on authentication and other
     /// sensitive endpoints.
     pub rate_limit_sensitive_per_min: u32,
@@ -151,6 +159,9 @@ impl Config {
                 journal: channel("DISCORD_JOURNAL_CHANNEL_ID")?,
                 tracks: track_channels(),
             },
+
+            github_org: optional("GITHUB_ORG"),
+            github_token: optional("GITHUB_TOKEN"),
 
             rate_limit_sensitive_per_min: parse_or("RATE_LIMIT_SENSITIVE_PER_MIN", 10_u32)?,
             rate_limit_default_per_min: parse_or("RATE_LIMIT_DEFAULT_PER_MIN", 120_u32)?,

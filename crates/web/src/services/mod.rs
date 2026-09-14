@@ -4,6 +4,7 @@
 //! variables directly; the `Config` is passed in.
 
 pub mod email_validator;
+pub mod github;
 pub mod jwt;
 pub mod mailer;
 pub mod notifications;

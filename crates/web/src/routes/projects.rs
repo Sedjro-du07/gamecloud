@@ -83,6 +83,9 @@ async fn detail(
 #[derive(Serialize)]
 struct CreatedResponse {
     id: Uuid,
+    /// Repository created for the project, when the GitHub integration
+    /// is configured and GitHub cooperated.
+    github_repo_url: Option<String>,
 }
 
 async fn create(
@@ -95,7 +98,81 @@ async fn create(
         return Err(WebError::Forbidden);
     }
     let id = projects::create(state.pool(), user.id, &body).await?;
-    Ok(Json(CreatedResponse { id }))
+
+    // The repository is a convenience, not a precondition. GitHub being
+    // down must not stop a member starting a project, so a failure here
+    // is logged and the project stands without a repository.
+    let github_repo_url = provision_repo(&state, &user, id, &body).await;
+
+    Ok(Json(CreatedResponse {
+        id,
+        github_repo_url,
+    }))
+}
+
+/// Create the project's repository, add the author, install the webhook.
+///
+/// Returns the repository URL when everything that matters succeeded.
+/// Each step is independent: a repository with no webhook is still more
+/// useful than no repository, so a webhook failure does not discard it.
+async fn provision_repo(
+    state: &AppState,
+    user: &CurrentUser,
+    project_id: Uuid,
+    body: &projects::NewProject,
+) -> Option<String> {
+    let github = state.github()?;
+
+    let repo = match github
+        .create_repo(&body.name, body.short_description.as_deref())
+        .await
+    {
+        Ok(repo) => repo,
+        Err(e) => {
+            tracing::warn!(error = %e, project = %project_id, "github: repository not created");
+            return None;
+        }
+    };
+
+    // Push access for the author, when they have linked a GitHub login.
+    // Without one there is nobody to add — and linking it is also what
+    // makes their commits pay XP, so the profile page nags for it.
+    if let Some(login) = user.record.github_username.as_deref() {
+        if let Err(e) = github.add_collaborator(&repo.name, login).await {
+            tracing::warn!(error = %e, login, "github: collaborator not added");
+        }
+    } else {
+        tracing::info!(
+            project = %project_id,
+            "github: author has no linked GitHub login; repository left without a collaborator"
+        );
+    }
+
+    // The webhook is what makes commits in this repository pay XP. A
+    // localhost origin can never receive one, so do not install a hook
+    // that would only ever fail.
+    let cfg = state.config();
+    let origin = &cfg.public_origin;
+    match (&cfg.github_webhook_secret, origin.contains("localhost")) {
+        (Some(secret), false) => {
+            let callback = format!("{}/api/webhooks/github", origin.trim_end_matches('/'));
+            if let Err(e) = github
+                .add_webhook(&repo.name, &callback, &String::from_utf8_lossy(secret))
+                .await
+            {
+                tracing::warn!(error = %e, repo = %repo.name, "github: webhook not installed");
+            }
+        }
+        (_, true) => tracing::info!(
+            "github: PUBLIC_ORIGIN is localhost, skipping webhook (it could never be delivered)"
+        ),
+        (None, _) => tracing::info!("github: GITHUB_WEBHOOK_SECRET unset, skipping webhook"),
+    }
+
+    if let Err(e) = projects::set_repo_url(state.pool(), project_id, &repo.html_url).await {
+        tracing::warn!(error = %e, "github: repository created but URL not recorded");
+    }
+    Some(repo.html_url)
 }
 
 #[derive(Deserialize)]
@@ -237,5 +314,24 @@ async fn release(
         id,
     )
     .await?;
+
+    // A released project is the association's shop window, so its
+    // repository stops being private. Creating private and opening at
+    // release is the safe order: a repository can always be opened
+    // later, but code that leaked cannot be un-leaked.
+    if let (Some(github), Some(repo)) = (
+        state.github(),
+        detail
+            .github_repo_url
+            .as_deref()
+            .and_then(projects::repo_name_from_url),
+    ) {
+        if let Err(e) = github.make_public(repo).await {
+            tracing::warn!(error = %e, repo, "github: repository not opened on release");
+        } else {
+            tracing::info!(repo, "github: repository opened on release");
+        }
+    }
+
     Ok(Json(report))
 }

@@ -8,7 +8,7 @@ use sqlx::PgPool;
 use crate::{
     config::{Config, DiscordChannels},
     middleware::rate_limit::RateLimiter,
-    services::mailer::Mailer,
+    services::{github::GitHub, mailer::Mailer},
 };
 
 /// State held by the Axum router. Cheap to clone (it's `Arc`-based).
@@ -74,5 +74,11 @@ impl AppState {
     #[must_use]
     pub fn channels(&self) -> DiscordChannels {
         self.inner.config.channels
+    }
+
+    /// GitHub client, when the organisation integration is configured.
+    #[must_use]
+    pub fn github(&self) -> Option<GitHub> {
+        GitHub::from_config(&self.inner.config)
     }
 }

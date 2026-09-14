@@ -909,3 +909,69 @@ mod tests {
         assert!(contributor_award(None) > 0);
     }
 }
+
+/// Record the repository created for a project.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn set_repo_url(pool: &PgPool, project_id: Uuid, url: &str) -> WebResult<()> {
+    sqlx::query("UPDATE projects SET github_repo_url = $2 WHERE id = $1")
+        .bind(project_id)
+        .bind(url)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// The repository name inside the organisation, derived from a stored
+/// project URL.
+///
+/// Returns `None` for a project with no repository, or one pointing
+/// somewhere other than GitHub — a member may have pasted an itch.io or
+/// GitLab link into the field by hand.
+#[must_use]
+pub fn repo_name_from_url(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("https://github.com/")?;
+    let (_owner, name) = rest.trim_end_matches('/').split_once('/')?;
+    let name = name.split(['/', '?', '#']).next()?;
+    (!name.is_empty()).then_some(name)
+}
+
+#[cfg(test)]
+mod repo_url_tests {
+    use super::repo_name_from_url;
+
+    #[test]
+    fn extracts_the_repository_name() {
+        assert_eq!(
+            repo_name_from_url("https://github.com/Epitech-Game-Cloud-Association/aevaryn"),
+            Some("aevaryn")
+        );
+    }
+
+    #[test]
+    fn tolerates_a_trailing_slash_and_suffixes() {
+        assert_eq!(
+            repo_name_from_url("https://github.com/org/aevaryn/"),
+            Some("aevaryn")
+        );
+        assert_eq!(
+            repo_name_from_url("https://github.com/org/aevaryn/tree/main"),
+            Some("aevaryn")
+        );
+    }
+
+    #[test]
+    fn ignores_links_that_are_not_github_repositories() {
+        // Members paste itch.io and GitLab links into this field by hand.
+        for url in [
+            "https://aevaryn.itch.io/game",
+            "https://gitlab.com/org/aevaryn",
+            "https://github.com/org",
+            "not a url",
+            "",
+        ] {
+            assert_eq!(repo_name_from_url(url), None, "{url} should not parse");
+        }
+    }
+}
