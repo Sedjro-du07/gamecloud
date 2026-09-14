@@ -643,3 +643,142 @@ The bidirectional contract is:
 2. The `users_above_visitor_requires_verification` CHECK fires if any
    future code path were ever to grant XP without going through the
    typed wrapper. The two checks together are belt + suspenders.
+
+---
+
+# Migrations 0009–0011 (September 2026)
+
+## 0009 — Security hardening
+
+### `email_otps` — three new columns
+
+| Column | Type | Why |
+|---|---|---|
+| `cumulative_attempts` | `INTEGER NOT NULL DEFAULT 0` | Failed guesses across **every** code issued to this member. `attempts` counts only the current code and is reset on each resend, which is exactly the hole this closes: five guesses, request a new code, five more, forever. The application enforces its lockout against this column. |
+| `resend_count` | `INTEGER NOT NULL DEFAULT 0` | Codes requested so far. Capped at 5. |
+| `last_sent_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Drives the 60-second resend cooldown. |
+
+`upsert_otp` is now an `ON CONFLICT DO UPDATE` that deliberately carries
+`cumulative_attempts` forward rather than a `DELETE` + `INSERT`.
+
+### `qr_tokens` — hashed, countable
+
+| Column | Type | Why |
+|---|---|---|
+| `token_hash` | `TEXT NOT NULL`, unique | SHA-256 of the JWT. The plaintext `token` column is **deprecated and no longer written** — a read of this table used to hand out working bearer tokens. |
+| `max_scans` | `INTEGER` | Optional ceiling. `NULL` = unlimited until expiry. |
+| `scan_count` | `INTEGER NOT NULL DEFAULT 0` | How many members have claimed it. |
+
+`is_used` is **deprecated**. It was set by the first scan, which meant
+one member got the XP for a session and everybody else got a 410.
+
+### `attendance` — per-member claims
+
+| Column | Type | Why |
+|---|---|---|
+| `qr_token_id` | `UUID REFERENCES qr_tokens(id) ON DELETE SET NULL` | Which token this attendance came from. |
+
+```sql
+CREATE UNIQUE INDEX attendance_user_token_idx
+    ON attendance (user_id, qr_token_id)
+    WHERE qr_token_id IS NOT NULL;
+```
+
+This index is the replay defence that `is_used` used to provide, without
+preventing everybody else at the event from scanning the same code.
+
+## 0010 — Seasons and streaks
+
+### `users` — streak state
+
+| Column | Type | Why |
+|---|---|---|
+| `last_streak_day` | `DATE` | The last UTC day on which this member earned XP. Distinguishing "yesterday" (continue) from "today" (no-op) from "older" (reset) needs exactly this one extra piece of state. |
+| `longest_streak` | `INTEGER NOT NULL DEFAULT 0` | Personal best, for the record and the `Streaker` badge. |
+
+Before this migration `streak_days` was read by the XP multiplier and
+displayed by the bot, but **no code ever wrote it** — so the multiplier
+always evaluated to 1.0.
+
+### `seasons`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` PK | |
+| `name` | `TEXT NOT NULL` | e.g. "Saison 1 — La Forge" |
+| `slug` | `TEXT NOT NULL UNIQUE` | `^[a-z0-9][a-z0-9-]*$` |
+| `description` | `TEXT` | |
+| `starts_at` / `ends_at` | `TIMESTAMPTZ NOT NULL` | `ends_at > starts_at` |
+
+```sql
+ALTER TABLE seasons ADD CONSTRAINT seasons_no_overlap
+    EXCLUDE USING gist (tstzrange(starts_at, ends_at) WITH &&);
+```
+
+At most one season may be open at any instant, so "the current season"
+is never ambiguous. Requires the `btree_gist` extension.
+
+The migration seeds one year-long season so the feature is live on first
+boot. The Bureau closes it early by editing `ends_at`; the exclusion
+constraint then allows the next one to start.
+
+### `xp_logs.season_id`
+
+`UUID REFERENCES seasons(id) ON DELETE SET NULL`. Every XP event is
+stamped with the season open when it happened. `NULL` means "earned
+outside any season" and simply never shows on a season board.
+
+## 0011 — Engagement
+
+### `resource_votes`
+
+| Column | Type |
+|---|---|
+| `resource_id` | `UUID` → `resources(id)` |
+| `user_id` | `UUID` → `users(id)` |
+| `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` |
+
+Primary key `(resource_id, user_id)` — one vote per member.
+`resources.votes` becomes a cached aggregate maintained by the
+`resource_votes_sync` trigger; it used to be a bare counter with nothing
+stopping a thousand clicks.
+
+### `quest_progress`
+
+| Column | Type |
+|---|---|
+| `quest_id` | `UUID` → `quests(id)` |
+| `user_id` | `UUID` → `users(id)` |
+| `counter` | `INTEGER NOT NULL DEFAULT 0`, non-negative |
+| `updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` |
+
+`quest_completions` recorded the finish line but not the run-up, so a
+member could never see "2 / 3 pushes done".
+
+### `audit_logs.actor_id` is now nullable
+
+`NULL` means the platform acted on its own — a webhook grant, a
+scheduled job. It was `NOT NULL`, which made system-originated entries
+impossible to record, which is part of why nothing ever wrote to this
+table.
+
+---
+
+# Table usage
+
+Every table is now read or written by code. For orientation:
+
+| Table | Written by |
+|---|---|
+| `users`, `email_otps`, `refresh_tokens` | auth routes |
+| `track_memberships` | `db::queries::tracks` (onboarding) |
+| `xp_logs`, `seasons` | `db::queries::xp` |
+| `special_badges` | `db::queries::xp` (auto) and `badges` (manual) |
+| `quests`, `quest_progress`, `quest_completions` | `db::queries::quests`, `xp` |
+| `projects`, `project_contributors`, `track_validations`, `hall_of_fame` | `db::queries::projects` |
+| `resources`, `resource_votes` | `db::queries::resources` |
+| `qr_tokens`, `attendance` | `db::queries::qr` |
+| `audit_logs` | `db::queries::audit` |
+| `notifications_outbox` | `services::notifications` (web) → drained by the bot |
+| `project_files` | reserved for the Supabase upload flow (not yet built) |
+| `roadmap` | reserved for the block/boss view (not yet built) |

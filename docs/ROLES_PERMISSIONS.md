@@ -125,3 +125,59 @@ the same file lock in the most-tested rows.
 The application code is the fast path; the database constraints are
 the slow last line of defense in case a future bug bypasses the
 typed wrapper.
+
+---
+
+## Where permissions are enforced (September 2026)
+
+The previous revision of this section described an intent. This one
+describes the code.
+
+`Authority::can` used to be consulted in exactly **one** place in the
+whole codebase (`routes::qr::generate`), which meant the 17-action
+permission table above was, in practice, decorative. Every privileged
+route now goes through it:
+
+| Route | Action |
+|---|---|
+| `POST /api/qr/generate`, `GET /api/qr/{id}/sheet` | `GenerateQrToken` |
+| `POST /api/users/me/tracks` (first track) | `CompleteOnboarding` |
+| `POST /api/projects` | `CreateProject` |
+| `POST /api/projects/{id}/contributors` | `CreateProject` |
+| `POST /api/projects/{id}/submit` | `SubmitProjectForReview` |
+| `POST /api/projects/{id}/review` | `ReviewProjectForTrack(track)` |
+| `POST /api/projects/{id}/release` | `PublishProjectAsReleased(primary_track)` |
+| `GET /api/projects?internal=true` | `ViewTrackInternalProjects(track)` or `AccessAdminPanel` |
+| `POST /api/resources/{id}/validate`, `GET /api/resources?pending=true` | `ValidateResource` |
+| `POST /api/quests` | `GrantManualXp` |
+| `POST /api/admin/xp` | `GrantManualXp` |
+| `POST /api/admin/bureau-role`, `/badge`, `/seasons` | `AssignBureauRole` |
+| `POST /api/admin/track-role` (`Lead`) | `AppointTrackLead(track)` |
+| `POST /api/admin/track-role` (other) | `AppointTrackCoLead(track)` |
+| `GET /api/admin/audit` | `ViewAuditLogs` |
+| `GET /api/admin/seasons` | `AccessAdminPanel` |
+
+### Two rules worth stating explicitly
+
+**Reviewing is per-track.** `ReviewProjectForTrack(track)` requires
+`Reviewer` or above *in the track being judged*. An Audio mentor has no
+standing to approve the Engineering side of a build — which is the whole
+point of a multi-track review.
+
+**Email submission is gated too.** `Action::SubmitEpitechEmail` requires
+`rank == Pending`. `POST /api/auth/email` used to check only that you
+were signed in, so a fully verified member could re-verify a *different*
+Epitech address at will. The handler now refuses once
+`email_verified` is true.
+
+### The rank ladder has one gate per rung
+
+| Transition | Gated on |
+|---|---|
+| `Pending` → `Visitor` | Verified `@epitech.eu` address (OTP) |
+| `Visitor` → `Initiate` | Joining a first track |
+| `Initiate` → `Apprentice` and above | XP alone, via `GlobalRank::from_xp` |
+
+XP **cannot** move a `Pending` or `Visitor` member: `next_rank` returns
+their current rank unchanged however much they accumulate. That is what
+makes onboarding unskippable rather than merely encouraged.

@@ -24,6 +24,26 @@ rustup target add wasm32-unknown-unknown
 
 ---
 
+## 2 bis. Générer les secrets — obligatoire
+
+Le serveur **refuse de démarrer** tant que `JWT_SECRET`,
+`DRAFTBOT_API_KEY` et `GITHUB_WEBHOOK_SECRET` valent encore les
+placeholders de `.env.example`. Ce n'est pas une chicane : un
+`JWT_SECRET` devinable permet de forger un token d'accès pour n'importe
+quel compte.
+
+```bash
+for var in JWT_SECRET DRAFTBOT_API_KEY GITHUB_WEBHOOK_SECRET; do
+  echo "$var=$(openssl rand -base64 48 | tr -d '\n')"
+done
+```
+
+Colle les trois lignes dans ton `.env` (en remplaçant celles qui y sont).
+`DRAFTBOT_API_KEY` doit être **identique** pour le web et le bot : les
+deux lisent le même `.env` en développement.
+
+---
+
 ## 3. Discord — créer ton application OAuth + bot
 
 1. Va sur https://discord.com/developers/applications → **New Application**
@@ -242,3 +262,51 @@ Tu dois voir ta row.
 - [ ] `cargo run -p gamecloud-bot` démarre, `/profil` Discord répond
 
 Si toutes ces cases sont cochées, ta plateforme tourne.
+
+---
+
+## 8. Le parcours complet, à tester
+
+Une fois `cargo leptos watch` et le bot lancés :
+
+1. **http://localhost:3000** → « Connexion Discord ». La redirection est
+   immédiate.
+2. Soumets ton email `prenom.nom@epitech.eu`. Tu as droit à un code
+   toutes les 60 secondes, 5 au total.
+3. Tape le code reçu (ou lu dans MailHog). Tu passes `Pending` →
+   `Visitor`.
+4. **`/onboarding/tracks`** → choisis une track, et une spécialisation si
+   tu veux. Tu passes `Visitor` → `Initiate` : c'est cette étape qui te
+   met sur l'échelle d'XP. Tant qu'elle n'est pas faite, un bandeau te le
+   rappelle sur toutes les pages.
+5. **`/profile`** → ta feuille de personnage : niveau, série, tracks,
+   badges, historique d'XP.
+6. **`/leaderboard`** → classement de la saison, par défaut. Les onglets
+   « Depuis toujours » et « Par track » sont là aussi.
+7. **`/quests`** → vide au départ. Crée-en une avec
+   `POST /api/quests` (il faut un rôle Bureau exécutif).
+8. **`/scan`** → colle un token produit par `POST /api/qr/generate`.
+   Plusieurs membres peuvent scanner le même code ; chacun une seule
+   fois.
+
+### Se donner un rôle Bureau en local
+
+Le panneau admin et la création de quêtes demandent un rôle exécutif.
+En développement, le plus simple est de se l'attribuer en SQL :
+
+```bash
+psql gamecloud_dev -c "UPDATE users SET bureau_role = 'President' WHERE email = 'prenom.nom@epitech.eu';"
+```
+
+### Annonces Discord
+
+Pour voir les montées de rang et les badges s'afficher dans Discord,
+renseigne `DISCORD_ANNOUNCE_CHANNEL_ID` (clic droit sur un salon →
+« Copier l'identifiant », mode développeur activé). Sans cette variable,
+la plateforme fonctionne normalement mais reste silencieuse.
+
+### Rôles de rang Discord
+
+Renseigne `DISCORD_GUILD_ID` et crée dans ton serveur un rôle par rang,
+nommé exactement comme le titre du rang (`🌱 L'Initié`, etc.). Place le
+rôle du bot **au-dessus** de ces rôles. Voir `docs/DEPLOYMENT.md`.

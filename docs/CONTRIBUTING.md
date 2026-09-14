@@ -167,3 +167,72 @@ checklist:
 
 For now, in the GameCloud Discord `#dev` channel. If a question
 recurs, fold the answer into this document.
+
+---
+
+## Conventions added in September 2026
+
+### Never bypass the XP engine
+
+Every XP award goes through `db::queries::xp::grant` (or `grant_in_tx`
+when it must be atomic with something else). Do not write `xp_logs` or
+`users.xp_total` directly.
+
+This is not style. There used to be two paths — the webhook handler and
+the QR scan — and the second one skipped the rank recomputation, so
+attendance XP silently promoted nobody for months. The engine owns
+multipliers, caps, the rank ladder, levels, streaks, track pools, quest
+progress, badges and announcements. Bypassing it means silently skipping
+some of that.
+
+### The shared crate owns the vocabulary
+
+`GlobalRank`, `BureauRole`, `Track`, `TrackRole`, `SpecialBadge`,
+`ProjectStatus` and `Verdict` each have `as_str` and `parse` in
+`gamecloud-shared`. Use them.
+
+Before this release there were four separate `match s { "Visitor" => …
+}` blocks scattered across the web and bot crates, which is exactly how
+a rename turns into a silent bug. If you need a new string ↔ enum
+mapping, put it on the enum.
+
+### No "anchor imports"
+
+Do not write `let _ = (some_fn, other_fn);` or
+`const _ANCHOR: StatusCode = …` to keep an unused import alive. Delete
+the import. The codebase had four of these and they each hid a real
+piece of dead code.
+
+### Both targets must compile
+
+`crates/web` builds twice. A change that compiles under `ssr` can easily
+break `hydrate` — anything touching `api/`, `components/`, `pages/` or a
+server function signature. Check both:
+
+```bash
+cargo check -p gamecloud-web --features ssr --no-default-features
+cargo check -p gamecloud-web --features hydrate --no-default-features \
+    --target wasm32-unknown-unknown
+```
+
+View models in `api/` must stay free of `chrono` types and borrowed
+data: timestamps cross the wire as pre-formatted strings.
+
+### Test the logic, not the framework
+
+Pure domain logic belongs in `gamecloud-shared` where it can be tested
+without a database — that is why the project state machine, the badge
+rules, the streak arithmetic and the level curve all live there. A
+handler should be thin enough that its own tests are about validation
+and error mapping.
+
+### Clippy is pedantic and denied
+
+```bash
+cargo clippy -p <crate> --all-targets -- -D warnings
+```
+
+`--all-targets` matters: it lints the test modules too. When an
+`#[allow]` is genuinely right, write a comment saying *why*, as the
+existing ones do. An `#[allow]` without a reason will be questioned in
+review.

@@ -4,10 +4,12 @@ This document is the high-level map of the GameCloud OS codebase. It
 covers component boundaries, runtime topology, the data flow for every
 critical user journey, and the security model that ties them together.
 
-> **Phase 1 status.** The shared domain layer (`crates/shared`), all
-> migrations, and the workspace skeleton are in place and compile.
-> Phases 2–5 fill in Axum handlers, the Discord bot, and the Leptos
-> frontend.
+> **Status, September 2026.** Feature-complete against this document.
+> Every route listed below is registered, every table in
+> `DATABASE_SCHEMA.md` is read or written by code, and the middleware
+> stack is the one described here. Earlier revisions of this file
+> advertised endpoints and a rate-limit layer that did not exist; that
+> drift is gone.
 
 ---
 
@@ -43,27 +45,30 @@ critical user journey, and the security model that ties them together.
    ║   ┌────────────────────────┐     ║
    ║   │ Routes                 │     ║
    ║   │  - /api/auth/*         │     ║
+   ║   │  - /api/users/*        │     ║
+   ║   │  - /api/projects/*     │     ║
+   ║   │  - /api/quests/*       │     ║
+   ║   │  - /api/resources/*    │     ║
+   ║   │  - /api/seasons/*      │     ║
+   ║   │  - /api/qr/*           │     ║
+   ║   │  - /api/admin/*        │     ║
    ║   │  - /api/webhooks/*     │     ║
    ║   │  - /api/sync/*         │     ║
-   ║   │  - /api/qr/*           │     ║
-   ║   │  - /api/projects/*     │     ║
-   ║   │  - /api/tracks/*       │     ║
-   ║   │  - /api/users/*        │     ║
-   ║   │  - /api/admin/*        │     ║
    ║   │  - /  (Leptos SSR)     │     ║
    ║   └─────────┬──────────────┘     ║
    ║             │                    ║
    ║   ┌─────────▼──────────────┐     ║
    ║   │ Tower middleware stack │     ║
    ║   │  - tracing             │     ║
-   ║   │  - cors                │     ║
+   ║   │  - cors (PUBLIC_ORIGIN)│     ║
    ║   │  - compression         │     ║
-   ║   │  - rate limit (per-role│     ║
-   ║   │    bucket)             │     ║
+   ║   │  - body size limit     │     ║
+   ║   │  - rate limit (per-IP, │     ║
+   ║   │    2 buckets)          │     ║
    ║   │  - HMAC signature      │     ║
-   ║   │    verification        │     ║
-   ║   │  - JWT auth + role     │     ║
-   ║   │    guard               │     ║
+   ║   │    (in the handler)    │     ║
+   ║   │  - JWT auth + Authority│     ║
+   ║   │    guard (extractors)  │     ║
    ║   └─────────┬──────────────┘     ║
    ║             │                    ║
    ║   ┌─────────▼──────────────┐     ║
@@ -94,20 +99,25 @@ gamecloud-os/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── account.rs           # type-state stages
+│   │       ├── badges.rs            # badge award rules
 │   │       ├── errors.rs
 │   │       ├── models.rs            # DB row mirrors
+│   │       ├── projects.rs          # project lifecycle state machine
 │   │       ├── roles.rs             # roles, ranks, permissions
-│   │       └── xp.rs                # XP economy constants
+│   │       └── xp.rs                # XP economy, caps, streaks, levels
 │   ├── web/                         # cargo-leptos hybrid lib + bin
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs               # WASM entry point (hydrate)
 │   │       ├── bin/server.rs        # native server binary
-│   │       ├── config.rs            # env vars
-│   │       ├── middleware/          # auth, rate-limit, signature
+│   │       ├── config.rs            # env vars (rejects placeholder secrets)
+│   │       ├── api/                 # view models shared by both targets
+│   │       ├── middleware/          # auth, rate_limit, github_signature
 │   │       ├── routes/              # Axum handlers
-│   │       ├── components/          # Leptos views
-│   │       └── db/                  # sqlx queries
+│   │       ├── server_fns.rs        # Leptos server functions
+│   │       ├── components/ pages/   # Leptos views
+│   │       ├── services/            # jwt, otp, mailer, notifications
+│   │       └── db/queries/          # sqlx queries, one module per domain
 │   └── bot/                         # Discord bot binary
 │       ├── Cargo.toml
 │       └── src/
@@ -383,7 +393,7 @@ notifies it. This keeps the Axum process out of the bandwidth path.
 | Email field                | Regex + DB CHECK constraint + Argon2 OTP                |
 | File uploads               | MIME sniff + ≤500 MB cap (handler) + DB CHECK           |
 | Sessions                   | 1h JWT + 7d hashed refresh token, rotation on use       |
-| Rate limiting              | Tower middleware, per-role buckets                      |
+| Rate limiting              | `middleware::rate_limit`, fixed window per IP, two buckets |
 | Audit logs                 | Append-only, every privileged action recorded           |
 | Type-state                 | `User<Verified>` cannot be constructed without OTP pass |
 
@@ -436,3 +446,100 @@ elsewhere.
 ```
 
 Phase 5 documents the exact deploy steps (`DEPLOYMENT.md`).
+
+---
+
+## 12. The XP engine
+
+Every XP award on the platform funnels through
+`db::queries::xp::grant`. This is the single most important invariant in
+the codebase, and it was not always true: the webhook handler and the QR
+scan used to have separate implementations, and the QR one never
+recomputed the member's rank, so attendance XP silently promoted nobody.
+
+One award triggers this cascade, in one transaction:
+
+```
+   XpGrant { user_id, base, source, track?, cap?, apply_multipliers }
+        │
+        ▼
+   1. load member  ──► streak_days, active_tracks, rank, level, xp_total
+        │
+        ▼
+   2. multipliers   base × streak(1.0–2.0) × multi_track(1.0–1.30)
+        │
+        ▼
+   3. daily cap     trim so today's total for this bucket ≤ limit
+        │           ── ORDER MATTERS: capping before multiplying turns a
+        │              50/day cap into 130/day
+        ▼
+   4. ledger        INSERT xp_logs (… , season_id)
+        │
+        ▼
+   5. member        xp_total, global_rank, level, streak, longest_streak
+        │           ── rank via GlobalRank::from_xp, gated on
+        │              email_verified and on onboarding having happened
+        ▼
+   6. track pool    track_xp + auto track_role (Lead/CoLead untouched)
+        │
+        ▼
+   7. quests        advance matching counters; pay out any that complete
+        │           (quest XP is exact: no multipliers, no cap, no
+        │            recursion back into this engine)
+        ▼
+   8. badges        rebuild the snapshot, INSERT … ON CONFLICT DO NOTHING
+        │
+        ▼
+   9. announce      notifications_outbox rows for rank-up / badge / quest
+```
+
+Because the whole cascade is one transaction, a member can never see a
+rank-up announced for XP that rolled back, nor keep XP whose badge write
+failed.
+
+`grant` opens its own transaction; `grant_in_tx` joins one the caller
+owns, which is how a QR scan stays atomic with its `attendance` row and
+a project release pays every contributor at once.
+
+---
+
+## 13. Seasons
+
+A season is a time window that scopes the leaderboard. The schema
+enforces that at most one is open at any instant (an exclusion
+constraint over `tstzrange(starts_at, ends_at)`), so "the current
+season" is never ambiguous.
+
+Every `xp_logs` row is stamped with the season that was open when it was
+written. That makes the season board a single `WHERE season_id = $1`
+aggregate, and leaves ranks, levels and badges cumulative across seasons
+— a new season changes what the board *shows*, never what a member has
+earned.
+
+The motivation is retention, not novelty: an all-time board freezes.
+The members who founded the club sit on top of it permanently, and a
+first-year joining in September can see at a glance that they will never
+catch up.
+
+---
+
+## 14. Rate limiting
+
+`middleware::rate_limit` applies a fixed-window counter per
+`(bucket, client IP)`:
+
+| Bucket | Paths | Default |
+|---|---|---|
+| `Sensitive` | `/api/auth/{email,verify,refresh,login}`, `/api/qr/scan`, `/api/sync/draftbot` | 10/min |
+| `Default` | everything else | 120/min |
+
+State is in-process, so a multi-replica deployment limits per replica;
+the reverse proxy is the right place for a global limit, and
+`DEPLOYMENT.md` says so. The client is the peer address, or the first
+hop of `X-Forwarded-For` when `TRUST_FORWARDED_FOR=true` — which should
+only ever be set when a proxy you control overwrites that header.
+
+A fixed window lets a caller burst up to 2× the limit across a boundary.
+That is an acceptable trade for a club-sized deployment, and the numbers
+are chosen with the slack in mind; the alternative, a sliding log, costs
+memory proportional to request volume for accuracy nobody here needs.

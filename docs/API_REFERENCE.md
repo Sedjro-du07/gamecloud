@@ -58,7 +58,14 @@ leaked. For 4xx responses, `message` carries the actionable detail.
 | 422  | `invalid_transition`     | Project status transition is not allowed              |
 | 422  | `validation`             | Body / query is structurally OK but semantically bad  |
 | 429  | `daily_xp_cap`           | Daily XP cap reached for this source                  |
-| 429  | `rate_limited`           | Generic rate-limit                                    |
+| 429  | `rate_limited`           | Rate limit, or the OTP attempt ceiling                 |
+| 429  | `otp_cooldown`           | A new OTP was requested too soon after the last        |
+| 409  | `email_taken`            | Another account has verified that Epitech address      |
+| 409  | `qr_already_claimed`     | You already scanned this code                          |
+| 409  | `already_voted`          | You already voted for this resource                    |
+| 409  | `already_in_track`       | You already belong to that track                       |
+| 410  | `qr_capacity_reached`    | The code hit its scan ceiling                          |
+| 403  | `email_already_verified` | The address is verified and cannot be changed here     |
 | 500  | `internal`               | Unhandled server error or DB error                    |
 | 500  | `invariant`              | Server-side data invariant violated                   |
 | 502  | `upstream`               | Discord / GitHub / SMTP failure                       |
@@ -188,7 +195,9 @@ Submit the OTP code.
 **Errors**:
 
 - `401 unauthorized` — no outstanding OTP, expired, wrong code.
-- `429 rate_limited` — 5 failed attempts on the same code.
+- `429 rate_limited` — 10 cumulative failed attempts. **This counter
+  survives a resend**: requesting a new code no longer resets it, which
+  is what closes the brute-force path a 6-digit secret otherwise has.
 
 After 5 failed attempts the user must call `/api/auth/email` again to
 get a fresh code; the old one stays burned.
@@ -473,3 +482,316 @@ phases 3–4. Listing them here so the URL space is documented:
 
 All of them follow the conventions above (cookie auth,
 `Authority::can` permission gate, JSON error envelope).
+
+---
+
+# Members
+
+All of these require a session cookie.
+
+### `GET /api/users/me`
+
+The caller's profile: display name, avatar, XP, level and level
+progress, rank identifier plus its title and colour, bureau role,
+streak, and position on the all-time board.
+
+### `PATCH /api/users/me`
+
+```json
+{ "current_title": "Barde Numérique", "github_username": "ada", "avatar_custom_url": "https://…" }
+```
+
+Every field is optional; omitted fields are left alone. Deliberately
+narrow — XP, rank, level, streak and bureau role are platform-owned and
+cannot be set here.
+
+- `422 validation` — title outside 1–48 characters, avatar not https,
+  GitHub login malformed.
+- `409 conflict` — that GitHub login is already linked to another member.
+
+### `GET /api/users/me/xp?limit=30`
+
+Recent ledger lines: signed amount, source, track, description,
+timestamp. `limit` is clamped to 200.
+
+### `GET /api/users/me/tracks`
+
+The caller's track memberships with role, specialization and track XP.
+
+### `POST /api/users/me/tracks`
+
+```json
+{ "track": "Engineering", "specialization": "Gameplay" }
+```
+
+Join a track. **This is the step that completes onboarding**: the first
+join promotes a `Visitor` to `Initiate` and puts them on the XP ladder.
+`specialization` is optional but must be one of the canonical options
+for that track.
+
+- `403 email_not_verified` — verify the Epitech address first.
+- `409 already_in_track`
+- `422 unknown_track` / `unknown_specialization`
+
+### `DELETE /api/users/me/tracks/{track}`
+
+Leave a track.
+
+### `GET /api/users/me/badges` · `GET /api/users/me/attendance` · `GET /api/users/me/quests`
+
+The caller's badges, attendance history, and open quests.
+
+### `GET /api/users/me/sheet`
+
+The whole character sheet in one payload: profile, tracks, badges,
+recent XP, attendance, completed quests. This is what a member can point
+at from a portfolio.
+
+### `GET /api/users/catalogue/tracks` · `GET /api/users/catalogue/badges`
+
+The 8 tracks with their specializations, and the full badge catalogue.
+Static; no authentication needed beyond a session.
+
+### `GET /api/users/leaderboard?scope=season&track=&season=&limit=20`
+
+| `scope` | Meaning |
+|---|---|
+| `season` *(default)* | XP earned inside the open season |
+| `all` | all-time `users.xp_total` |
+| `track` | `track_xp` inside the track named by `track` |
+
+With `scope=season` and no season open, the response falls back to
+`scope: "all"` rather than returning an empty board.
+
+### `GET /api/users/{id}`
+
+Another member's public profile.
+
+---
+
+# Quests
+
+### `GET /api/quests`
+
+Open quests with the caller's progress and completion flag. `Hidden`
+quests only appear once the caller has made progress on them.
+
+### `GET /api/quests/completed`
+
+The caller's finished quests.
+
+### `POST /api/quests`
+
+Requires `GrantManualXp` (executive Bureau).
+
+```json
+{
+  "title": "Trois revues cette semaine",
+  "description": "Relis le build de quelqu'un d'autre.",
+  "xp_reward": 40,
+  "quest_type": "Weekly",
+  "condition_type": "Review",
+  "condition_value": 3,
+  "track": null,
+  "starts_at": "2026-09-14T00:00:00Z",
+  "ends_at": "2026-09-21T00:00:00Z"
+}
+```
+
+`quest_type` ∈ `Weekly | Special | Hidden`.
+`condition_type` ∈ `Push | Attend | Submit | Review`.
+
+Progress advances by itself from the XP events already flowing in; there
+is no endpoint to increment a counter.
+
+---
+
+# Projects
+
+### `GET /api/projects?track=&internal=false`
+
+Released and archived projects by default. `internal=true` is honoured
+only for a caller who holds the matching track role (or can access the
+admin panel when no track filter is given).
+
+### `POST /api/projects`
+
+Requires `CreateProject` (rank ≥ `JuniorDev`). Creates a `Draft` and
+credits the author as a contributor under the primary track.
+
+```json
+{
+  "name": "Aevaryn",
+  "short_description": "Un RPG narratif",
+  "primary_track": "Narrative",
+  "epitech_level": "Tek2",
+  "block_number": 3,
+  "github_repo_url": "https://github.com/…"
+}
+```
+
+### `GET /api/projects/{id}`
+
+Full detail: description, links, gallery, contributors, and the
+per-track verdict table.
+
+### `POST /api/projects/{id}/contributors`
+
+```json
+{ "user_id": "…", "track": "Audio", "role_in_project": "Composer" }
+```
+
+### `POST /api/projects/{id}/submit`
+
+Requires `SubmitProjectForReview`. Moves `Draft | PartialOK | Rejected`
+→ `InReview` and opens one validation row per concerned track — the
+primary track plus every track a contributor is credited under. Returns
+the tracks that now owe a verdict.
+
+### `POST /api/projects/{id}/review`
+
+Requires `ReviewProjectForTrack(track)` — that is, `Reviewer` or above
+**in the track being judged**.
+
+```json
+{ "track": "Audio", "verdict": "Rejected", "feedback": "Le mix sature sur les explosions." }
+```
+
+`verdict` ∈ `Approved | Rejected | NotApplicable`. **A rejection must
+carry feedback** (422 otherwise). The project status is re-derived from
+all verdicts: any rejection → `Rejected`; any pending → still
+`InReview`; at least one approval → `Approved`; nothing but
+`NotApplicable` → `PartialOK`.
+
+A substantive verdict earns the reviewer peer-review XP in that track.
+`NotApplicable` pays nothing — declaring a track irrelevant is not
+review work.
+
+### `POST /api/projects/{id}/release`
+
+Requires `PublishProjectAsReleased(primary_track)` — the track Lead.
+Moves `Approved` → `Released`, derives rarity from the number of
+approving tracks, pays every contributor and the primary Lead, and
+writes the Hall of Fame entry. All in one transaction.
+
+---
+
+# Resources
+
+### `GET /api/resources?track=&pending=false`
+
+Validated entries, best-voted first. `pending=true` is honoured only for
+a caller who can validate.
+
+### `POST /api/resources`
+
+```json
+{ "title": "…", "url": "https://…", "resource_type": "Tutorial", "tracks": ["VisualArt"], "level": "Junior" }
+```
+
+`resource_type` ∈ `Tutorial | Tool | Asset | Doc | Video`.
+`level` ∈ `Initiate | Junior | Senior | Expert`. The URL must be http(s).
+
+### `POST /api/resources/{id}/validate`
+
+Requires `ValidateResource` (Archiviste or any track Lead). Pays the
+submitter. Returns `{"newly_validated": false}` on a repeat — the XP is
+tied to the transition, not the click.
+
+### `POST /api/resources/{id}/vote` · `DELETE /api/resources/{id}/vote`
+
+One vote per member. `409 already_voted` on a repeat.
+
+---
+
+# Seasons
+
+### `GET /api/seasons/current`
+
+The open season, or `null` between seasons.
+
+### `GET /api/seasons`
+
+Every season, newest first.
+
+---
+
+# Admin
+
+All require a Bureau permission; all write an `audit_logs` entry.
+
+### `GET /api/admin/audit?limit=100`
+
+Requires `ViewAuditLogs` (executive). The trail, newest first.
+
+### `POST /api/admin/xp`
+
+Requires `GrantManualXp`.
+
+```json
+{ "user_id": "…", "amount": 50, "reason": "Aide au montage du stand", "track": null }
+```
+
+`amount` may be negative to revoke. **Multipliers are not applied** —
+when a Bureau member types 50, the recipient gets 50. A reason is
+mandatory.
+
+### `POST /api/admin/bureau-role`
+
+Requires `AssignBureauRole` (President / Vice-President). `role: null`
+clears it.
+
+### `POST /api/admin/track-role`
+
+```json
+{ "user_id": "…", "track": "Engineering", "role": "Lead" }
+```
+
+`Lead` requires `AppointTrackLead` (executive); anything else requires
+`AppointTrackCoLead` (the track's own Lead).
+
+### `POST /api/admin/badge`
+
+```json
+{ "user_id": "…", "badge_type": "FoundingMember" }
+```
+
+Only the four Bureau-owned badges can be granted this way
+(`FoundingMember`, `Alumni`, `ExternalMentor`, `BugHunter`). Attempting
+to hand-award an engine-owned badge is a `422` — the next evaluation
+would contradict it.
+
+### `GET /api/admin/seasons` · `POST /api/admin/seasons`
+
+List and open seasons. An overlapping window is a `409` — at most one
+season may be open at a time.
+
+---
+
+# QR attendance (additions)
+
+### `POST /api/qr/generate` — new fields
+
+`max_scans` (optional) caps how many members may claim the token.
+`None` means "everyone in the room before it expires", which is the
+right default for a code on a projector. The response now also carries
+`token_id`, for the attendance sheet.
+
+### `POST /api/qr/scan` — changed semantics
+
+**A token is no longer consumed by the first scanner.** It stays valid
+until it expires or hits `max_scans`, and each member may claim it once.
+The response carries `xp_awarded` (after the member's multipliers) and
+`scan_count`.
+
+- `409 qr_already_claimed` — you already scanned this code.
+- `410 qr_capacity_reached` — the code is full.
+- `410 invalid_qr_token` — unknown, expired, or a bad signature.
+
+### `GET /api/qr/{id}/sheet`
+
+Requires `GenerateQrToken`. Who has claimed a given token.
+
+### `GET /api/qr/history`
+
+The caller's own attendance history.
