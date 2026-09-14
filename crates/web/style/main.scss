@@ -1462,3 +1462,96 @@ button { font: inherit; }
   border-color: var(--gc-accent);
   color: var(--gc-accent);
 }
+
+// ===========================================================================
+// Contributor form
+// ===========================================================================
+
+.gc-contributor-form {
+  margin-top: 1.5rem;
+  padding: 1.1rem;
+  background: var(--gc-bg-elev);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--gc-radius-md);
+
+  h3 { margin: 0 0 0.9rem; font-size: 0.98rem; font-family: var(--gc-font-display); }
+
+  input, select {
+    background: var(--gc-bg);
+    color: var(--gc-fg);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--gc-radius-sm);
+    padding: 0.5rem 0.65rem;
+    font-family: inherit;
+    width: 100%;
+  }
+}
+
+.gc-profile__export {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+
+  &-note { font-size: 0.82rem; color: var(--gc-fg-mute); }
+}
+
+// ===========================================================================
+// Print — the character sheet as a document
+// ===========================================================================
+//
+// A member's record is worth something outside the club: "Narrative
+// Lead, 3 projets publiés, 2 400 XP" is portfolio material. Printing to
+// PDF beats generating one — the text stays selectable, the links stay
+// real, and there is no second renderer to keep in step with the page.
+
+@media print {
+  // Ink on paper: the dark theme would waste a cartridge and read badly.
+  :root {
+    --gc-bg: #ffffff;
+    --gc-bg-elev: #ffffff;
+    --gc-fg: #111111;
+    --gc-fg-mute: #555555;
+  }
+
+  body { background: #fff; color: #111; }
+
+  // Chrome that means nothing on paper.
+  .gc-hud__top,
+  .gc-hud__nav,
+  .gc-hud__auth,
+  .gc-hud__nag,
+  .gc-hud__bottom,
+  .gc-profile__export,
+  .gc-banner {
+    display: none !important;
+  }
+
+  .gc-hud__content { padding: 0; max-width: none; }
+  .gc-profile { max-width: none; gap: 1.2rem; }
+
+  // Cards and badges need an outline once the background is gone.
+  .gc-card,
+  .gc-stat,
+  .gc-track,
+  .gc-badge {
+    border: 1px solid #ccc !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+
+  // Locked badges are noise on a printed record; only what was earned.
+  .gc-badge:not(.gc-badge--held) { display: none !important; }
+
+  .gc-badges__grid { grid-template-columns: repeat(3, 1fr); }
+  .gc-history__item { break-inside: avoid; }
+
+  // Progress bars survive the loss of background colours.
+  .gc-level__track, .gc-xp-bar__track { border: 1px solid #999; }
+  .gc-level__fill, .gc-xp-bar__fill { background: #444 !important; }
+
+  a { color: #111; text-decoration: underline; }
+
+  @page { margin: 1.5cm; }
+}

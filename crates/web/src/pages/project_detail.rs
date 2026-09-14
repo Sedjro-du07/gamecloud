@@ -11,7 +11,7 @@ use leptos_router::hooks::use_params_map;
 use crate::{
     api::{ProjectRights, VerdictItem},
     components::review_form::ReviewForm,
-    server_fns::{get_project, submit_project},
+    server_fns::{add_contributor, get_project, submit_project},
 };
 
 /// French label and CSS modifier for a verdict.
@@ -163,6 +163,94 @@ fn ActionPanel(
         .into_any()
 }
 
+/// Credit a teammate on the project.
+///
+/// Contributors are what the release pays out to, and what decides which
+/// tracks are asked for a verdict — so crediting the artist before
+/// submitting is what gets Visual Art into the review at all.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn ContributorForm(
+    /// Project being credited.
+    project_id: String,
+    /// Refetch hook.
+    on_changed: Callback<String>,
+) -> impl IntoView {
+    let (member, set_member) = signal(String::new());
+    let (track, set_track) = signal("Engineering".to_string());
+    let (role, set_role) = signal(String::new());
+    let (error, set_error) = signal(Option::<String>::None);
+
+    let add = Action::new(move |(p, m, t, r): &(String, String, String, String)| {
+        let (p, m, t, r) = (p.clone(), m.clone(), t.clone(), r.clone());
+        async move { add_contributor(p, m, t, r).await }
+    });
+
+    Effect::new(move |_| {
+        if let Some(result) = add.value().get() {
+            match result {
+                Ok(()) => {
+                    set_member.set(String::new());
+                    set_role.set(String::new());
+                    set_error.set(None);
+                    on_changed.run("contributor".to_string());
+                }
+                Err(e) => set_error.set(Some(e.to_string())),
+            }
+        }
+    });
+
+    let tracks = gamecloud_shared::roles::Track::ALL
+        .iter()
+        .map(|t| (t.as_str().to_string(), format!("{} {}", t.emoji(), t.as_str())))
+        .collect::<Vec<_>>();
+
+    view! {
+        <form
+            class="gc-form gc-contributor-form"
+            on:submit=move |ev| {
+                ev.prevent_default();
+                add.dispatch((project_id.clone(), member.get(), track.get(), role.get()));
+            }
+        >
+            <h3>"Créditer un coéquipier"</h3>
+            {move || {
+                error.get().map(|e| view! { <div class="gc-banner gc-banner--warning">{e}</div> })
+            }}
+            <label class="gc-field">
+                <span>"Membre (identifiant plateforme ou Discord)"</span>
+                <input
+                    type="text"
+                    required=true
+                    prop:value=move || member.get()
+                    on:input=move |ev| set_member.set(event_target_value(&ev))
+                />
+            </label>
+            <label class="gc-field">
+                <span>"Sur quelle track"</span>
+                <select on:change=move |ev| set_track.set(event_target_value(&ev))>
+                    {tracks
+                        .into_iter()
+                        .map(|(id, label)| view! { <option value=id>{label}</option> })
+                        .collect_view()}
+                </select>
+            </label>
+            <label class="gc-field">
+                <span>"Rôle sur le projet (optionnel)"</span>
+                <input
+                    type="text"
+                    placeholder="Lead Artist"
+                    prop:value=move || role.get()
+                    on:input=move |ev| set_role.set(event_target_value(&ev))
+                />
+            </label>
+            <button class="gc-btn" type="submit" disabled=move || add.pending().get()>
+                {move || if add.pending().get() { "Ajout…" } else { "Créditer" }}
+            </button>
+        </form>
+    }
+}
+
 /// The project, once loaded.
 ///
 /// Split out of [`ProjectDetailPage`] so that component stays a thin
@@ -176,6 +264,10 @@ fn ProjectBody(
     on_changed: Callback<String>,
 ) -> impl IntoView {
     let card = detail.card.clone();
+    let card_id = card.id.clone();
+    // Crediting only makes sense while the project can still be edited;
+    // once it is in review the team is fixed for that round.
+    let can_credit = detail.rights.can_submit;
     view! {
         <>
             <header
@@ -233,6 +325,10 @@ fn ProjectBody(
 
             <h2>"Revue par track"</h2>
             <VerdictTable validations=detail.validations />
+
+            <Show when=move || can_credit>
+                <ContributorForm project_id=card_id.clone() on_changed />
+            </Show>
 
             <ActionPanel project_id=card.id rights=detail.rights on_changed />
         </>

@@ -28,6 +28,27 @@ use crate::{
     state::AppState,
 };
 
+/// Percent-encode a token for use in a query string.
+///
+/// A JWT is base64url, so only `=` padding and the separators need
+/// escaping in practice — but encoding everything outside the unreserved
+/// set keeps this correct whatever the token format becomes.
+fn urlencoding(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(&mut out, "%{b:02X}");
+            }
+        }
+    }
+    out
+}
+
 /// Build the QR router.
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -59,8 +80,10 @@ struct GenerateBody {
 
 #[derive(Serialize)]
 struct GenerateResponse {
-    /// The signed token. Shown as a QR code, and needed to scan.
+    /// The signed token. Needed to scan by hand.
     token: String,
+    /// The link the QR encodes. Open it on a phone and the scan runs.
+    scan_url: String,
     /// Inline SVG rendering, ready to drop into a page.
     qr_svg: String,
     /// Internal id, for the attendance sheet endpoint.
@@ -126,7 +149,18 @@ async fn generate(
     )
     .await?;
 
-    let qr_svg = QrCode::new(&token)
+    // The QR encodes a link to the scan page rather than the raw token.
+    // Every phone camera opens a link; almost none can be asked to hand
+    // a decoded string to a web page. This turns "scan the code" into
+    // something that works on every device with no permissions prompt
+    // and no BarcodeDetector, which Firefox and Safari lack anyway.
+    let scan_url = format!(
+        "{}/scan?token={}",
+        state.config().public_origin.trim_end_matches('/'),
+        urlencoding(&token)
+    );
+
+    let qr_svg = QrCode::new(&scan_url)
         .map_err(|e| WebError::Internal(anyhow::anyhow!("qr encode: {e}")))?
         .render::<svg::Color>()
         .min_dimensions(256, 256)
@@ -134,6 +168,7 @@ async fn generate(
 
     Ok(Json(GenerateResponse {
         token,
+        scan_url,
         qr_svg,
         token_id,
         expires_at: exp,

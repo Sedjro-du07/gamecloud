@@ -7,7 +7,7 @@
 
 use leptos::prelude::*;
 
-use crate::server_fns::{get_audit, grant_xp, open_quest};
+use crate::server_fns::{appoint_track_role, get_audit, grant_xp, open_quest};
 
 /// Manual XP grant.
 #[component]
@@ -232,6 +232,105 @@ fn QuestPanel() -> impl IntoView {
     }
 }
 
+/// Appoint a track Lead or CoLead.
+///
+/// These are the two track roles XP never confers — every other rung is
+/// earned automatically from track XP, so hand-appointing one would just
+/// be overwritten.
+#[component]
+fn AppointPanel() -> impl IntoView {
+    let (member, set_member) = signal(String::new());
+    let (track, set_track) = signal("Engineering".to_string());
+    let (role, set_role) = signal("Lead".to_string());
+    let (notice, set_notice) = signal(Option::<Result<String, String>>::None);
+
+    let appoint = Action::new(move |(m, t, r): &(String, String, String)| {
+        let (m, t, r) = (m.clone(), t.clone(), r.clone());
+        async move { appoint_track_role(m, t, r).await }
+    });
+
+    Effect::new(move |_| {
+        if let Some(result) = appoint.value().get() {
+            set_notice.set(Some(match result {
+                Ok(()) => {
+                    set_member.set(String::new());
+                    Ok("Nomination enregistrée.".to_string())
+                }
+                Err(e) => Err(e.to_string()),
+            }));
+        }
+    });
+
+    let tracks = gamecloud_shared::roles::Track::ALL
+        .iter()
+        .map(|t| (t.as_str().to_string(), format!("{} {}", t.emoji(), t.as_str())))
+        .collect::<Vec<_>>();
+
+    view! {
+        <section class="gc-admin__panel">
+            <h2>"Nommer un responsable de track"</h2>
+            <p class="gc-admin__note">
+                "Responsable et co-responsable sont les deux seuls rôles de track
+                 qui ne s'obtiennent pas à l'XP. Les autres montent tout seuls."
+            </p>
+
+            {move || {
+                notice
+                    .get()
+                    .map(|r| match r {
+                        Ok(m) => view! { <div class="gc-banner gc-banner--ok">{m}</div> }.into_any(),
+                        Err(m) => {
+                            view! { <div class="gc-banner gc-banner--warning">{m}</div> }
+                                .into_any()
+                        }
+                    })
+            }}
+
+            <form
+                class="gc-form"
+                on:submit=move |ev| {
+                    ev.prevent_default();
+                    appoint.dispatch((member.get(), track.get(), role.get()));
+                }
+            >
+                <label class="gc-field">
+                    <span>"Membre (identifiant plateforme ou Discord)"</span>
+                    <input
+                        type="text"
+                        required=true
+                        prop:value=move || member.get()
+                        on:input=move |ev| set_member.set(event_target_value(&ev))
+                    />
+                </label>
+                <label class="gc-field">
+                    <span>"Track"</span>
+                    <select on:change=move |ev| set_track.set(event_target_value(&ev))>
+                        {tracks
+                            .into_iter()
+                            .map(|(id, label)| view! { <option value=id>{label}</option> })
+                            .collect_view()}
+                    </select>
+                </label>
+                <label class="gc-field">
+                    <span>"Rôle"</span>
+                    <select on:change=move |ev| set_role.set(event_target_value(&ev))>
+                        <option value="Lead">"Responsable"</option>
+                        <option value="CoLead">"Co-responsable"</option>
+                        <option value="Observer">"Retirer (remettre Observateur)"</option>
+                    </select>
+                </label>
+                <button
+                    class="gc-btn gc-btn--primary"
+                    type="submit"
+                    disabled=move || appoint.pending().get()
+                >
+                    {move || if appoint.pending().get() { "Envoi…" } else { "Nommer" }}
+                </button>
+            </form>
+        </section>
+    }
+}
+
 /// The audit trail.
 #[component]
 fn AuditPanel() -> impl IntoView {
@@ -290,6 +389,7 @@ pub fn AdminPage() -> impl IntoView {
         <section class="gc-admin">
             <h1>"Bureau"</h1>
             <GrantPanel />
+            <AppointPanel />
             <QuestPanel />
             <AuditPanel />
         </section>

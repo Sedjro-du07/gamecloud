@@ -5,13 +5,18 @@
 //! they can paste into, and — where the browser allows it — a live
 //! camera scan.
 //!
-//! The camera path uses the standard `BarcodeDetector` API, which is
-//! available in Chrome and Android WebView but not in Firefox or
-//! Safari. The manual field is therefore the primary interface, not a
-//! fallback: it always works, on every device, including a laptop
-//! reading a code off a projector.
+//! There is no in-page camera. The QR encodes a link to this page with
+//! the token in the query string, so a member points their phone's own
+//! camera app at the projector, taps the notification, and the claim
+//! runs on arrival. That works on every phone, needs no camera
+//! permission from the browser, and sidesteps `BarcodeDetector` — which
+//! Firefox and Safari do not implement.
+//!
+//! The paste field stays for the laptop case and for anyone whose
+//! camera app is being difficult.
 
 use leptos::prelude::*;
+use leptos_router::hooks::use_query_map;
 
 use crate::server_fns::scan_qr;
 
@@ -20,6 +25,7 @@ use crate::server_fns::scan_qr;
 pub fn ScanPage() -> impl IntoView {
     let (token, set_token) = signal(String::new());
     let (result, set_result) = signal(Option::<Result<String, String>>::None);
+    let query = use_query_map();
 
     let submit = Action::new(move |token: &String| {
         let token = token.clone();
@@ -40,12 +46,32 @@ pub fn ScanPage() -> impl IntoView {
         }
     });
 
+    // Arriving from a scanned QR: claim straight away rather than
+    // showing a pre-filled box and asking the member to press a button
+    // they have no reason to doubt.
+    Effect::new(move |already_ran: Option<bool>| {
+        if already_ran == Some(true) {
+            return true;
+        }
+        let Some(from_qr) = query.read().get("token") else {
+            return false;
+        };
+        let value = extract_token(&from_qr);
+        if value.is_empty() {
+            return false;
+        }
+        set_token.set(value.clone());
+        submit.dispatch(value);
+        true
+    });
+
     view! {
         <section class="gc-scan">
-            <h1>"Scanner un QR de présence"</h1>
+            <h1>"Présence"</h1>
             <p>
-                "Colle ici le code affiché à l'écran, ou scanne-le avec
-                 l'appareil photo de ton téléphone puis colle le lien."
+                "Vise le QR affiché à l'écran avec l'appareil photo de ton
+                 téléphone : le lien s'ouvre et la présence est enregistrée
+                 toute seule. Sinon, colle le code ci-dessous."
             </p>
 
             {move || {

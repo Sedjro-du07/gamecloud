@@ -134,6 +134,19 @@ fn SheetBody(sheet: SheetView) -> impl IntoView {
             <TrackList tracks=sheet.tracks />
             <BadgeGrid badges=sheet.badges />
             <XpHistory entries=sheet.recent_xp />
+
+            // "Export PDF" without a PDF library: every browser prints to
+            // PDF, and a print stylesheet gives a better result than a
+            // generated document would — real text, real links, and it
+            // stays correct when the page changes.
+            <p class="gc-profile__export">
+                <button class="gc-btn" onclick="window.print()">
+                    "Imprimer / enregistrer en PDF"
+                </button>
+                <span class="gc-profile__export-note">
+                    "De quoi joindre votre parcours à une candidature."
+                </span>
+            </p>
         </>
     }
 }

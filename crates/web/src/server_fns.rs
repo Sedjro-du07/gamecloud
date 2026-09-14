@@ -1262,3 +1262,133 @@ pub async fn open_quest(
         Ok(String::new())
     }
 }
+
+/// Credit somebody on a project.
+///
+/// # Errors
+/// Returns a `ServerFnError` on a missing right or unknown member.
+#[server(AddContributor, "/api")]
+pub async fn add_contributor(
+    project_id: String,
+    member: String,
+    track: String,
+    role: String,
+) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::CreateProject) {
+            return Err(ServerFnError::new("rang insuffisant"));
+        }
+
+        let id = project_id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("unknown project"))?;
+        let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("membre introuvable"))?;
+
+        crate::db::queries::projects::add_contributor(
+            state.pool(),
+            id,
+            target,
+            &track,
+            (!role.trim().is_empty()).then_some(role.trim()),
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (project_id, member, track, role);
+        Ok(())
+    }
+}
+
+/// Appoint somebody to a track role.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller may not appoint in that
+/// track, or the member is unknown.
+#[server(AppointTrackRole, "/api")]
+pub async fn appoint_track_role(
+    member: String,
+    track: String,
+    role: String,
+) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::{Action, Track, TrackRole};
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+
+        let parsed_track =
+            Track::parse(&track).ok_or_else(|| ServerFnError::new("track inconnue"))?;
+        let parsed_role = match role.as_str() {
+            "Lead" => TrackRole::Lead,
+            "CoLead" => TrackRole::CoLead,
+            "Observer" => TrackRole::Observer,
+            other => return Err(ServerFnError::new(format!("rôle inconnu : {other}"))),
+        };
+
+        // Naming a Lead is executive business; a CoLead may be named by
+        // the track's own Lead. The permission table already draws that
+        // line, so we just pick the matching action.
+        let action = if parsed_role == TrackRole::Lead {
+            Action::AppointTrackLead(parsed_track)
+        } else {
+            Action::AppointTrackCoLead(parsed_track)
+        };
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(action) {
+            return Err(ServerFnError::new(
+                "vous ne pouvez pas nommer sur cette track",
+            ));
+        }
+
+        let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?
+            .ok_or_else(|| ServerFnError::new("membre introuvable"))?;
+
+        crate::db::queries::tracks::set_role(state.pool(), target, parsed_track, parsed_role)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        crate::db::queries::audit::record(
+            state.pool(),
+            Some(user_id),
+            "admin.set_track_role",
+            Some("user"),
+            Some(target),
+            serde_json::json!({ "track": parsed_track.as_str(), "role": parsed_role.as_str() }),
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (member, track, role);
+        Ok(())
+    }
+}
