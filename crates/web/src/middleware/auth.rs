@@ -57,12 +57,19 @@ where
             .ok_or(WebError::Unauthorized)?
             .value()
             .to_string();
-        let user_id = jwt::verify_access(&app.config().jwt_secret, &token)?;
-        let record = users::find_by_id(app.pool(), user_id)
+        let claims = jwt::verify_access_claims(&app.config().jwt_secret, &token)?;
+        let record = users::find_by_id(app.pool(), claims.sub)
             .await?
             .ok_or(WebError::Unauthorized)?;
+
+        // A token issued before the member last signed out is dead, even
+        // though its signature and `exp` are still good.
+        if !jwt::is_session_live(claims.iat, record.sessions_valid_from) {
+            return Err(WebError::Unauthorized);
+        }
+
         Ok(Self {
-            id: user_id,
+            id: claims.sub,
             record,
         })
     }
@@ -96,14 +103,17 @@ where
         let Some(cookie) = jar.get(ACCESS_COOKIE) else {
             return Ok(None);
         };
-        let Ok(user_id) = jwt::verify_access(&app.config().jwt_secret, cookie.value()) else {
+        let Ok(claims) = jwt::verify_access_claims(&app.config().jwt_secret, cookie.value())
+        else {
             return Ok(None);
         };
-        let record = users::find_by_id(app.pool(), user_id).await?;
-        Ok(record.map(|record| Self {
-            id: user_id,
-            record,
-        }))
+        let record = users::find_by_id(app.pool(), claims.sub).await?;
+        Ok(record
+            .filter(|r| jwt::is_session_live(claims.iat, r.sessions_valid_from))
+            .map(|record| Self {
+                id: claims.sub,
+                record,
+            }))
     }
 }
 

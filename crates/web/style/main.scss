@@ -314,9 +314,19 @@ button { font: inherit; }
 }
 
 .gc-profile {
+  // Was `display:flex` with the default row direction, written when this
+  // page held a single child (the character card). It now holds the whole
+  // character sheet — banners, card, level bar, stats, tracks, badges,
+  // ledger — so a row laid all eight side by side.
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  gap: 2rem;
+  max-width: 760px;
+  margin: 0 auto;
   padding: 2rem 1rem;
+
+  // The card is the one element that should stay centred on its own line.
+  > .gc-card { align-self: center; }
 }
 
 // ===========================================================================
@@ -1145,3 +1155,79 @@ button { font: inherit; }
   font-size: 0.88rem;
   margin: 0 0 1rem;
 }
+
+// ===========================================================================
+// Page layout — shared skeleton
+// ===========================================================================
+//
+// Every page used to invent its own container, so widths and heading
+// styles drifted: some pages were capped at 34rem, others ran the full
+// 1200px of the shell, and three had no container at all. These rules
+// give them one consistent frame.
+
+.gc-leaderboard,
+.gc-quests,
+.gc-projects {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+// One page title treatment everywhere.
+.gc-leaderboard > h1,
+.gc-quests > h1,
+.gc-projects h1,
+.gc-scan > h1,
+.gc-onboard > h1,
+.gc-profile > h1 {
+  font-family: var(--gc-font-display);
+  font-size: 1.6rem;
+  letter-spacing: 0.02em;
+  margin: 0 0 1.25rem;
+}
+
+// Section headings inside a page sit a notch below the title.
+.gc-tracks > h2,
+.gc-badges h2,
+.gc-history h2,
+.gc-project-detail h2 {
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}
+
+// The shell's own spacing: give the content room to breathe on wide
+// screens and stop the nav from crowding the brand on narrow ones.
+.gc-hud__content {
+  padding: 2rem 1.5rem 4rem;
+}
+
+@media (max-width: 760px) {
+  .gc-hud__top {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+  }
+
+  .gc-hud__nav {
+    order: 3;
+    width: 100%;
+    gap: 1rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+    font-size: 0.9rem;
+    // The nav scrolls itself rather than widening the page.
+    -webkit-overflow-scrolling: touch;
+
+    a { white-space: nowrap; }
+  }
+
+  .gc-hud__auth { margin-left: 0; }
+
+  .gc-hud__content { padding: 1.25rem 1rem 3rem; }
+
+  .gc-profile { gap: 1.5rem; padding: 1rem 0; }
+
+  .gc-stats { grid-template-columns: 1fr 1fr; }
+}
+
+// The character card should not stretch to the column width.
+.gc-card { width: min(100%, 420px); }

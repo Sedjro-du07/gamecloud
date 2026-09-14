@@ -269,3 +269,20 @@ pub async fn email_is_taken(pool: &PgPool, email: &str, excluding: Uuid) -> WebR
     .await?;
     Ok(taken)
 }
+
+/// Invalidate every access token already issued to a member.
+///
+/// Access tokens are stateless, so the only way to retire one before its
+/// `exp` is to record when revocation happened and refuse anything older.
+/// [`crate::middleware::auth::CurrentUser`] enforces it on every request
+/// using the member row it already loads.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn revoke_sessions(pool: &PgPool, user_id: Uuid) -> WebResult<()> {
+    sqlx::query("UPDATE users SET sessions_valid_from = NOW() WHERE id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}

@@ -53,8 +53,11 @@ mod ctx {
         use_context::<AppState>()
     }
 
-    /// The caller's member id, if they present a valid access cookie.
-    pub fn current_user_id(state: &AppState) -> Option<Uuid> {
+    /// The caller's access-token claims, if they present a valid cookie.
+    ///
+    /// Signature and expiry only — revocation is checked against the
+    /// member row by [`current_user_id`], which has to load it anyway.
+    fn access_claims(state: &AppState) -> Option<jwt::AccessClaims> {
         let parts = use_context::<axum::http::request::Parts>()?;
         let header = parts.headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
         let prefix = format!("{ACCESS_COOKIE}=");
@@ -62,7 +65,20 @@ mod ctx {
             .split(';')
             .map(str::trim)
             .find_map(|kv| kv.strip_prefix(prefix.as_str()))?;
-        jwt::verify_access(&state.config().jwt_secret, token).ok()
+        jwt::verify_access_claims(&state.config().jwt_secret, token).ok()
+    }
+
+    /// The caller's member id, if their session is valid *and* live.
+    ///
+    /// The revocation check matters here as much as in the REST
+    /// extractor: without it, a signed-out member's profile page would
+    /// keep rendering their data server-side.
+    pub async fn current_user_id(state: &AppState) -> Option<Uuid> {
+        let claims = access_claims(state)?;
+        let record = crate::db::queries::users::find_by_id(state.pool(), claims.sub)
+            .await
+            .ok()??;
+        jwt::is_session_live(claims.iat, record.sessions_valid_from).then_some(claims.sub)
     }
 
     /// Format a timestamp the way the UI shows it.
@@ -114,7 +130,7 @@ pub async fn get_me() -> Result<Option<MeView>, ServerFnError> {
         let Some(state) = ctx::state() else {
             return Ok(None);
         };
-        let Some(user_id) = ctx::current_user_id(&state) else {
+        let Some(user_id) = ctx::current_user_id(&state).await else {
             return Ok(None);
         };
 
@@ -193,7 +209,7 @@ pub async fn get_sheet() -> Result<Option<SheetView>, ServerFnError> {
         let Some(state) = ctx::state() else {
             return Ok(None);
         };
-        let Some(user_id) = ctx::current_user_id(&state) else {
+        let Some(user_id) = ctx::current_user_id(&state).await else {
             return Ok(None);
         };
 
@@ -290,7 +306,7 @@ pub async fn get_leaderboard(
         let Some(state) = ctx::state() else {
             return Ok(LeaderboardView::default());
         };
-        let viewer = ctx::current_user_id(&state);
+        let viewer = ctx::current_user_id(&state).await;
         let err = |e: crate::error::WebError| ServerFnError::new(e.to_string());
 
         let (scope, label, rows) = match scope.as_str() {
@@ -381,7 +397,7 @@ pub async fn get_quests() -> Result<Vec<QuestItem>, ServerFnError> {
         let Some(state) = ctx::state() else {
             return Ok(Vec::new());
         };
-        let Some(user_id) = ctx::current_user_id(&state) else {
+        let Some(user_id) = ctx::current_user_id(&state).await else {
             return Ok(Vec::new());
         };
 
@@ -439,7 +455,7 @@ pub async fn get_track_options() -> Result<Vec<TrackOption>, ServerFnError> {
         use gamecloud_shared::roles::{specializations_for, Track};
 
         let joined: Vec<String> = match ctx::state() {
-            Some(state) => match ctx::current_user_id(&state) {
+            Some(state) => match ctx::current_user_id(&state).await {
                 Some(user_id) => crate::db::queries::tracks::list_for_user(state.pool(), user_id)
                     .await
                     .map_err(|e| ServerFnError::new(e.to_string()))?
@@ -483,7 +499,7 @@ pub async fn join_track(
     {
         let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
         let user_id =
-            ctx::current_user_id(&state).ok_or_else(|| ServerFnError::new("not signed in"))?;
+            ctx::current_user_id(&state).await.ok_or_else(|| ServerFnError::new("not signed in"))?;
 
         let spec = specialization.filter(|s| !s.trim().is_empty());
         crate::db::queries::tracks::join(
@@ -637,7 +653,7 @@ pub async fn scan_qr(token: String) -> Result<String, ServerFnError> {
     {
         let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
         let user_id =
-            ctx::current_user_id(&state).ok_or_else(|| ServerFnError::new("not signed in"))?;
+            ctx::current_user_id(&state).await.ok_or_else(|| ServerFnError::new("not signed in"))?;
 
         crate::services::jwt::verify_qr(&state.config().jwt_secret, &token)
             .map_err(|e| ServerFnError::new(e.to_string()))?;

@@ -370,14 +370,36 @@ async fn refresh(State(state): State<AppState>, jar: CookieJar) -> WebResult<Res
 // (handy for browser links). Always redirects to home.
 // ---------------------------------------------------------------------------
 
-async fn logout(State(state): State<AppState>, jar: CookieJar) -> WebResult<Response> {
+async fn logout(
+    State(state): State<AppState>,
+    user: Option<CurrentUser>,
+    jar: CookieJar,
+) -> WebResult<Response> {
     if let Some(c) = jar.get(REFRESH_COOKIE) {
         let hash = tokens::hash(c.value());
         let _ = auth_q::revoke_refresh_token(state.pool(), &hash).await;
     }
+
+    // Revoke every access token already issued to this member. Without
+    // this, logout only clears the browser's copy: the JWT itself stays
+    // valid until `exp`, so a restored cookie keeps working for an hour.
+    if let Some(user) = user {
+        let _ = auth_q::revoke_sessions(state.pool(), user.id).await;
+    }
+
+    // A cookie is identified by (name, domain, path). The removal cookie
+    // must therefore carry the *same* path it was set with, or the
+    // browser keeps the original — which is exactly what used to happen:
+    // the session cookie was set with `Path=/` and removed with no path
+    // at all, so it survived and the member stayed signed in.
     let jar = jar
-        .remove(Cookie::from(ACCESS_COOKIE))
-        .remove(Cookie::from(REFRESH_COOKIE));
+        .remove(Cookie::build((ACCESS_COOKIE, "")).path("/").build())
+        .remove(
+            Cookie::build((REFRESH_COOKIE, ""))
+                .path("/api/auth")
+                .build(),
+        );
+
     Ok((jar, Redirect::to("/")).into_response())
 }
 

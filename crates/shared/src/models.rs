@@ -65,6 +65,9 @@ pub struct UserRecord {
     pub current_title: Option<String>,
     /// Number of consecutive active days.
     pub streak_days: i32,
+    /// Access tokens issued before this instant are refused. Set when the
+    /// member signs out; `None` means nothing has been revoked.
+    pub sessions_valid_from: Option<Timestamp>,
     /// Last activity timestamp.
     pub last_activity_at: Option<Timestamp>,
     /// Account creation timestamp.

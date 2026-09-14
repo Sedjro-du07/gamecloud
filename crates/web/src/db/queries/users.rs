@@ -15,7 +15,7 @@ use crate::error::{WebError, WebResult};
 /// Propagates database errors.
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> WebResult<Option<UserRecord>> {
     let row = sqlx::query_as::<_, UserRecord>(
-        "SELECT id, discord_id, github_username, email, email_verified, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, last_activity_at, created_at FROM users WHERE id = $1",
+        "SELECT id, discord_id, github_username, email, email_verified, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, sessions_valid_from, last_activity_at, created_at FROM users WHERE id = $1",
     )
         .bind(id)
         .fetch_optional(pool)
@@ -29,7 +29,7 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> WebResult<Option<UserRecord>
 /// Propagates database errors.
 pub async fn find_by_discord_id(pool: &PgPool, discord_id: &str) -> WebResult<Option<UserRecord>> {
     let row = sqlx::query_as::<_, UserRecord>(
-        "SELECT id, discord_id, github_username, email, email_verified, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, last_activity_at, created_at FROM users WHERE discord_id = $1",
+        "SELECT id, discord_id, github_username, email, email_verified, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, sessions_valid_from, last_activity_at, created_at FROM users WHERE discord_id = $1",
     )
         .bind(discord_id)
         .fetch_optional(pool)
@@ -55,7 +55,7 @@ pub async fn upsert_from_discord(
             SET avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url)
         RETURNING id, discord_id, github_username, email, email_verified, avatar_url,
                   avatar_custom_url, xp_total, level, global_rank, bureau_role,
-                  current_title, streak_days, last_activity_at, created_at
+                  current_title, streak_days, sessions_valid_from, last_activity_at, created_at
         "#,
     )
     .bind(discord_id)
@@ -193,7 +193,7 @@ pub async fn update_profile(
          WHERE id = $1
         RETURNING id, discord_id, github_username, email, email_verified, avatar_url,
                   avatar_custom_url, xp_total, level, global_rank, bureau_role,
-                  current_title, streak_days, last_activity_at, created_at
+                  current_title, streak_days, sessions_valid_from, last_activity_at, created_at
         "#,
     )
     .bind(user_id)

@@ -89,11 +89,35 @@ pub fn issue_access(
 /// # Errors
 /// `Unauthorized` for any signature, audience, or expiration failure.
 pub fn verify_access(secret: &[u8], token: &str) -> WebResult<Uuid> {
+    Ok(verify_access_claims(secret, token)?.sub)
+}
+
+/// Verify an access token and return its full claim set.
+///
+/// Callers that enforce revocation need `iat`: an access token is
+/// stateless, so the only way to retire one before `exp` is to compare
+/// when it was issued against the member's revocation epoch.
+///
+/// # Errors
+/// `Unauthorized` for any signature, audience, or expiration failure.
+pub fn verify_access_claims(secret: &[u8], token: &str) -> WebResult<AccessClaims> {
     let mut validation = Validation::default();
     validation.set_audience(&[AUD_ACCESS]);
     let data = decode::<AccessClaims>(token, &DecodingKey::from_secret(secret), &validation)
         .map_err(|_| WebError::Unauthorized)?;
-    Ok(data.claims.sub)
+    Ok(data.claims)
+}
+
+/// Whether a token issued at `iat` is still honoured for a member whose
+/// revocation epoch is `valid_from`.
+///
+/// `None` means the member has never signed out, so nothing is revoked.
+#[must_use]
+pub fn is_session_live(iat: i64, valid_from: Option<DateTime<Utc>>) -> bool {
+    match valid_from {
+        Some(cutoff) => iat >= cutoff.timestamp(),
+        None => true,
+    }
 }
 
 /// Issue a QR token.
@@ -136,4 +160,51 @@ pub fn verify_qr(secret: &[u8], token: &str) -> WebResult<QrClaims> {
             WebError::Domain(gamecloud_shared::DomainError::InvalidQrToken)
         })?;
     Ok(data.claims)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECRET: &[u8] = b"a-test-secret-long-enough-for-hs256-xxxx";
+
+    #[test]
+    fn an_issued_token_verifies() {
+        let id = Uuid::from_u128(42);
+        let (token, _) = issue_access(SECRET, id, 3600).unwrap();
+        assert_eq!(verify_access(SECRET, &token).unwrap(), id);
+    }
+
+    #[test]
+    fn a_token_signed_with_another_secret_is_refused() {
+        let (token, _) = issue_access(SECRET, Uuid::nil(), 3600).unwrap();
+        assert!(verify_access(b"a-completely-different-secret-value--", &token).is_err());
+    }
+
+    #[test]
+    fn a_qr_token_is_not_an_access_token() {
+        // The audience claim is what keeps the two families apart.
+        let (qr, _) = issue_qr(SECRET, Uuid::nil(), "Session", "Session", 25, 3600).unwrap();
+        assert!(verify_access(SECRET, &qr).is_err());
+    }
+
+    #[test]
+    fn a_session_with_no_revocation_is_live() {
+        assert!(is_session_live(1_000, None));
+    }
+
+    #[test]
+    fn a_token_issued_before_the_cutoff_is_dead() {
+        let cutoff = DateTime::from_timestamp(2_000, 0).unwrap();
+        assert!(!is_session_live(1_999, Some(cutoff)));
+    }
+
+    #[test]
+    fn a_token_issued_at_or_after_the_cutoff_is_live() {
+        // A member who signs out and straight back in must not be locked
+        // out by their own revocation.
+        let cutoff = DateTime::from_timestamp(2_000, 0).unwrap();
+        assert!(is_session_live(2_000, Some(cutoff)));
+        assert!(is_session_live(2_001, Some(cutoff)));
+    }
 }
