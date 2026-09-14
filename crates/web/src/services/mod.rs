@@ -6,6 +6,7 @@
 pub mod email_validator;
 pub mod jwt;
 pub mod mailer;
+pub mod notifications;
 pub mod otp;
 pub mod password;
 pub mod tokens;

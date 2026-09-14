@@ -239,6 +239,55 @@ impl BureauRole {
         }
     }
 
+    /// Every bureau role.
+    pub const ALL: [BureauRole; 16] = [
+        BureauRole::President,
+        BureauRole::VicePresident,
+        BureauRole::Secretary,
+        BureauRole::Treasurer,
+        BureauRole::VpTech,
+        BureauRole::VpCommunity,
+        BureauRole::EventManager,
+        BureauRole::AssistantEventManager,
+        BureauRole::Archiviste,
+        BureauRole::AssistantArchiviste,
+        BureauRole::CommunityManager,
+        BureauRole::SocialMediaManager,
+        BureauRole::Moderator,
+        BureauRole::AssistantModerator,
+        BureauRole::RecruitmentOfficer,
+        BureauRole::PrManager,
+    ];
+
+    /// Stable string identifier, as stored in `users.bureau_role`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            BureauRole::President => "President",
+            BureauRole::VicePresident => "VicePresident",
+            BureauRole::Secretary => "Secretary",
+            BureauRole::Treasurer => "Treasurer",
+            BureauRole::VpTech => "VpTech",
+            BureauRole::VpCommunity => "VpCommunity",
+            BureauRole::EventManager => "EventManager",
+            BureauRole::AssistantEventManager => "AssistantEventManager",
+            BureauRole::Archiviste => "Archiviste",
+            BureauRole::AssistantArchiviste => "AssistantArchiviste",
+            BureauRole::CommunityManager => "CommunityManager",
+            BureauRole::SocialMediaManager => "SocialMediaManager",
+            BureauRole::Moderator => "Moderator",
+            BureauRole::AssistantModerator => "AssistantModerator",
+            BureauRole::RecruitmentOfficer => "RecruitmentOfficer",
+            BureauRole::PrManager => "PrManager",
+        }
+    }
+
+    /// Parse from the canonical string identifier.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|r| r.as_str() == s)
+    }
+
     /// Whether this role belongs to the executive tier (President / VP /
     /// Treasurer / Secretary). Some destructive operations require it.
     #[must_use]
@@ -347,6 +396,33 @@ impl GlobalRank {
             GlobalRank::Legend => "#ffd700",
             GlobalRank::Myth => "#ff003c",
         }
+    }
+
+    /// All ranks, lowest first.
+    pub const ALL: [GlobalRank; 10] = [
+        GlobalRank::Pending,
+        GlobalRank::Visitor,
+        GlobalRank::Initiate,
+        GlobalRank::Apprentice,
+        GlobalRank::JuniorDev,
+        GlobalRank::SeniorDev,
+        GlobalRank::Expert,
+        GlobalRank::Veteran,
+        GlobalRank::Legend,
+        GlobalRank::Myth,
+    ];
+
+    /// Parse from the canonical string identifier, falling back to
+    /// `Pending` for anything unrecognised. Stored ranks are constrained
+    /// by a CHECK, so an unknown value means corrupt data — treating it
+    /// as the least-privileged rank fails closed.
+    #[must_use]
+    pub fn parse(s: &str) -> Self {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|r| r.as_str() == s)
+            .unwrap_or(GlobalRank::Pending)
     }
 
     /// Stable string identifier (matches the value stored in

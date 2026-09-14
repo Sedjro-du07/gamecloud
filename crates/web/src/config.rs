@@ -81,6 +81,22 @@ pub struct Config {
     /// Supabase service-role key. Server-side only; never sent to the
     /// client. Optional in dev (see above).
     pub supabase_service_key: Option<String>,
+
+    /// Discord channel that receives platform announcements (rank-ups,
+    /// badges, releases). When absent, announcements are still written
+    /// to the outbox but the bot has nowhere to post them, so the
+    /// enqueue step is skipped entirely.
+    pub announce_channel_id: Option<u64>,
+
+    /// Requests permitted per IP per minute on authentication and other
+    /// sensitive endpoints.
+    pub rate_limit_sensitive_per_min: u32,
+    /// Requests permitted per IP per minute on everything else.
+    pub rate_limit_default_per_min: u32,
+    /// Whether `X-Forwarded-For` may be trusted to identify the client.
+    /// Only enable when a reverse proxy you control overwrites the
+    /// header; otherwise callers can spoof it to dodge the limiter.
+    pub trust_forwarded_for: bool,
 }
 
 impl Config {
@@ -102,16 +118,7 @@ impl Config {
 
             database_url: required("DATABASE_URL")?,
 
-            jwt_secret: required("JWT_SECRET").and_then(|s| {
-                if s.len() < 32 {
-                    Err(ConfigError::InvalidVar {
-                        var: "JWT_SECRET",
-                        message: "must be at least 32 bytes".into(),
-                    })
-                } else {
-                    Ok(s.into_bytes())
-                }
-            })?,
+            jwt_secret: required("JWT_SECRET").and_then(|s| secret("JWT_SECRET", s))?,
             jwt_access_ttl_seconds: parse_or("JWT_ACCESS_TTL", 3600)?,
             jwt_refresh_ttl_seconds: parse_or("JWT_REFRESH_TTL", 604_800)?,
             jwt_qr_ttl_seconds: parse_or("JWT_QR_TTL", 7200)?,
@@ -120,9 +127,13 @@ impl Config {
             discord_client_secret: required("DISCORD_CLIENT_SECRET")?,
             discord_redirect_uri: required("DISCORD_REDIRECT_URI")?,
 
-            github_webhook_secret: optional("GITHUB_WEBHOOK_SECRET").map(String::into_bytes),
+            github_webhook_secret: optional("GITHUB_WEBHOOK_SECRET")
+                .map(|s| secret("GITHUB_WEBHOOK_SECRET", s))
+                .transpose()?,
 
-            draftbot_api_key: required("DRAFTBOT_API_KEY")?,
+            draftbot_api_key: required("DRAFTBOT_API_KEY")
+                .and_then(|s| secret("DRAFTBOT_API_KEY", s))
+                .map(|b| String::from_utf8(b).unwrap_or_default())?,
 
             smtp_host: required("SMTP_HOST")?,
             smtp_port: parse_or("SMTP_PORT", 587_u16)?,
@@ -132,8 +143,61 @@ impl Config {
 
             supabase_url: optional("SUPABASE_URL"),
             supabase_service_key: optional("SUPABASE_SERVICE_KEY"),
+
+            announce_channel_id: optional("DISCORD_ANNOUNCE_CHANNEL_ID")
+                .map(|v| {
+                    v.parse::<u64>().map_err(|e| ConfigError::InvalidVar {
+                        var: "DISCORD_ANNOUNCE_CHANNEL_ID",
+                        message: e.to_string(),
+                    })
+                })
+                .transpose()?,
+
+            rate_limit_sensitive_per_min: parse_or("RATE_LIMIT_SENSITIVE_PER_MIN", 10_u32)?,
+            rate_limit_default_per_min: parse_or("RATE_LIMIT_DEFAULT_PER_MIN", 120_u32)?,
+            trust_forwarded_for: get("TRUST_FORWARDED_FOR").is_ok_and(|v| v == "true"),
         })
     }
+}
+
+/// Placeholder prefixes shipped in `.env.example`. A secret that still
+/// starts with one of these has not been generated, and would leave the
+/// deployment trivially forgeable — so we refuse to boot rather than
+/// run with a guessable JWT signing key.
+const PLACEHOLDER_PREFIXES: [&str; 6] = [
+    "change",
+    "CHANGE",
+    "your-",
+    "YOUR_",
+    "replace",
+    "xxxxx",
+];
+
+/// Validate a secret: long enough to resist offline attack, and not one
+/// of the documented placeholders.
+///
+/// # Errors
+/// `InvalidVar` when the value is too short or still a placeholder.
+fn secret(var: &'static str, value: String) -> Result<Vec<u8>, ConfigError> {
+    if value.len() < 32 {
+        return Err(ConfigError::InvalidVar {
+            var,
+            message: "must be at least 32 bytes — generate one with `openssl rand -base64 48`"
+                .into(),
+        });
+    }
+    if PLACEHOLDER_PREFIXES
+        .iter()
+        .any(|p| value.starts_with(p))
+    {
+        return Err(ConfigError::InvalidVar {
+            var,
+            message:
+                "still set to the placeholder from .env.example — generate a real value with `openssl rand -base64 48`"
+                    .into(),
+        });
+    }
+    Ok(value.into_bytes())
 }
 
 fn get(key: &'static str) -> Result<String, ConfigError> {
@@ -180,5 +244,44 @@ where
             var: key,
             message: "value is not valid UTF-8".into(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GOOD: &str = "8qP1x4tZ0nR7vK2mB5cY9wS3jL6hD0fA1gE4uI7oQ2rT5yV8";
+
+    #[test]
+    fn accepts_a_generated_secret() {
+        assert!(secret("JWT_SECRET", GOOD.to_string()).is_ok());
+    }
+
+    #[test]
+    fn rejects_short_secrets() {
+        let err = secret("JWT_SECRET", "too-short".to_string()).unwrap_err();
+        assert!(err.to_string().contains("at least 32 bytes"));
+    }
+
+    #[test]
+    fn rejects_the_env_example_placeholder() {
+        // Long enough to pass the length gate — this is exactly the trap
+        // the audit found in the checked-in .env.
+        let placeholder = "change-me-to-a-long-random-string-please-1234567890";
+        assert!(placeholder.len() >= 32);
+        let err = secret("JWT_SECRET", placeholder.to_string()).unwrap_err();
+        assert!(err.to_string().contains("placeholder"));
+    }
+
+    #[test]
+    fn rejects_every_documented_placeholder_prefix() {
+        for prefix in PLACEHOLDER_PREFIXES {
+            let value = format!("{prefix}{}", "0".repeat(64));
+            assert!(
+                secret("DRAFTBOT_API_KEY", value).is_err(),
+                "prefix {prefix} slipped through"
+            );
+        }
     }
 }

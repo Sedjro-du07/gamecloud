@@ -5,7 +5,7 @@ use std::sync::Arc;
 use leptos::config::LeptosOptions;
 use sqlx::PgPool;
 
-use crate::{config::Config, services::mailer::Mailer};
+use crate::{config::Config, middleware::rate_limit::RateLimiter, services::mailer::Mailer};
 
 /// State held by the Axum router. Cheap to clone (it's `Arc`-based).
 #[derive(Clone)]
@@ -18,6 +18,7 @@ struct Inner {
     pub pool: PgPool,
     pub mailer: Mailer,
     pub leptos_options: LeptosOptions,
+    pub rate_limiter: RateLimiter,
 }
 
 impl AppState {
@@ -30,6 +31,7 @@ impl AppState {
                 pool,
                 mailer,
                 leptos_options,
+                rate_limiter: RateLimiter::default(),
             }),
         }
     }
@@ -56,5 +58,17 @@ impl AppState {
     #[must_use]
     pub fn leptos_options(&self) -> &LeptosOptions {
         &self.inner.leptos_options
+    }
+
+    /// Shared per-IP rate limiter.
+    #[must_use]
+    pub fn rate_limiter(&self) -> &RateLimiter {
+        &self.inner.rate_limiter
+    }
+
+    /// Discord channel that receives platform announcements.
+    #[must_use]
+    pub fn announce_channel(&self) -> Option<u64> {
+        self.inner.config.announce_channel_id
     }
 }

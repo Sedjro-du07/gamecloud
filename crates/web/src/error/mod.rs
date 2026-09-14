@@ -86,7 +86,18 @@ impl WebError {
             | WebError::Domain(DomainError::InvalidProjectTransition { .. })
             | WebError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
 
-            WebError::Domain(DomainError::EmailNotVerified) => StatusCode::FORBIDDEN,
+            WebError::Domain(DomainError::EmailNotVerified)
+            | WebError::Domain(DomainError::EmailAlreadyVerified) => StatusCode::FORBIDDEN,
+
+            WebError::Domain(DomainError::EmailAlreadyTaken)
+            | WebError::Domain(DomainError::QrAlreadyClaimed)
+            | WebError::Domain(DomainError::AlreadyVoted)
+            | WebError::Domain(DomainError::AlreadyInTrack) => StatusCode::CONFLICT,
+
+            WebError::Domain(DomainError::QrCapacityReached)
+            | WebError::Domain(DomainError::QuestNotActive) => StatusCode::GONE,
+
+            WebError::Domain(DomainError::OtpCooldown) => StatusCode::TOO_MANY_REQUESTS,
             WebError::Domain(DomainError::Forbidden(_)) | WebError::Forbidden => {
                 StatusCode::FORBIDDEN
             }
@@ -108,6 +119,14 @@ impl WebError {
         match self {
             WebError::Domain(DomainError::InvalidEpitechEmail(_)) => "invalid_email",
             WebError::Domain(DomainError::EmailNotVerified) => "email_not_verified",
+            WebError::Domain(DomainError::EmailAlreadyVerified) => "email_already_verified",
+            WebError::Domain(DomainError::EmailAlreadyTaken) => "email_taken",
+            WebError::Domain(DomainError::QrAlreadyClaimed) => "qr_already_claimed",
+            WebError::Domain(DomainError::QrCapacityReached) => "qr_capacity_reached",
+            WebError::Domain(DomainError::OtpCooldown) => "otp_cooldown",
+            WebError::Domain(DomainError::QuestNotActive) => "quest_not_active",
+            WebError::Domain(DomainError::AlreadyVoted) => "already_voted",
+            WebError::Domain(DomainError::AlreadyInTrack) => "already_in_track",
             WebError::Domain(DomainError::Forbidden(_)) | WebError::Forbidden => "forbidden",
             WebError::Domain(DomainError::UnknownTrack(_)) => "unknown_track",
             WebError::Domain(DomainError::UnknownSpecialization { .. }) => "unknown_specialization",

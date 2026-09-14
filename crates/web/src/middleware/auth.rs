@@ -14,7 +14,7 @@
 //! signature directly — the extractor implementation handles that case.
 
 use axum::{
-    extract::{FromRef, FromRequestParts},
+    extract::{FromRef, FromRequestParts, OptionalFromRequestParts},
     http::request::Parts,
 };
 use axum_extra::extract::CookieJar;
@@ -65,6 +65,45 @@ where
             id: user_id,
             record,
         })
+    }
+}
+
+/// Optionally-authenticated variant.
+///
+/// The module documentation always claimed a handler could take
+/// `Option<CurrentUser>` for routes that are public but richer when
+/// signed in — but axum 0.8 requires an explicit
+/// `OptionalFromRequestParts` implementation, and there was none, so
+/// any handler that tried it failed to compile.
+///
+/// A missing or invalid cookie yields `None` rather than an error. A
+/// *database* failure while resolving a valid token is still an error:
+/// silently downgrading a signed-in member to anonymous because the
+/// pool hiccupped would hide an outage behind a permissions puzzle.
+impl<S> OptionalFromRequestParts<S> for CurrentUser
+where
+    AppState: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = WebError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Option<Self>, Self::Rejection> {
+        let app: AppState = AppState::from_ref(state);
+        let jar = CookieJar::from_headers(&parts.headers);
+        let Some(cookie) = jar.get(ACCESS_COOKIE) else {
+            return Ok(None);
+        };
+        let Ok(user_id) = jwt::verify_access(&app.config().jwt_secret, cookie.value()) else {
+            return Ok(None);
+        };
+        let record = users::find_by_id(app.pool(), user_id).await?;
+        Ok(record.map(|record| Self {
+            id: user_id,
+            record,
+        }))
     }
 }
 

@@ -20,7 +20,7 @@
 use axum::{
     body::Bytes,
     extract::{Query, Request, State},
-    http::{header, StatusCode},
+    http::header,
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Json, Router,
@@ -30,7 +30,7 @@ use axum_extra::extract::{
     CookieJar,
 };
 use chrono::{Duration, Utc};
-use gamecloud_shared::models::UserRecord;
+use gamecloud_shared::{models::UserRecord, DomainError};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -219,16 +219,59 @@ fn decode_body<T: serde::de::DeserializeOwned>(
     }
 }
 
+/// How long a member must wait before requesting another code.
+const OTP_RESEND_COOLDOWN_SECONDS: i64 = 60;
+
+/// How many codes a member may request before the flow locks.
+const OTP_MAX_RESENDS: i32 = 5;
+
+/// Total failed guesses tolerated across every code issued to a member.
+///
+/// The pre-audit code checked `attempts` on the *current* code, and
+/// `upsert_otp` reset that to zero on every resend — so five guesses,
+/// request a new code, five more, forever. Enforcing against the
+/// cumulative counter is what actually closes the brute force.
+const OTP_MAX_CUMULATIVE_ATTEMPTS: i32 = 10;
+
 async fn submit_email(
     State(state): State<AppState>,
     user: CurrentUser,
     request: Request,
 ) -> WebResult<Response> {
+    // A verified member cannot re-run this flow to swap their identity.
+    // `Action::SubmitEpitechEmail` is defined as `rank == Pending`, but
+    // the handler never consulted it, so any signed-in member could
+    // re-verify against a different address at will.
+    if user.record.email_verified {
+        return Err(WebError::Domain(DomainError::EmailAlreadyVerified));
+    }
+
     let is_form = is_form_request(&request);
     let bytes = read_body(request).await?;
     let body: SubmitEmailBody = decode_body(is_form, &bytes)?;
 
     let canonical = email_validator::validate(&body.email)?;
+
+    // Refuse an address somebody else already verified, before sending
+    // a code to it — otherwise this endpoint doubles as a way to mail
+    // arbitrary Epitech addresses.
+    if auth_q::email_is_taken(state.pool(), &canonical, user.id).await? {
+        return Err(WebError::Domain(DomainError::EmailAlreadyTaken));
+    }
+
+    if let Some(existing) = auth_q::fetch_otp(state.pool(), user.id).await? {
+        if existing.cumulative_attempts >= OTP_MAX_CUMULATIVE_ATTEMPTS {
+            return Err(WebError::RateLimited);
+        }
+        if existing.resend_count >= OTP_MAX_RESENDS {
+            return Err(WebError::RateLimited);
+        }
+        let elapsed = (Utc::now() - existing.last_sent_at).num_seconds();
+        if elapsed < OTP_RESEND_COOLDOWN_SECONDS {
+            return Err(WebError::Domain(DomainError::OtpCooldown));
+        }
+    }
+
     let code = otp::generate();
     let hash = password::hash(&code)?;
     let expires = Utc::now() + Duration::minutes(15);
@@ -268,7 +311,8 @@ async fn verify_otp(
     if otp_row.expires_at <= Utc::now() {
         return Err(WebError::Unauthorized);
     }
-    if otp_row.attempts >= 5 {
+    // Enforced against the cumulative counter, which survives resends.
+    if otp_row.cumulative_attempts >= OTP_MAX_CUMULATIVE_ATTEMPTS {
         return Err(WebError::RateLimited);
     }
     if !password::verify(&otp_row.code_hash, &body.code)? {
@@ -428,8 +472,3 @@ fn urlencoding_minimal(input: &str) -> String {
     }
     out
 }
-
-// Anchor StatusCode import (used by future endpoints; kept here so we
-// don't lose the import on refactor).
-#[allow(dead_code)]
-const _STATUS_ANCHOR: StatusCode = StatusCode::OK;

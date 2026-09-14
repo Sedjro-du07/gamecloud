@@ -10,7 +10,14 @@ use crate::error::{WebError, WebResult};
 // Email OTPs
 // ===========================================================================
 
-/// Persist a new OTP for the given user, replacing any existing one.
+/// Persist a new OTP for the given user.
+///
+/// **The failed-attempt counter survives the replacement.** The
+/// pre-audit version deleted the row and inserted a fresh one with
+/// `attempts = 0`, so the five-attempt lockout could be reset at will
+/// by re-requesting a code — making a six-digit secret guessable in
+/// batches of five. `cumulative_attempts` is what the handler actually
+/// enforces against, and it only ever grows.
 ///
 /// # Errors
 /// Propagates database errors.
@@ -21,24 +28,27 @@ pub async fn upsert_otp(
     code_hash: &str,
     expires_at: DateTime<Utc>,
 ) -> WebResult<()> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM email_otps WHERE user_id = $1")
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await?;
     sqlx::query(
         r#"
-        INSERT INTO email_otps (user_id, email, code_hash, expires_at)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO email_otps (user_id, email, code_hash, expires_at,
+                                attempts, cumulative_attempts, resend_count, last_sent_at)
+        VALUES ($1, $2, $3, $4, 0, 0, 0, NOW())
+        ON CONFLICT (user_id) DO UPDATE
+            SET email               = EXCLUDED.email,
+                code_hash           = EXCLUDED.code_hash,
+                expires_at          = EXCLUDED.expires_at,
+                attempts            = 0,
+                cumulative_attempts = email_otps.cumulative_attempts,
+                resend_count        = email_otps.resend_count + 1,
+                last_sent_at        = NOW()
         "#,
     )
     .bind(user_id)
     .bind(email)
     .bind(code_hash)
     .bind(expires_at)
-    .execute(&mut *tx)
+    .execute(pool)
     .await?;
-    tx.commit().await?;
     Ok(())
 }
 
@@ -49,8 +59,15 @@ pub struct OtpRow {
     pub code_hash: String,
     /// Expiration time.
     pub expires_at: DateTime<Utc>,
-    /// Number of failed attempts so far.
+    /// Failed attempts against the *current* code.
     pub attempts: i32,
+    /// Failed attempts across every code ever issued to this user.
+    /// This is the number the lockout is enforced against.
+    pub cumulative_attempts: i32,
+    /// How many times a new code has been requested.
+    pub resend_count: i32,
+    /// When the current code was sent.
+    pub last_sent_at: DateTime<Utc>,
     /// Email being verified.
     pub email: String,
 }
@@ -61,7 +78,12 @@ pub struct OtpRow {
 /// Propagates database errors.
 pub async fn fetch_otp(pool: &PgPool, user_id: Uuid) -> WebResult<Option<OtpRow>> {
     let row = sqlx::query_as::<_, OtpRow>(
-        "SELECT code_hash, expires_at, attempts, email FROM email_otps WHERE user_id = $1",
+        r#"
+        SELECT code_hash, expires_at, attempts, cumulative_attempts,
+               resend_count, last_sent_at, email
+          FROM email_otps
+         WHERE user_id = $1
+        "#,
     )
     .bind(user_id)
     .fetch_optional(pool)
@@ -69,29 +91,56 @@ pub async fn fetch_otp(pool: &PgPool, user_id: Uuid) -> WebResult<Option<OtpRow>
     Ok(row)
 }
 
-/// Increment the attempts counter for the user's outstanding OTP.
+/// Increment both attempt counters for the user's outstanding OTP.
 ///
 /// # Errors
 /// Propagates database errors.
 pub async fn increment_otp_attempts(pool: &PgPool, user_id: Uuid) -> WebResult<()> {
-    sqlx::query("UPDATE email_otps SET attempts = attempts + 1 WHERE user_id = $1")
-        .bind(user_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        r#"
+        UPDATE email_otps
+           SET attempts            = attempts + 1,
+               cumulative_attempts = cumulative_attempts + 1
+         WHERE user_id = $1
+        "#,
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
 /// Promote a user from `Pending` (or `EmailSubmitted`) to `Visitor`,
 /// in a single transaction with the OTP deletion.
 ///
+/// `users.email` is `CITEXT UNIQUE`, so an address already verified by
+/// somebody else would surface as an opaque 500. We check first and
+/// return a precise `EmailAlreadyTaken` conflict instead.
+///
 /// # Errors
-/// Propagates database errors.
+/// `EmailAlreadyTaken` when another account holds the address;
+/// otherwise propagates database errors.
 pub async fn finalize_email_verification(
     pool: &PgPool,
     user_id: Uuid,
     email: &str,
 ) -> WebResult<()> {
     let mut tx = pool.begin().await?;
+
+    let taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE email = $1 AND id <> $2)",
+    )
+    .bind(email)
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    if taken {
+        return Err(WebError::Domain(
+            gamecloud_shared::DomainError::EmailAlreadyTaken,
+        ));
+    }
+
     sqlx::query(
         r#"
         UPDATE users
@@ -201,4 +250,22 @@ pub async fn revoke_all_for_user(pool: &PgPool, user_id: Uuid) -> WebResult<()> 
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Whether another account already holds this verified address.
+///
+/// Checked before an OTP is sent, so the endpoint cannot be used to
+/// mail a code to an address the caller has no claim on.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn email_is_taken(pool: &PgPool, email: &str, excluding: Uuid) -> WebResult<bool> {
+    let taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE email = $1 AND id <> $2)",
+    )
+    .bind(email)
+    .bind(excluding)
+    .fetch_one(pool)
+    .await?;
+    Ok(taken)
 }

@@ -1,16 +1,24 @@
-//! QR code routes.
+//! QR attendance routes.
 //!
-//! - `POST /api/qr/generate` — Bureau / event managers create a QR
-//!   token and receive `{ token, png_base64 }`.
-//! - `POST /api/qr/scan`     — verified members submit a token to
-//!   record attendance.
+//! - `POST /api/qr/generate`  — Bureau / event managers mint a token.
+//! - `POST /api/qr/scan`      — verified members claim it.
+//! - `GET  /api/qr/:id/sheet` — who has scanned a given token.
+//! - `GET  /api/qr/history`   — the caller's own attendance history.
+//!
+//! A token is valid for every member until it expires (or hits an
+//! optional capacity), and each member may claim it once. Before the
+//! audit a single `is_used` flag was flipped by the first scan, so one
+//! person got the XP for a session and everybody else got a 410.
 
-use axum::{extract::State, routing::post, Json, Router};
-use base64::Engine;
-use chrono::{Duration, Utc};
+use axum::{
+    extract::{Path, State},
+    routing::{get, post},
+    Json, Router,
+};
 use gamecloud_shared::roles::Action;
 use qrcode::{render::svg, QrCode};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     db::queries::{qr as qr_q, users},
@@ -25,7 +33,16 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/generate", post(generate))
         .route("/scan", post(scan))
+        .route("/history", get(history))
+        .route("/{id}/sheet", get(sheet))
 }
+
+// ---------------------------------------------------------------------------
+// Generate
+// ---------------------------------------------------------------------------
+
+/// Longest life a QR token may be given, in seconds.
+const MAX_TTL_SECONDS: u64 = 86_400;
 
 #[derive(Deserialize)]
 struct GenerateBody {
@@ -34,13 +51,21 @@ struct GenerateBody {
     xp_value: i32,
     /// TTL in seconds; capped server-side at 24h.
     ttl_seconds: Option<u64>,
+    /// Optional ceiling on how many members may claim this token.
+    /// `None` means "everyone who is in the room before it expires",
+    /// which is the right default for a code on a projector.
+    max_scans: Option<i32>,
 }
 
 #[derive(Serialize)]
 struct GenerateResponse {
+    /// The signed token. Shown as a QR code, and needed to scan.
     token: String,
+    /// Inline SVG rendering, ready to drop into a page.
     qr_svg: String,
-    expires_at: chrono::DateTime<Utc>,
+    /// Internal id, for the attendance sheet endpoint.
+    token_id: Uuid,
+    expires_at: chrono::DateTime<chrono::Utc>,
 }
 
 async fn generate(
@@ -62,16 +87,20 @@ async fn generate(
     if body.xp_value < 0 {
         return Err(WebError::Validation("xp_value must be >= 0".into()));
     }
+    if let Some(max) = body.max_scans {
+        if max <= 0 {
+            return Err(WebError::Validation("max_scans must be positive".into()));
+        }
+    }
 
     let ttl = body
         .ttl_seconds
         .unwrap_or(state.config().jwt_qr_ttl_seconds)
-        .min(86_400);
+        .min(MAX_TTL_SECONDS);
 
-    // We sign the JWT with a placeholder qr_id, then INSERT, then sign
-    // the *real* one. Two hops are awkward; instead, we pre-generate
-    // the row UUID outside.
-    let qr_id = uuid::Uuid::new_v4();
+    // The row id is generated up front so the JWT can carry it and the
+    // database row can be keyed by it without a second signing pass.
+    let qr_id = Uuid::new_v4();
     let (token, exp) = jwt::issue_qr(
         &state.config().jwt_secret,
         qr_id,
@@ -81,7 +110,9 @@ async fn generate(
         ttl,
     )?;
 
-    qr_q::insert_qr_token(
+    // Only the hash is persisted; the plaintext leaves in this response
+    // and is never written down.
+    let token_id = qr_q::insert_qr_token(
         state.pool(),
         &token,
         &body.event_name,
@@ -89,23 +120,27 @@ async fn generate(
         body.xp_value,
         user.id,
         exp,
+        body.max_scans,
     )
     .await?;
 
-    let svg = QrCode::new(&token)
+    let qr_svg = QrCode::new(&token)
         .map_err(|e| WebError::Internal(anyhow::anyhow!("qr encode: {e}")))?
         .render::<svg::Color>()
         .min_dimensions(256, 256)
         .build();
 
-    let _ = base64::engine::general_purpose::STANDARD.encode([0u8; 0]); // keep import alive
-
     Ok(Json(GenerateResponse {
         token,
-        qr_svg: svg,
+        qr_svg,
+        token_id,
         expires_at: exp,
     }))
 }
+
+// ---------------------------------------------------------------------------
+// Scan
+// ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct ScanBody {
@@ -116,7 +151,10 @@ struct ScanBody {
 struct ScanResponse {
     event_name: String,
     event_type: String,
+    /// XP actually credited, after the member's multipliers.
     xp_awarded: i32,
+    /// How many members have claimed this token so far.
+    scan_count: i32,
 }
 
 async fn scan(
@@ -130,19 +168,44 @@ async fn scan(
         ));
     }
 
-    // Validate JWT signature/expiry first; then claim the row in DB
-    // (which also covers replay).
+    // Signature and expiry first — a forged token never reaches the
+    // database. The per-user claim check then covers replay.
     let _claims = jwt::verify_qr(&state.config().jwt_secret, &body.token)?;
-    let claimed =
-        qr_q::claim_qr_token(state.pool(), &body.token, user.id).await?;
+    let claimed = qr_q::claim_qr_token(
+        state.pool(),
+        state.announce_channel(),
+        &body.token,
+        user.id,
+    )
+    .await?;
 
     Ok(Json(ScanResponse {
         event_name: claimed.event_name,
         event_type: claimed.event_type,
-        xp_awarded: claimed.xp_value,
+        xp_awarded: claimed.xp_awarded,
+        scan_count: claimed.scan_count,
     }))
 }
 
-// Anchor a Duration import we may need for future cap logic.
-#[allow(dead_code)]
-const _: Duration = Duration::seconds(0);
+// ---------------------------------------------------------------------------
+// Attendance views
+// ---------------------------------------------------------------------------
+
+async fn sheet(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<Uuid>,
+) -> WebResult<Json<Vec<qr_q::AttendanceRow>>> {
+    let authority = users::load_authority(state.pool(), user.id).await?;
+    if !authority.can(Action::GenerateQrToken) {
+        return Err(WebError::Forbidden);
+    }
+    Ok(Json(qr_q::attendance_for_token(state.pool(), id).await?))
+}
+
+async fn history(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> WebResult<Json<Vec<qr_q::AttendanceRow>>> {
+    Ok(Json(qr_q::history_for_user(state.pool(), user.id).await?))
+}

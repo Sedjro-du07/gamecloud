@@ -35,8 +35,10 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 pub mod account;
+pub mod badges;
 pub mod errors;
 pub mod models;
+pub mod projects;
 pub mod roles;
 pub mod xp;
 

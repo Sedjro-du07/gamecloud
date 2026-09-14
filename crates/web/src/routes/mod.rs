@@ -4,7 +4,13 @@
 //! `axum::Router<AppState>`. The top-level `router::build` function in
 //! `lib.rs` composes them all under the right paths.
 
+pub mod admin;
 pub mod auth;
 pub mod health;
+pub mod projects;
 pub mod qr;
+pub mod quests;
+pub mod resources;
+pub mod seasons;
+pub mod users;
 pub mod webhooks;
