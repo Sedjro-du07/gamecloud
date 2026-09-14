@@ -30,6 +30,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    config::DiscordChannels,
     db::queries::{
         audit,
         xp::{self, XpGrant},
@@ -435,7 +436,7 @@ async fn status_of(pool: &PgPool, project_id: Uuid) -> WebResult<ProjectStatus> 
 /// state; otherwise propagates database errors.
 pub async fn submit_for_review(
     pool: &PgPool,
-    announce_channel: Option<u64>,
+    channels: DiscordChannels,
     actor: Uuid,
     project_id: Uuid,
 ) -> WebResult<Vec<String>> {
@@ -444,10 +445,11 @@ pub async fn submit_for_review(
 
     let mut tx = pool.begin().await?;
 
-    let primary: String = sqlx::query_scalar("SELECT primary_track FROM projects WHERE id = $1")
-        .bind(project_id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let (name, primary): (String, String) =
+        sqlx::query_as("SELECT name, primary_track FROM projects WHERE id = $1")
+            .bind(project_id)
+            .fetch_one(&mut *tx)
+            .await?;
 
     let contributor_tracks: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT track FROM project_contributors WHERE project_id = $1",
@@ -499,16 +501,27 @@ pub async fn submit_for_review(
     )
     .await?;
 
+    let display: String =
+        sqlx::query_scalar("SELECT COALESCE(current_title, discord_id) FROM users WHERE id = $1")
+            .bind(actor)
+            .fetch_one(&mut *tx)
+            .await?;
+
     for quest in &completed {
-        let display: String =
-            sqlx::query_scalar("SELECT COALESCE(current_title, discord_id) FROM users WHERE id = $1")
-                .bind(actor)
-                .fetch_one(&mut *tx)
-                .await?;
         notifications::enqueue(
             &mut tx,
-            announce_channel,
+            channels,
             &Announcement::quest(actor, &display, &quest.title, quest.xp_reward),
+        )
+        .await?;
+    }
+
+    // Ask each concerned discipline, in its own channel.
+    for track in concerned.iter().filter_map(|t| Track::parse(t)) {
+        notifications::enqueue(
+            &mut tx,
+            channels,
+            &Announcement::review_requested(&name, track, &display),
         )
         .await?;
     }
@@ -528,7 +541,7 @@ pub async fn submit_for_review(
 /// the track is not under review, otherwise database errors.
 pub async fn record_verdict(
     pool: &PgPool,
-    announce_channel: Option<u64>,
+    channels: DiscordChannels,
     reviewer: Uuid,
     project_id: Uuid,
     track: &str,
@@ -596,7 +609,7 @@ pub async fn record_verdict(
     if verdict != Verdict::NotApplicable {
         xp::grant_in_tx(
             &mut tx,
-            announce_channel,
+            channels,
             &XpGrant::new(reviewer, XP_PEER_REVIEW, XpSource::Review)
                 .describe("Revue de projet")
                 .in_track(track),
@@ -657,7 +670,7 @@ pub struct ReleaseReport {
 /// otherwise propagates database errors.
 pub async fn release(
     pool: &PgPool,
-    announce_channel: Option<u64>,
+    channels: DiscordChannels,
     actor: Uuid,
     project_id: Uuid,
 ) -> WebResult<ReleaseReport> {
@@ -697,7 +710,7 @@ pub async fn release(
 
     let (total_xp, paid) = pay_out(
         &mut tx,
-        announce_channel,
+        channels,
         project_id,
         &name,
         &primary_track,
@@ -724,7 +737,7 @@ pub async fn release(
 
     notifications::enqueue(
         &mut tx,
-        announce_channel,
+        channels,
         &Announcement::project_released(&name, &primary_track, paid.len()),
     )
     .await?;
@@ -759,7 +772,7 @@ pub async fn release(
 /// stages it is, rather than one long block.
 async fn pay_out(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    announce_channel: Option<u64>,
+    channels: DiscordChannels,
     project_id: Uuid,
     name: &str,
     primary_track: &str,
@@ -780,7 +793,7 @@ async fn pay_out(
     for (user_id, track) in &contributors {
         let outcome = xp::grant_in_tx(
             tx,
-            announce_channel,
+            channels,
             &XpGrant::new(*user_id, award, XpSource::Project)
                 .describe(&description)
                 .in_track(track),
@@ -806,7 +819,7 @@ async fn pay_out(
     for lead in leads {
         let outcome = xp::grant_in_tx(
             tx,
-            announce_channel,
+            channels,
             &XpGrant::new(lead, XP_TRACKLEAD_RELEASED, XpSource::Project)
                 .describe(&format!("Supervision : {name}"))
                 .in_track(primary_track),

@@ -149,7 +149,7 @@ async fn handle_push(state: &AppState, payload: &Value) -> WebResult<()> {
 
     let outcome = xp::grant(
         state.pool(),
-        state.announce_channel(),
+        state.channels(),
         &XpGrant::new(user_id, base, XpSource::Github)
             .describe(&description)
             .capped(
@@ -181,7 +181,7 @@ async fn handle_pull_request(state: &AppState, payload: &Value) -> WebResult<()>
     };
     xp::grant(
         state.pool(),
-        state.announce_channel(),
+        state.channels(),
         &XpGrant::new(user_id, XP_GITHUB_PR_MERGED, XpSource::Github).describe("PR merged"),
     )
     .await?;
@@ -200,7 +200,7 @@ async fn handle_pull_request_review(state: &AppState, payload: &Value) -> WebRes
     };
     xp::grant(
         state.pool(),
-        state.announce_channel(),
+        state.channels(),
         &XpGrant::new(user_id, XP_GITHUB_REVIEW, XpSource::Github).describe("Code review"),
     )
     .await?;
@@ -219,7 +219,7 @@ async fn handle_issues(state: &AppState, payload: &Value) -> WebResult<()> {
     };
     xp::grant(
         state.pool(),
-        state.announce_channel(),
+        state.channels(),
         &XpGrant::new(user_id, XP_GITHUB_ISSUE_RESOLVED, XpSource::Github)
             .describe("Issue resolved"),
     )
@@ -314,7 +314,7 @@ async fn draftbot(
     let bonus = level.saturating_mul(DRAFTBOT_XP_PER_LEVEL);
     xp::grant(
         state.pool(),
-        state.announce_channel(),
+        state.channels(),
         &XpGrant::new(user.id, bonus, XpSource::Discord).describe(&description),
     )
     .await?;

@@ -143,7 +143,7 @@ async fn submit(
     }
     let tracks = projects::submit_for_review(
         state.pool(),
-        state.announce_channel(),
+        state.channels(),
         user.id,
         id,
     )
@@ -195,7 +195,7 @@ async fn review(
 
     let status = projects::record_verdict(
         state.pool(),
-        state.announce_channel(),
+        state.channels(),
         user.id,
         id,
         track.as_str(),
@@ -232,7 +232,7 @@ async fn release(
 
     let report = projects::release(
         state.pool(),
-        state.announce_channel(),
+        state.channels(),
         user.id,
         id,
     )

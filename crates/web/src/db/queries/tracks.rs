@@ -20,6 +20,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    config::DiscordChannels,
     error::{WebError, WebResult},
     services::notifications::{self, Announcement},
 };
@@ -91,7 +92,7 @@ pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> WebResult<Vec<Member
 /// database error.
 pub async fn join(
     pool: &PgPool,
-    announce_channel: Option<u64>,
+    channels: DiscordChannels,
     user_id: Uuid,
     track_name: &str,
     specialization: Option<&str>,
@@ -161,7 +162,7 @@ pub async fn join(
     if let Some((display, _)) = promoted {
         notifications::enqueue(
             &mut tx,
-            announce_channel,
+            channels,
             &Announcement::rank_up(
                 user_id,
                 &display,
@@ -181,7 +182,7 @@ pub async fn join(
 
     notifications::enqueue(
         &mut tx,
-        announce_channel,
+        channels,
         &Announcement::track_joined(user_id, &display, track.as_str()),
     )
     .await?;

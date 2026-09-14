@@ -175,7 +175,7 @@ async fn scan(
     let _claims = jwt::verify_qr(&state.config().jwt_secret, &body.token)?;
     let claimed = qr_q::claim_qr_token(
         state.pool(),
-        state.announce_channel(),
+        state.channels(),
         &body.token,
         user.id,
     )

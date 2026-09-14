@@ -504,7 +504,7 @@ pub async fn join_track(
         let spec = specialization.filter(|s| !s.trim().is_empty());
         crate::db::queries::tracks::join(
             state.pool(),
-            state.announce_channel(),
+            state.channels(),
             user_id,
             &track,
             spec.as_deref(),
@@ -660,7 +660,7 @@ pub async fn scan_qr(token: String) -> Result<String, ServerFnError> {
 
         let claimed = crate::db::queries::qr::claim_qr_token(
             state.pool(),
-            state.announce_channel(),
+            state.channels(),
             &token,
             user_id,
         )

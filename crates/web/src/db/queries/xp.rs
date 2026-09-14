@@ -35,6 +35,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
+    config::DiscordChannels,
     error::WebResult,
     services::notifications::{self, Announcement},
 };
@@ -170,11 +171,11 @@ pub struct GrantOutcome {
 /// Propagates database errors.
 pub async fn grant(
     pool: &PgPool,
-    announce_channel: Option<u64>,
+    channels: DiscordChannels,
     request: &XpGrant<'_>,
 ) -> WebResult<GrantOutcome> {
     let mut tx = pool.begin().await?;
-    let outcome = grant_in_tx(&mut tx, announce_channel, request).await?;
+    let outcome = grant_in_tx(&mut tx, channels, request).await?;
     tx.commit().await?;
     Ok(outcome)
 }
@@ -189,7 +190,7 @@ pub async fn grant(
 /// Propagates database errors.
 pub async fn grant_in_tx(
     tx: &mut Transaction<'_, Postgres>,
-    announce_channel: Option<u64>,
+    channels: DiscordChannels,
     request: &XpGrant<'_>,
 ) -> WebResult<GrantOutcome> {
     let member = load_member(tx, request.user_id).await?;
@@ -275,7 +276,7 @@ pub async fn grant_in_tx(
     // --- 8: announcements --------------------------------------------
     announce(
         tx,
-        announce_channel,
+        channels,
         request.user_id,
         &member.display_name(),
         (rank_final > rank_before).then_some(rank_final),
@@ -421,7 +422,7 @@ async fn apply_member_update(
 /// message formatting at the end.
 async fn announce(
     tx: &mut Transaction<'_, Postgres>,
-    channel: Option<u64>,
+    channels: DiscordChannels,
     user_id: Uuid,
     display: &str,
     new_rank: Option<GlobalRank>,
@@ -431,7 +432,7 @@ async fn announce(
     if let Some(rank) = new_rank {
         notifications::enqueue(
             tx,
-            channel,
+            channels,
             &Announcement::rank_up(user_id, display, rank.title(), rank.ring_color()),
         )
         .await?;
@@ -439,7 +440,7 @@ async fn announce(
     for badge in new_badges {
         notifications::enqueue(
             tx,
-            channel,
+            channels,
             &Announcement::badge(user_id, display, badge.title(), badge.description()),
         )
         .await?;
@@ -447,7 +448,7 @@ async fn announce(
     for quest in completed_quests {
         notifications::enqueue(
             tx,
-            channel,
+            channels,
             &Announcement::quest(user_id, display, &quest.title, quest.xp_reward),
         )
         .await?;

@@ -10,11 +10,12 @@
 //! it, so the platform can never award a rank and then fail to announce
 //! it (or announce a rank whose grant rolled back).
 
+use gamecloud_shared::roles::Track;
 use serde_json::json;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
-use crate::error::WebResult;
+use crate::{config::DiscordChannels, error::WebResult};
 
 /// A message destined for Discord.
 #[derive(Debug, Clone)]
@@ -30,6 +31,9 @@ pub struct Announcement {
     pub color: u32,
     /// Member the announcement is about, when there is one.
     pub user_id: Option<Uuid>,
+    /// Track the announcement concerns, when it is track-scoped. Drives
+    /// routing: a review request belongs in that discipline's channel.
+    pub track: Option<Track>,
 }
 
 impl Announcement {
@@ -42,6 +46,7 @@ impl Announcement {
             description: format!("**{display}** atteint le rang **{rank_title}**."),
             color: hex_to_rgb(ring_color_hex).unwrap_or(0x9c_4dff),
             user_id: Some(user_id),
+            track: None,
         }
     }
 
@@ -54,6 +59,7 @@ impl Announcement {
             description: format!("**{display}** débloque **{badge_title}** — {badge_desc}"),
             color: 0xff_d700,
             user_id: Some(user_id),
+            track: None,
         }
     }
 
@@ -66,6 +72,7 @@ impl Announcement {
             description: format!("**{display}** termine « {quest_title} » — **+{xp} XP**."),
             color: 0x00_f2ff,
             user_id: Some(user_id),
+            track: None,
         }
     }
 
@@ -80,6 +87,7 @@ impl Announcement {
             ),
             color: 0x34_d058,
             user_id: None,
+            track: None,
         }
     }
 
@@ -92,6 +100,72 @@ impl Announcement {
             description: format!("**{display}** rejoint la track **{track_title}**."),
             color: 0x3f_a9ff,
             user_id: Some(user_id),
+            track: None,
+        }
+    }
+}
+
+impl Announcement {
+    /// A project needs one track's verdict.
+    ///
+    /// Emitted once per concerned track, so each discipline is asked in
+    /// its own channel rather than everyone being shouted at in one
+    /// queue.
+    #[must_use]
+    pub fn review_requested(project: &str, track: Track, author: &str) -> Self {
+        Self {
+            kind: "ProjectSubmitted",
+            title: "🔍 Revue demandée".to_string(),
+            description: format!(
+                "**{project}** attend l'avis de la track **{}** (soumis par {author}).\n                 Un refus doit expliquer ce qui doit changer.",
+                track.as_str()
+            ),
+            color: hex_to_rgb(track.color_hex()).unwrap_or(0xff_aa00),
+            user_id: None,
+            track: Some(track),
+        }
+    }
+
+    /// Somebody submitted a resource for validation.
+    #[must_use]
+    pub fn resource_submitted(title: &str, author: &str, track: Option<Track>) -> Self {
+        Self {
+            kind: "ResourceSubmitted",
+            title: "📚 Ressource à valider".to_string(),
+            description: format!("**{author}** propose « {title} »."),
+            color: 0x00_ff88,
+            user_id: None,
+            track,
+        }
+    }
+
+    /// The Bureau opened a quest.
+    #[must_use]
+    pub fn quest_opened(title: &str, condition: &str, xp: i32, ends: &str) -> Self {
+        Self {
+            kind: "QuestOpened",
+            title: "🎯 Nouvelle quête".to_string(),
+            description: format!("**{title}**\n{condition} — **+{xp} XP**\nJusqu'au {ends}."),
+            color: 0xbf_00ff,
+            user_id: None,
+            track: None,
+        }
+    }
+
+    /// An action worth recording in the Bureau's journal.
+    ///
+    /// Never falls back to a public channel: an audit line names who did
+    /// what to whom, so if no journal is configured it is dropped rather
+    /// than aired.
+    #[must_use]
+    pub fn audit(actor: &str, action: &str, detail: &str) -> Self {
+        Self {
+            kind: "AuditEntry",
+            title: "🏛 Journal".to_string(),
+            description: format!("**{actor}** — {action}\n{detail}"),
+            color: 0x9a_a0b3,
+            user_id: None,
+            track: None,
         }
     }
 }
@@ -107,8 +181,10 @@ fn hex_to_rgb(hex: &str) -> Option<u32> {
 
 /// Write an announcement into the outbox inside an existing transaction.
 ///
-/// `channel_id` is the destination Discord channel. When the deployment
-/// has not configured one, the call is a no-op: the platform keeps
+/// The destination is chosen from the announcement's kind — releases to
+/// the Hall of Fame, review requests to the validation queue, audit
+/// entries to the Bureau's journal. When the deployment has configured
+/// no channel for a kind, the call is a no-op: the platform keeps
 /// working and simply stays quiet, which is the right failure mode for
 /// a cosmetic feature.
 ///
@@ -116,10 +192,10 @@ fn hex_to_rgb(hex: &str) -> Option<u32> {
 /// Propagates database errors.
 pub async fn enqueue(
     tx: &mut Transaction<'_, Postgres>,
-    channel_id: Option<u64>,
+    channels: DiscordChannels,
     announcement: &Announcement,
 ) -> WebResult<()> {
-    let Some(channel_id) = channel_id else {
+    let Some(channel_id) = channels.route(announcement.kind, announcement.track) else {
         tracing::debug!(
             kind = announcement.kind,
             "no announce channel configured; skipping"

@@ -21,6 +21,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    config::DiscordChannels,
     db::queries::xp::{self, XpGrant},
     error::{WebError, WebResult},
     services::tokens,
@@ -116,7 +117,7 @@ pub struct ScannedToken {
 /// repeat scan, `QrCapacityReached` when the token is full.
 pub async fn claim_qr_token(
     pool: &PgPool,
-    announce_channel: Option<u64>,
+    channels: DiscordChannels,
     token: &str,
     user_id: Uuid,
 ) -> WebResult<ScannedToken> {
@@ -195,7 +196,7 @@ pub async fn claim_qr_token(
 
     let outcome = xp::grant_in_tx(
         &mut tx,
-        announce_channel,
+        channels,
         &XpGrant::new(user_id, xp_value, XpSource::Qr)
             .describe(&format!("Présence : {event_name}")),
     )

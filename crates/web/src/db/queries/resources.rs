@@ -20,11 +20,13 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    config::DiscordChannels,
     db::queries::{
         audit,
         xp::{self, XpGrant},
     },
     error::{WebError, WebResult},
+    services::notifications::{self, Announcement},
 };
 
 /// A library entry as shown in listings.
@@ -160,8 +162,14 @@ pub fn validate(resource: &NewResource) -> WebResult<()> {
 ///
 /// # Errors
 /// Propagates validation and database errors.
-pub async fn submit(pool: &PgPool, author: Uuid, resource: &NewResource) -> WebResult<Uuid> {
+pub async fn submit(
+    pool: &PgPool,
+    channels: DiscordChannels,
+    author: Uuid,
+    resource: &NewResource,
+) -> WebResult<Uuid> {
     validate(resource)?;
+    let mut tx = pool.begin().await?;
     let id: Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO resources (title, url, resource_type, tracks, specializations, level, submitted_by)
@@ -176,8 +184,26 @@ pub async fn submit(pool: &PgPool, author: Uuid, resource: &NewResource) -> WebR
     .bind(&resource.specializations)
     .bind(&resource.level)
     .bind(author)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
+
+    let display: String =
+        sqlx::query_scalar("SELECT COALESCE(current_title, discord_id) FROM users WHERE id = $1")
+            .bind(author)
+            .fetch_one(&mut *tx)
+            .await?;
+
+    // Tagged with a track, the request lands in that discipline's
+    // channel; otherwise in the shared validation queue.
+    let track = resource.tracks.first().and_then(|t| Track::parse(t));
+    notifications::enqueue(
+        &mut tx,
+        channels,
+        &Announcement::resource_submitted(&resource.title, &display, track),
+    )
+    .await?;
+
+    tx.commit().await?;
     Ok(id)
 }
 
@@ -190,7 +216,7 @@ pub async fn submit(pool: &PgPool, author: Uuid, resource: &NewResource) -> WebR
 /// `NotFound` when the entry does not exist; otherwise database errors.
 pub async fn validate_entry(
     pool: &PgPool,
-    announce_channel: Option<u64>,
+    channels: DiscordChannels,
     validator: Uuid,
     resource_id: Uuid,
 ) -> WebResult<bool> {
@@ -218,7 +244,7 @@ pub async fn validate_entry(
 
     xp::grant_in_tx(
         &mut tx,
-        announce_channel,
+        channels,
         &XpGrant::new(
             submitter,
             XP_DISCORD_RESOURCE_VALIDATED,

@@ -127,7 +127,7 @@ async fn grant_xp(
         grant = grant.in_track(track);
     }
 
-    let outcome = xp::grant(state.pool(), state.announce_channel(), &grant).await?;
+    let outcome = xp::grant(state.pool(), state.channels(), &grant).await?;
 
     audit::record(
         state.pool(),

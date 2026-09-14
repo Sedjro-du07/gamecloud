@@ -67,7 +67,7 @@ async fn create(
         return Err(WebError::Forbidden);
     }
 
-    let id = quests::create(state.pool(), user.id, &body).await?;
+    let id = quests::create(state.pool(), state.channels(), user.id, &body).await?;
 
     audit::record(
         state.pool(),

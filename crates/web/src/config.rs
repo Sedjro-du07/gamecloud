@@ -7,6 +7,7 @@
 
 use std::env::VarError;
 
+use gamecloud_shared::roles::Track;
 use thiserror::Error;
 
 /// Configuration error.
@@ -82,11 +83,8 @@ pub struct Config {
     /// client. Optional in dev (see above).
     pub supabase_service_key: Option<String>,
 
-    /// Discord channel that receives platform announcements (rank-ups,
-    /// badges, releases). When absent, announcements are still written
-    /// to the outbox but the bot has nowhere to post them, so the
-    /// enqueue step is skipped entirely.
-    pub announce_channel_id: Option<u64>,
+    /// Where each kind of announcement is posted.
+    pub channels: DiscordChannels,
 
     /// Requests permitted per IP per minute on authentication and other
     /// sensitive endpoints.
@@ -144,20 +142,131 @@ impl Config {
             supabase_url: optional("SUPABASE_URL"),
             supabase_service_key: optional("SUPABASE_SERVICE_KEY"),
 
-            announce_channel_id: optional("DISCORD_ANNOUNCE_CHANNEL_ID")
-                .map(|v| {
-                    v.parse::<u64>().map_err(|e| ConfigError::InvalidVar {
-                        var: "DISCORD_ANNOUNCE_CHANNEL_ID",
-                        message: e.to_string(),
-                    })
-                })
-                .transpose()?,
+            channels: DiscordChannels {
+                announce: channel("DISCORD_ANNOUNCE_CHANNEL_ID")?,
+                quests: channel("DISCORD_QUESTS_CHANNEL_ID")?,
+                leaderboard: channel("DISCORD_LEADERBOARD_CHANNEL_ID")?,
+                hall_of_fame: channel("DISCORD_HALL_CHANNEL_ID")?,
+                review_queue: channel("DISCORD_REVIEWS_CHANNEL_ID")?,
+                journal: channel("DISCORD_JOURNAL_CHANNEL_ID")?,
+                tracks: track_channels(),
+            },
 
             rate_limit_sensitive_per_min: parse_or("RATE_LIMIT_SENSITIVE_PER_MIN", 10_u32)?,
             rate_limit_default_per_min: parse_or("RATE_LIMIT_DEFAULT_PER_MIN", 120_u32)?,
             trust_forwarded_for: get("TRUST_FORWARDED_FOR").is_ok_and(|v| v == "true"),
         })
     }
+}
+
+/// Discord channels the platform posts into.
+///
+/// Every field is optional: a deployment with none of them configured
+/// runs normally and simply stays silent. `announce` is the fallback for
+/// anything without a dedicated home — except the audit journal, which
+/// must never spill into a public channel.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DiscordChannels {
+    /// Rank-ups, badges, track joins — the celebratory feed.
+    pub announce: Option<u64>,
+    /// Newly opened quests.
+    pub quests: Option<u64>,
+    /// Season standings.
+    pub leaderboard: Option<u64>,
+    /// Released projects.
+    pub hall_of_fame: Option<u64>,
+    /// Work waiting for a validator: projects in review, submitted
+    /// resources.
+    pub review_queue: Option<u64>,
+    /// Audit trail. Bureau-only.
+    pub journal: Option<u64>,
+    /// One channel per track, in [`Track::ALL`] order. A review request
+    /// lands in the channel of the discipline being asked, which is the
+    /// difference between a queue nobody reads and a question addressed
+    /// to the people who can answer it.
+    pub tracks: [Option<u64>; 8],
+}
+
+impl DiscordChannels {
+    /// Where an announcement of this kind belongs.
+    ///
+    /// Unrecognised kinds land in `announce`. The journal is the one
+    /// exception to the fallback: an audit entry names who did what to
+    /// whom, so posting it to a public channel because the dedicated one
+    /// is unset would be worse than dropping it.
+    #[must_use]
+    pub fn for_kind(&self, kind: &str) -> Option<u64> {
+        self.route(kind, None)
+    }
+
+    /// Where an announcement belongs, given its kind and the track it
+    /// concerns.
+    ///
+    /// A review request goes to that track's own channel when one is
+    /// configured, falling back to the shared validation queue and then
+    /// to the general feed.
+    #[must_use]
+    pub fn route(&self, kind: &str, track: Option<Track>) -> Option<u64> {
+        match kind {
+            "ProjectReleased" => self.hall_of_fame.or(self.announce),
+            "QuestOpened" => self.quests.or(self.announce),
+            "SeasonStandings" => self.leaderboard.or(self.announce),
+            "AuditEntry" => self.journal,
+            "ProjectSubmitted" | "ResourceSubmitted" => track
+                .and_then(|t| self.for_track(t))
+                .or(self.review_queue)
+                .or(self.announce),
+            _ => self.announce,
+        }
+    }
+
+    /// The channel belonging to a track, if one is configured.
+    #[must_use]
+    pub fn for_track(&self, track: Track) -> Option<u64> {
+        Track::ALL
+            .iter()
+            .position(|t| *t == track)
+            .and_then(|i| self.tracks[i])
+    }
+}
+
+/// Parse `DISCORD_TRACK_CHANNELS`, a comma-separated `Track=id` list.
+///
+/// One variable rather than eight keeps the environment readable, and an
+/// unparseable entry is skipped with a warning instead of stopping the
+/// boot — a mistyped channel id should cost one silent track, not the
+/// whole deployment.
+fn track_channels() -> [Option<u64>; 8] {
+    let mut out = [None; 8];
+    let Some(raw) = optional("DISCORD_TRACK_CHANNELS") else {
+        return out;
+    };
+    for entry in raw.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let Some((name, id)) = entry.split_once('=') else {
+            tracing::warn!(entry, "DISCORD_TRACK_CHANNELS: expected Track=id");
+            continue;
+        };
+        let (Some(track), Ok(id)) = (Track::parse(name.trim()), id.trim().parse::<u64>()) else {
+            tracing::warn!(entry, "DISCORD_TRACK_CHANNELS: unknown track or bad id");
+            continue;
+        };
+        if let Some(i) = Track::ALL.iter().position(|t| *t == track) {
+            out[i] = Some(id);
+        }
+    }
+    out
+}
+
+/// Parse an optional Discord snowflake from the environment.
+fn channel(key: &'static str) -> Result<Option<u64>, ConfigError> {
+    optional(key)
+        .map(|v| {
+            v.parse::<u64>().map_err(|e| ConfigError::InvalidVar {
+                var: key,
+                message: e.to_string(),
+            })
+        })
+        .transpose()
 }
 
 /// Placeholder prefixes shipped in `.env.example`. A secret that still

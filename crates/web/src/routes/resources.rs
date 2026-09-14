@@ -77,7 +77,7 @@ async fn submit(
             gamecloud_shared::DomainError::EmailNotVerified,
         ));
     }
-    let id = resources::submit(state.pool(), user.id, &body).await?;
+    let id = resources::submit(state.pool(), state.channels(), user.id, &body).await?;
     Ok(Json(CreatedResponse { id }))
 }
 
@@ -98,7 +98,7 @@ async fn validate(
         return Err(WebError::Forbidden);
     }
     let newly_validated =
-        resources::validate_entry(state.pool(), state.announce_channel(), user.id, id).await?;
+        resources::validate_entry(state.pool(), state.channels(), user.id, id).await?;
     Ok(Json(ValidateResponse { newly_validated }))
 }
 

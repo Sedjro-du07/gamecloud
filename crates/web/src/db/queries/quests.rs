@@ -18,7 +18,11 @@ use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::error::{WebError, WebResult};
+use crate::{
+    config::DiscordChannels,
+    error::{WebError, WebResult},
+    services::notifications::{self, Announcement},
+};
 
 /// A quest plus the caller's progress on it.
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
@@ -189,8 +193,14 @@ pub fn validate(quest: &NewQuest) -> WebResult<()> {
 ///
 /// # Errors
 /// Propagates validation and database errors.
-pub async fn create(pool: &PgPool, author: Uuid, quest: &NewQuest) -> WebResult<Uuid> {
+pub async fn create(
+    pool: &PgPool,
+    channels: DiscordChannels,
+    author: Uuid,
+    quest: &NewQuest,
+) -> WebResult<Uuid> {
     validate(quest)?;
+    let mut tx = pool.begin().await?;
     let id: Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO quests (title, description, xp_reward, quest_type, condition_type,
@@ -209,9 +219,34 @@ pub async fn create(pool: &PgPool, author: Uuid, quest: &NewQuest) -> WebResult<
     .bind(quest.starts_at)
     .bind(quest.ends_at)
     .bind(author)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
+
+    notifications::enqueue(
+        &mut tx,
+        channels,
+        &Announcement::quest_opened(
+            &quest.title,
+            &describe_condition(&quest.condition_type, quest.condition_value),
+            quest.xp_reward,
+            &quest.ends_at.format("%d/%m/%Y").to_string(),
+        ),
+    )
+    .await?;
+
+    tx.commit().await?;
     Ok(id)
+}
+
+/// Turn a quest condition into a sentence a member can act on.
+fn describe_condition(condition: &str, target: i32) -> String {
+    match condition {
+        "Push" => format!("Pousser du code {target} fois"),
+        "Attend" => format!("Être présent à {target} événement(s)"),
+        "Submit" => format!("Soumettre {target} projet(s)"),
+        "Review" => format!("Rendre {target} revue(s)"),
+        other => format!("{other} x{target}"),
+    }
 }
 
 #[cfg(test)]

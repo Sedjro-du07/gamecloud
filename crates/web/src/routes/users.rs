@@ -214,7 +214,7 @@ async fn join_track(
 
     let membership = tracks::join(
         state.pool(),
-        state.announce_channel(),
+        state.channels(),
         user.id,
         &body.track,
         body.specialization.as_deref(),
