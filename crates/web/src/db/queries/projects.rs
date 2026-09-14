@@ -796,7 +796,7 @@ async fn pay_out(
     let leads: Vec<Uuid> = sqlx::query_scalar(
         r#"
         SELECT user_id FROM track_memberships
-         WHERE track = $1 AND track_role = 'Lead'
+         WHERE track = $1 AND track_role = 'Lead' AND left_at IS NULL
         "#,
     )
     .bind(primary_track)

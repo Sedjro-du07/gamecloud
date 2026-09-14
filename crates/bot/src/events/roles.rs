@@ -1,4 +1,4 @@
-//! Discord rank-role synchronisation.
+//! Platform → Discord role synchronisation.
 //!
 //! A rank is otherwise just a string in Postgres. Mirroring it onto a
 //! real Discord role is what makes it *socially* real: the member's
@@ -19,13 +19,37 @@
 //! removes any other rank role they are carrying. Members whose rank
 //! role is already correct cost one comparison and no API call.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use gamecloud_shared::roles::GlobalRank;
+use gamecloud_shared::roles::{GlobalRank, Track};
 use serenity::all::{GuildId, Http, RoleId, UserId};
 use sqlx::PgPool;
 
 use crate::state::BotState;
+
+/// The Discord role names the platform owns for tracks.
+///
+/// Kept next to [`super::import::track_for_role`], which parses the same
+/// names in the other direction. A track whose role does not exist in
+/// the guild is skipped rather than created.
+#[must_use]
+pub fn track_role_name(track: Track) -> String {
+    format!("{} {}", track.emoji(), readable(track))
+}
+
+/// The human-readable half of a track role name.
+const fn readable(track: Track) -> &'static str {
+    match track {
+        Track::Engineering => "Engineering",
+        Track::GameDesign => "Game Design",
+        Track::Narrative => "Narrative",
+        Track::VisualArt => "Visual Art",
+        Track::Audio => "Audio",
+        Track::Production => "Production",
+        Track::Qa => "QA",
+        Track::Marketing => "Marketing",
+    }
+}
 
 /// Map every rank title to the guild role that carries it.
 ///
@@ -44,6 +68,56 @@ async fn rank_roles(http: &Http, guild: GuildId) -> HashMap<String, RoleId> {
         .filter(|(_, role)| wanted.iter().any(|w| *w == role.name))
         .map(|(id, role)| (role.name, id))
         .collect()
+}
+
+/// Map every track role name to the guild role that carries it.
+async fn track_roles(http: &Http, guild: GuildId) -> HashMap<String, RoleId> {
+    let Ok(roles) = guild.roles(http).await else {
+        return HashMap::new();
+    };
+    let wanted: Vec<String> = Track::ALL.iter().map(|t| track_role_name(*t)).collect();
+    roles
+        .into_iter()
+        .filter(|(_, role)| wanted.contains(&role.name))
+        .map(|(id, role)| (role.name, id))
+        .collect()
+}
+
+/// Bring one member's Discord *track* roles in line with the platform.
+///
+/// This is the half that was missing: offices and tracks were read from
+/// Discord, and ranks were pushed to Discord, but a track joined on the
+/// platform never appeared on the member's Discord profile. Both
+/// directions now converge — the import applies what Discord says, this
+/// applies what the platform says, and each pass leaves the two equal.
+///
+/// # Errors
+/// Returns the Discord API error if a role add/remove fails.
+pub async fn sync_member_tracks(
+    http: &Http,
+    guild: GuildId,
+    user: UserId,
+    wanted: &HashSet<String>,
+    roles: &HashMap<String, RoleId>,
+) -> anyhow::Result<bool> {
+    if roles.is_empty() {
+        return Ok(false);
+    }
+    let member = guild.member(http, user).await?;
+    let owned: HashSet<RoleId> = roles.values().copied().collect();
+    let held: HashSet<RoleId> = member.roles.iter().copied().filter(|r| owned.contains(r)).collect();
+    let target: HashSet<RoleId> = wanted.iter().filter_map(|n| roles.get(n).copied()).collect();
+
+    let mut changed = false;
+    for add in target.difference(&held) {
+        member.add_role(http, *add).await?;
+        changed = true;
+    }
+    for remove in held.difference(&target) {
+        member.remove_role(http, *remove).await?;
+        changed = true;
+    }
+    Ok(changed)
 }
 
 /// Bring one member's Discord roles in line with their platform rank.
@@ -105,6 +179,8 @@ pub async fn sync_all(state: &BotState, http: &Http) {
         return;
     }
 
+    let tracks = track_roles(http, guild).await;
+
     let members = match fetch_ranked_members(state.pool()).await {
         Ok(m) => m,
         Err(e) => {
@@ -118,18 +194,56 @@ pub async fn sync_all(state: &BotState, http: &Http) {
         let Ok(raw) = discord_id.parse::<u64>() else {
             continue;
         };
-        match sync_member(http, guild, UserId::new(raw), rank, &roles).await {
+        let user = UserId::new(raw);
+
+        // Everything below rewrites this member's roles, so silence the
+        // GuildMemberUpdate echoes it will produce.
+        state.suppress_echo(raw);
+
+        match sync_member(http, guild, user, rank, &roles).await {
             Ok(true) => changed += 1,
             Ok(false) => {}
+            Err(e) => tracing::debug!(error = %e, discord_id, "rank sync: skipping member"),
+        }
+
+        let wanted = match active_tracks(state.pool(), &discord_id).await {
+            Ok(w) => w,
             Err(e) => {
-                tracing::debug!(error = %e, discord_id, "rank sync: skipping member");
+                tracing::debug!(error = ?e, discord_id, "track sync: could not read tracks");
+                continue;
             }
+        };
+        match sync_member_tracks(http, guild, user, &wanted, &tracks).await {
+            Ok(true) => changed += 1,
+            Ok(false) => {}
+            Err(e) => tracing::debug!(error = %e, discord_id, "track sync: skipping member"),
         }
     }
 
     if changed > 0 {
-        tracing::info!(changed, "rank sync: updated Discord roles");
+        tracing::info!(changed, "sync: updated Discord roles");
     }
+}
+
+/// The track role names a member should currently hold.
+async fn active_tracks(pool: &PgPool, discord_id: &str) -> sqlx::Result<HashSet<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT m.track
+          FROM track_memberships m
+          JOIN users u ON u.id = m.user_id
+         WHERE u.discord_id = $1 AND m.left_at IS NULL
+        "#,
+    )
+    .bind(discord_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|(t,)| Track::parse(&t))
+        .map(track_role_name)
+        .collect())
 }
 
 /// Every verified member and the rank they should hold.

@@ -222,7 +222,104 @@ async fn add_track(pool: &PgPool, user_id: Uuid, track: Track) -> bool {
         r#"
         INSERT INTO track_memberships (user_id, track, track_role, track_xp, last_active_at)
         VALUES ($1, $2, 'Observer', 0, NOW())
-        ON CONFLICT (user_id, track) DO NOTHING
+        ON CONFLICT (user_id, track) DO UPDATE
+            SET left_at = NULL, last_active_at = NOW()
+         WHERE track_memberships.left_at IS NOT NULL
+        "#,
+    )
+    .bind(user_id)
+    .bind(track.as_str())
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected() > 0)
+    .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// Event-driven reconciliation
+// ---------------------------------------------------------------------------
+
+/// Apply a live Discord role change to the platform.
+///
+/// The periodic [`run`] pass is deliberately additive, because it only
+/// ever sees a snapshot: it cannot tell "this member never had the role"
+/// from "the role was just removed", and guessing wrong on the first
+/// reading would strip everybody.
+///
+/// A `GuildMemberUpdate` carries the member's *new* role set as the
+/// result of a change that happened in Discord, so here the direction is
+/// known and Discord can be treated as authoritative for that instant.
+/// That is what makes a removal propagate.
+///
+/// Ranks are excluded on purpose. They are an achievement the platform
+/// computes from XP; a rank role removed by hand in Discord is a mistake
+/// to be undone by the next push, not an instruction.
+pub async fn on_member_update(
+    state: &BotState,
+    discord_id: &str,
+    role_names: &[String],
+) {
+    // Ignore the bot's own writes. Pushing a member's tracks emits one
+    // event per role added, each with a partial snapshot; reading those
+    // as removals makes the platform flap.
+    if discord_id
+        .parse::<u64>()
+        .is_ok_and(|raw| state.is_echo(raw))
+    {
+        tracing::debug!(user = discord_id, "sync: ignoring our own role echo");
+        return;
+    }
+
+    let Some(user_id) = platform_account(state.pool(), discord_id).await else {
+        return;
+    };
+
+    // --- offices: Discord says who holds one -------------------------
+    let office = role_names.iter().find_map(|n| bureau_for_role(n));
+    match office {
+        Some(office) => {
+            if set_office(state.pool(), user_id, office).await {
+                tracing::info!(user = discord_id, office = office.as_str(), "sync: office set");
+            }
+        }
+        None => {
+            if clear_office(state.pool(), user_id).await {
+                tracing::info!(user = discord_id, "sync: office cleared");
+            }
+        }
+    }
+
+    // --- tracks: the Discord set becomes the active set ---------------
+    let wanted: Vec<Track> = role_names.iter().filter_map(|n| track_for_role(n)).collect();
+    for track in &wanted {
+        if add_track(state.pool(), user_id, *track).await {
+            tracing::info!(user = discord_id, track = track.as_str(), "sync: track joined");
+        }
+    }
+    for track in Track::ALL.iter().filter(|t| !wanted.contains(t)) {
+        if leave_track(state.pool(), user_id, *track).await {
+            tracing::info!(user = discord_id, track = track.as_str(), "sync: track left");
+        }
+    }
+}
+
+/// Clear a member's office. Returns whether anything changed.
+async fn clear_office(pool: &PgPool, user_id: Uuid) -> bool {
+    sqlx::query("UPDATE users SET bureau_role = NULL WHERE id = $1 AND bureau_role IS NOT NULL")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected() > 0)
+        .unwrap_or(false)
+}
+
+/// Mark a track membership as left, keeping the XP pool intact.
+async fn leave_track(pool: &PgPool, user_id: Uuid, track: Track) -> bool {
+    sqlx::query(
+        r#"
+        UPDATE track_memberships
+           SET left_at = NOW()
+         WHERE user_id = $1 AND track = $2 AND left_at IS NULL
         "#,
     )
     .bind(user_id)

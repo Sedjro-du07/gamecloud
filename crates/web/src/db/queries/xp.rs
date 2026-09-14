@@ -317,7 +317,7 @@ async fn credit_track_pool(
                    WHEN track_xp + $3::BIGINT >= 100 THEN 'Contributor'
                    ELSE 'Observer'
                END
-         WHERE user_id = $1 AND track = $2
+         WHERE user_id = $1 AND track = $2 AND left_at IS NULL
         "#,
     )
     .bind(user_id)
@@ -500,6 +500,7 @@ async fn load_member(
                COALESCE((
                    SELECT COUNT(*) FROM track_memberships m
                     WHERE m.user_id = u.id
+                      AND m.left_at IS NULL
                       AND m.last_active_at > NOW() - INTERVAL '30 days'
                ), 0) AS active_tracks
           FROM users u
@@ -856,6 +857,7 @@ async fn build_badge_snapshot(
         SELECT
             COALESCE((SELECT COUNT(*) FROM track_memberships m
                        WHERE m.user_id = $1
+                         AND m.left_at IS NULL
                          AND m.last_active_at > NOW() - INTERVAL '30 days'), 0)
                 AS active_tracks,
             COALESCE((SELECT COUNT(*) FROM attendance a

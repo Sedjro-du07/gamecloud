@@ -116,7 +116,7 @@ pub async fn by_track(pool: &PgPool, track: &str, limit: i64) -> WebResult<Vec<L
                u.streak_days
           FROM track_memberships m
           JOIN users u ON u.id = m.user_id
-         WHERE m.track = $1 AND u.email_verified = TRUE
+         WHERE m.track = $1 AND m.left_at IS NULL AND u.email_verified = TRUE
          ORDER BY m.track_xp DESC, m.joined_at ASC
          LIMIT $2
         "#,

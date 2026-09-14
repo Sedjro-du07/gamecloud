@@ -77,7 +77,7 @@ pub async fn load_authority(pool: &PgPool, user_id: Uuid) -> WebResult<Authority
     };
 
     let memberships: Vec<(String, String)> = sqlx::query_as(
-        "SELECT track, track_role FROM track_memberships WHERE user_id = $1",
+        "SELECT track, track_role FROM track_memberships WHERE user_id = $1 AND left_at IS NULL",
     )
     .bind(user_id)
     .fetch_all(pool)

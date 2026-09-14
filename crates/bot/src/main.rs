@@ -47,7 +47,11 @@ async fn main() -> anyhow::Result<()> {
 
     let state = BotState::new(config.clone(), pool);
 
-    let intents = serenity::GatewayIntents::GUILD_MESSAGES
+    // GUILDS carries the role cache that GuildMemberUpdate is resolved
+    // against; GUILD_MEMBERS is the privileged intent that delivers the
+    // member events themselves.
+    let intents = serenity::GatewayIntents::GUILDS
+        | serenity::GatewayIntents::GUILD_MESSAGES
         | serenity::GatewayIntents::MESSAGE_CONTENT
         | serenity::GatewayIntents::GUILD_MEMBERS;
 
@@ -118,8 +122,30 @@ async fn handle_event(
     event: &FullEvent,
     state: BotState,
 ) -> Result<(), anyhow::Error> {
-    if let FullEvent::Message { new_message } = event {
-        events::draftbot::on_message_create(ctx, new_message, &state).await;
+    match event {
+        FullEvent::Message { new_message } => {
+            events::draftbot::on_message_create(ctx, new_message, &state).await;
+        }
+
+        // A role changed in Discord. Unlike the periodic pass, this is a
+        // known change rather than a snapshot, so a *removal* can be
+        // propagated to the platform without risking a mass strip.
+        FullEvent::GuildMemberUpdate { event: update, .. } => {
+            if state.config().guild_id != Some(update.guild_id.get()) {
+                return Ok(());
+            }
+            let Ok(roles) = update.guild_id.roles(&ctx.http).await else {
+                return Ok(());
+            };
+            let names: Vec<String> = update
+                .roles
+                .iter()
+                .filter_map(|id| roles.get(id).map(|r| r.name.clone()))
+                .collect();
+            events::import::on_member_update(&state, &update.user.id.to_string(), &names).await;
+        }
+
+        _ => {}
     }
     Ok(())
 }

@@ -69,7 +69,7 @@ pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> WebResult<Vec<Member
         r#"
         SELECT track, specialization, track_role, track_xp, joined_at, last_active_at
           FROM track_memberships
-         WHERE user_id = $1
+         WHERE user_id = $1 AND left_at IS NULL
          ORDER BY track_xp DESC, track ASC
         "#,
     )
@@ -108,7 +108,12 @@ pub async fn join(
     let mut tx = pool.begin().await?;
 
     let existing: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM track_memberships WHERE user_id = $1 AND track = $2)",
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM track_memberships
+             WHERE user_id = $1 AND track = $2 AND left_at IS NULL
+        )
+        "#,
     )
     .bind(user_id)
     .bind(track.as_str())
@@ -123,6 +128,10 @@ pub async fn join(
         r#"
         INSERT INTO track_memberships (user_id, track, specialization, track_role, track_xp, last_active_at)
         VALUES ($1, $2, $3, $4, 0, NOW())
+        ON CONFLICT (user_id, track) DO UPDATE
+            SET left_at        = NULL,
+                specialization = COALESCE(EXCLUDED.specialization, track_memberships.specialization),
+                last_active_at = NOW()
         "#,
     )
     .bind(user_id)
@@ -204,7 +213,12 @@ pub async fn leave(pool: &PgPool, user_id: Uuid, track_name: &str) -> WebResult<
             track_name.to_string(),
         )));
     };
-    sqlx::query("DELETE FROM track_memberships WHERE user_id = $1 AND track = $2")
+    // Soft leave: the row carries `track_xp`, so deleting it would
+    // destroy the progress earned in this discipline. Rejoining clears
+    // `left_at` and the standing comes back.
+    sqlx::query(
+        "UPDATE track_memberships SET left_at = NOW() WHERE user_id = $1 AND track = $2",
+    )
         .bind(user_id)
         .bind(track.as_str())
         .execute(pool)
@@ -224,7 +238,7 @@ pub async fn set_role(
     role: TrackRole,
 ) -> WebResult<()> {
     sqlx::query(
-        "UPDATE track_memberships SET track_role = $3 WHERE user_id = $1 AND track = $2",
+        "UPDATE track_memberships SET track_role = $3 WHERE user_id = $1 AND track = $2 AND left_at IS NULL",
     )
     .bind(user_id)
     .bind(track.as_str())

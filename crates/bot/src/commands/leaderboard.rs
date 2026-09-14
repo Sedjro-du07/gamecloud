@@ -69,7 +69,7 @@ async fn track_leaderboard(ctx: &Context<'_>, track: &str) -> Result<String, any
         SELECT u.discord_id, m.track_xp, m.track_role
         FROM track_memberships m
         JOIN users u ON u.id = m.user_id
-        WHERE m.track = $1
+        WHERE m.track = $1 AND m.left_at IS NULL
         ORDER BY m.track_xp DESC
         LIMIT 10
         "#,

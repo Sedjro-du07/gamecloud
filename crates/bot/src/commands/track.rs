@@ -19,7 +19,7 @@ pub async fn track(
         SELECT m.track, m.track_role, m.specialization, m.track_xp
         FROM track_memberships m
         JOIN users u ON u.id = m.user_id
-        WHERE u.discord_id = $1
+        WHERE u.discord_id = $1 AND m.left_at IS NULL
         ORDER BY m.track_xp DESC
         "#,
     )
