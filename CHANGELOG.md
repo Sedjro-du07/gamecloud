@@ -19,6 +19,11 @@ voit pas, ni dans le menu ni par l'adresse.
 Aucun GitHub : les fichiers restent sur le serveur, dans `TESTS_DIR`
 (par défaut `data/tests`).
 
+Une personne extérieure les trouve sans compte : lien « 🎓 Tests
+d'entrée » dans le menu, bouton sur l'accueil, et une page qui explique
+comment rejoindre l'association et liste les tests ouverts (titre,
+consignes, date de fin). Le sujet et le rendu demandent de se connecter.
+
 ### Admission
 
 S'inscrire demande désormais d'être admis, sauf pour qui est déjà sur le

@@ -123,13 +123,14 @@ fn NavRail(
                                 }}
                             </Suspense>
                             <NavLink href="/resources" icon="📚" label="Ressources" />
-                            // The Bureau and candidates; ordinary members never.
+                            // The Bureau, candidates, and visitors who are not
+                            // signed in — an outsider must be able to find how
+                            // to join. Signed-in members never see it.
                             <Suspense fallback=|| ()>
                                 {move || {
                                     me.get()
                                         .and_then(Result::ok)
-                                        .flatten()
-                                        .filter(|u| u.can_see_tests)
+                                        .filter(|me| me.as_ref().map_or(true, |u| u.can_see_tests))
                                         .map(|_| {
                                             view! {
                                                 <NavLink href="/tests" icon="🎓" label="Tests d'entrée" />

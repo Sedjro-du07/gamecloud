@@ -64,10 +64,7 @@ pub fn TestsPage() -> impl IntoView {
                             Ok(view) => match view.access.as_str() {
                                 "bureau" => view! { <BureauView view on_changed /> }.into_any(),
                                 "candidate" => view! { <CandidateView view /> }.into_any(),
-                                "signin" => {
-                                    view! { <SignInPrompt what="passer le test d'entrée" /> }
-                                        .into_any()
-                                }
+                                "signin" => view! { <VisitorView view /> }.into_any(),
                                 _ => {
                                     view! {
                                         <div class="gc-banner">
@@ -82,6 +79,69 @@ pub fn TestsPage() -> impl IntoView {
                 }}
             </Suspense>
         </section>
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Visitors
+// ---------------------------------------------------------------------------
+
+/// What somebody who is not signed in sees: how joining works, and the
+/// tests open right now. The subject and handing in need an account.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn VisitorView(
+    /// The page.
+    view: TestsView,
+) -> impl IntoView {
+    let list = if view.tests.is_empty() {
+        view! { <p class="gc-empty">"Aucun test ouvert pour l'instant. Reviens bientôt."</p> }
+            .into_any()
+    } else {
+        view! {
+            <ul class="gc-tests__list">
+                {view
+                    .tests
+                    .into_iter()
+                    .map(|test| {
+                        view! {
+                            <li class="gc-test gc-test--open">
+                                <div class="gc-test__head">
+                                    <h3>{test.title}</h3>
+                                    <span class="gc-chip">{test.time_left}</span>
+                                </div>
+                                {test.description.map(|d| view! { <p class="gc-test__desc">{d}</p> })}
+                                <p class="gc-test__meta">"Fin : " {test.closes}</p>
+                            </li>
+                        }
+                    })
+                    .collect_view()}
+            </ul>
+        }
+            .into_any()
+    };
+
+    view! {
+        <div class="gc-tests__how">
+            <h2>"Rejoindre l'association"</h2>
+            <ol>
+                <li>
+                    "Déjà sur le serveur Discord de l'association ? Connecte-toi avec Discord :
+                     l'inscription est directe."
+                </li>
+                <li>
+                    "Sinon, connecte-toi avec Discord, télécharge le sujet d'un test ouvert et rends
+                     ton travail avant la fin."
+                </li>
+                <li>
+                    "Le Bureau corrige. Une fois admis, ton invitation au serveur s'affiche ici et tu
+                     finis ton inscription."
+                </li>
+            </ol>
+        </div>
+        <SignInPrompt what="passer le test d'entrée" />
+        <h2 class="gc-tests__heading">"Tests ouverts"</h2>
+        {list}
     }
 }
 

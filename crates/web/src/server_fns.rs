@@ -1665,7 +1665,10 @@ fn present_test(
 ///
 /// For the Bureau, every session. For somebody who is not a verified
 /// member yet, the open sessions and the ones they handed work in for.
-/// For members, nothing: the page is not for them.
+/// For somebody not signed in — quite possibly an outsider wondering how
+/// to join — the open sessions, without the subject or any count, so the
+/// page can tell them what to do. For members, nothing: the page is not
+/// for them.
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
@@ -1680,8 +1683,18 @@ pub async fn get_tests() -> Result<TestsView, ServerFnError> {
         let Some(state) = ctx::state() else {
             return Ok(TestsView::default());
         };
+        let sessions = entrance::list(state.pool()).await.map_err(fail)?;
+        let now = chrono::Utc::now();
         let signin = TestsView {
             access: "signin".into(),
+            tests: sessions
+                .iter()
+                .filter(|t| t.closes_at > now)
+                .map(|t| TestItem {
+                    submissions: 0,
+                    ..present_test(t, None)
+                })
+                .collect(),
             ..TestsView::default()
         };
         let Some(user_id) = ctx::current_user_id(&state).await else {
@@ -1704,7 +1717,6 @@ pub async fn get_tests() -> Result<TestsView, ServerFnError> {
             });
         }
 
-        let sessions = entrance::list(state.pool()).await.map_err(fail)?;
         if bureau {
             return Ok(TestsView {
                 access: "bureau".into(),
@@ -1715,7 +1727,6 @@ pub async fn get_tests() -> Result<TestsView, ServerFnError> {
 
         let mine = entrance::my_submissions(state.pool(), user_id).await.map_err(fail)?;
         let admission = entrance::admission(state.pool(), user_id).await.map_err(fail)?;
-        let now = chrono::Utc::now();
         return Ok(TestsView {
             access: "candidate".into(),
             tests: sessions

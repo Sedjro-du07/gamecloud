@@ -70,6 +70,11 @@ fn Hero() -> impl IntoView {
                     "🎮 Rejoindre la partie"
                 </a>
                 // Reaching Kumo needs no account.
+                // Not on the association's server yet? The entrance test is
+                // the way in.
+                <a class="gc-btn gc-btn--ghost gc-btn--lg" href="/tests">
+                    "🎓 Test d'entrée"
+                </a>
                 <a class="gc-btn gc-btn--ghost gc-btn--lg" href="/kumo">
                     "💬 Contacter Kumo"
                 </a>
