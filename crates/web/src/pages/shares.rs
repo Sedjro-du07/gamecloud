@@ -120,9 +120,7 @@ fn ShareRow(
                         .into_any()
                 } else {
                     view! {
-                        <a class="gc-btn" href="/api/auth/login" rel="external">
-                            "Se connecter pour télécharger"
-                        </a>
+                        <crate::components::discord_login::DiscordLogin label="Se connecter avec Discord pour télécharger" />
                     }
                         .into_any()
                 }}
@@ -328,9 +326,9 @@ pub fn SharesPage() -> impl IntoView {
                                     .into_any()
                             } else {
                                 view! {
-                                    <div class="gc-banner">
-                                        <a href="/api/auth/login" rel="external">"Connecte-toi"</a>
-                                        " pour partager et télécharger."
+                                    <div class="gc-banner gc-signin__row">
+                                        <span>"Connecte-toi pour partager et télécharger."</span>
+                                        <crate::components::discord_login::DiscordLogin />
                                     </div>
                                 }
                                     .into_any()

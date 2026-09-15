@@ -90,10 +90,12 @@ pub fn LeaderboardPage() -> impl IntoView {
                     }
                     Some(Ok(view_model)) if view_model.restricted => {
                         view! {
-                            <div class="gc-banner gc-banner--warning">
-                                "Le classement est réservé aux membres inscrits. "
-                                <a href="/api/auth/login" rel="external">"Connecte-toi avec Discord"</a>
-                                " et vérifie ton adresse Epitech pour le voir."
+                            <div class="gc-banner gc-banner--warning gc-signin__row">
+                                <span>
+                                    "Le classement est réservé aux membres inscrits : connecte-toi et
+                                     vérifie ton adresse Epitech pour le voir."
+                                </span>
+                                <crate::components::discord_login::DiscordLogin />
                             </div>
                         }
                             .into_any()

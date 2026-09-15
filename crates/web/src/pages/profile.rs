@@ -228,13 +228,10 @@ pub fn ProfilePage() -> impl IntoView {
                     }
                     Some(Ok(None)) => {
                         view! {
-                            <p class="gc-empty">
-                                "Pas encore connecté. "
-                                <a href="/api/auth/login" rel="external">
-                                    "Se connecter avec Discord"
-                                </a>
-                                "."
-                            </p>
+                            <div class="gc-empty gc-signin__row">
+                                <span>"Pas encore connecté."</span>
+                                <crate::components::discord_login::DiscordLogin />
+                            </div>
                         }
                             .into_any()
                     }

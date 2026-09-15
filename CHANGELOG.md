@@ -64,7 +64,9 @@ par conversation, 100 messages en attente au plus.
 ### Accès
 
 - **Connexion** : le bouton « Connexion Discord » est remplacé par le logo
-  Discord.
+  Discord, et tous les liens « se connecter avec Discord » des pages
+  (profil, classement, onboarding, partages, invitations à se connecter)
+  aussi. Le libellé reste pour les lecteurs d'écran et en infobulle.
 - **Ressources** : proposer une ressource demande un compte vérifié.
 - **Calendrier** : réservé aux personnes connectées, comme le bandeau
   « À venir » de l'accueil.

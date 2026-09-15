@@ -73,11 +73,10 @@ fn EmailForm() -> impl IntoView {
                     "Envoyer le code"
                 </button>
             </form>
-            <p class="gc-onboard__hint">
-                "Pas encore connecté ? "
-                <a href="/api/auth/login" rel="external">"Se connecter avec Discord"</a>
-                "."
-            </p>
+            <div class="gc-onboard__hint gc-signin__row">
+                <span>"Pas encore connecté ?"</span>
+                <crate::components::discord_login::DiscordLogin />
+            </div>
         </section>
     }
 }

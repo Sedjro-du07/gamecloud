@@ -2,6 +2,7 @@
 
 pub mod badge_grid;
 pub mod character_card;
+pub mod discord_login;
 pub mod hud_shell;
 pub mod leaderboard_table;
 pub mod project_card;

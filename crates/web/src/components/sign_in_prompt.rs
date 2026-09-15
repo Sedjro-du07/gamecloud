@@ -15,9 +15,7 @@ pub fn SignInPrompt(
         <div class="gc-banner gc-signin">
             <p>{format!("Connecte-toi avec Discord pour {what}.")}</p>
             <div class="gc-signin__actions">
-                <a class="gc-btn gc-btn--primary" href="/api/auth/login" rel="external">
-                    "Se connecter"
-                </a>
+                <crate::components::discord_login::DiscordLogin />
                 <a class="gc-btn gc-btn--ghost" href="/kumo">
                     "💬 Contacter Kumo"
                 </a>
