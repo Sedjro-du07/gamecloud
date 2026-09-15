@@ -91,6 +91,12 @@ pub struct MeView {
     /// Whether this member holds `Reviewer` or above in any track, and
     /// therefore has a review queue worth showing.
     pub can_review: bool,
+    /// Whether the entrance tests page is for them: a Bureau office
+    /// holder, or somebody who is not a verified member yet.
+    pub can_see_tests: bool,
+    /// Not on the Discord server and not admitted: signing up waits for
+    /// an entrance test.
+    pub is_candidate: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +383,103 @@ pub struct FileItem {
     pub changelog: Option<String>,
     /// Pre-formatted upload date.
     pub when: String,
+}
+
+/// A conversation with Kumo on the platform.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KumoChatView {
+    /// Messages, oldest first.
+    pub messages: Vec<ChatMessage>,
+}
+
+/// One message of a conversation with Kumo.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChatMessage {
+    /// Kumo's answer, rather than the visitor's message.
+    pub from_kumo: bool,
+    /// Who answered: "Kumo", or the Bureau member who answered in its
+    /// place. Empty for the visitor's own messages.
+    pub author: String,
+    /// Text.
+    pub body: String,
+    /// Pre-formatted time written.
+    pub when: String,
+    /// `kumo` for an answer; for a visitor's message `pending` (not yet
+    /// passed on), `relayed` (passed on to Kumo) or `failed`.
+    pub status: String,
+}
+
+/// The entrance tests page, as the viewer may see it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TestsView {
+    /// `bureau`, `candidate`, `member` (not for them) or `signin`.
+    pub access: String,
+    /// Sessions the viewer may see: every one for the Bureau; open ones,
+    /// and ones they handed work in for, for a candidate.
+    pub tests: Vec<TestItem>,
+    /// Not on the server and not admitted yet.
+    pub is_candidate: bool,
+    /// Admitted by the Bureau.
+    pub admitted: bool,
+    /// Their invitation to the server, once admitted.
+    pub invite_url: Option<String>,
+}
+
+/// One entrance test session.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TestItem {
+    /// Row id.
+    pub id: String,
+    /// Title.
+    pub title: String,
+    /// Instructions beyond the subject.
+    pub description: Option<String>,
+    /// Pre-formatted closing time.
+    pub closes: String,
+    /// "3 j restants", "terminée"…
+    pub time_left: String,
+    /// Whether work is still accepted.
+    pub open: bool,
+    /// Size of the PDF subject.
+    pub subject_size: String,
+    /// Work handed in so far (shown to the Bureau).
+    pub submissions: i64,
+    /// The viewer's own hand-in, for a candidate.
+    pub mine: Option<MySubmission>,
+}
+
+/// A candidate's own hand-in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MySubmission {
+    /// Original filename.
+    pub filename: String,
+    /// Human-readable size.
+    pub size: String,
+    /// Pre-formatted time handed in.
+    pub when: String,
+    /// `Admitted`, `Rejected`, or `None` while ungraded.
+    pub verdict: Option<String>,
+}
+
+/// A hand-in, as the Bureau reviews it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubmissionItem {
+    /// Row id, for the download link and grading.
+    pub id: String,
+    /// Candidate's display name.
+    pub candidate: String,
+    /// Their Discord handle.
+    pub handle: Option<String>,
+    /// Original filename.
+    pub filename: String,
+    /// Human-readable size.
+    pub size: String,
+    /// Pre-formatted time handed in.
+    pub when: String,
+    /// The candidate's note.
+    pub comment: Option<String>,
+    /// `Admitted`, `Rejected`, or `None` while ungraded.
+    pub verdict: Option<String>,
 }
 
 /// A member share: a script, some lore, a game or assets.

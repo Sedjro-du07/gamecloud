@@ -9,7 +9,8 @@ use leptos::prelude::*;
 
 use crate::{
     api::ResourceItem,
-    server_fns::{act_on_resource, get_resources, submit_resource},
+    components::sign_in_prompt::SignInPrompt,
+    server_fns::{act_on_resource, get_me, get_resources, submit_resource},
 };
 
 /// One entry, with whatever actions the viewer is entitled to.
@@ -202,6 +203,7 @@ fn SubmitForm(
 pub fn ResourcesPage() -> impl IntoView {
     let items = Resource::new(|| (), |()| async { get_resources().await });
     let on_changed = Callback::new(move |()| items.refetch());
+    let me = Resource::new(|| (), |()| async { get_me().await });
 
     view! {
         <section class="gc-resources">
@@ -211,7 +213,29 @@ pub fn ResourcesPage() -> impl IntoView {
                  rapporte de l'XP à qui l'a proposée."
             </p>
 
-            <SubmitForm on_changed />
+            // Proposing a resource is for members: a visitor is asked to
+            // sign in, an unverified account to verify its address.
+            <Suspense fallback=|| ()>
+                {move || {
+                    me.get()
+                        .map(|result| match result.ok().flatten() {
+                            Some(user) if user.email_verified => {
+                                view! { <SubmitForm on_changed /> }.into_any()
+                            }
+                            Some(_) => {
+                                view! {
+                                    <div class="gc-banner gc-banner--warning">
+                                        "Vérifie ton adresse Epitech pour proposer une ressource."
+                                    </div>
+                                }
+                                    .into_any()
+                            }
+                            None => {
+                                view! { <SignInPrompt what="proposer une ressource" /> }.into_any()
+                            }
+                        })
+                }}
+            </Suspense>
 
             <Suspense fallback=move || view! { <p class="gc-empty">"Chargement…"</p> }>
                 {move || match items.get() {

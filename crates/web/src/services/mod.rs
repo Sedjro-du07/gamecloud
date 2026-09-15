@@ -3,6 +3,7 @@
 //! Each module owns a single concern. They never read environment
 //! variables directly; the `Config` is passed in.
 
+pub mod discord;
 pub mod email_validator;
 pub mod github;
 pub mod jwt;

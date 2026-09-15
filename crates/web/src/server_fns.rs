@@ -25,14 +25,14 @@ use leptos::prelude::*;
 // Types that appear in the function signatures, so both targets need them.
 use crate::api::{
     AuditLine, CalendarEvent, CalendarRights, EventAttendee, EventDraft, FileItem, LeaderboardView, MeView, ProjectCard,
-    ProjectDetailView, QrTicket, QuestItem, ResourceItem, ReviewItem, SharesView, SheetView, TrackBoard,
+    ProjectDetailView, QrTicket, KumoChatView, QuestItem, ResourceItem, ReviewItem, SharesView, SheetView, SubmissionItem, TestsView, TrackBoard,
     TrackOption,
 };
 
 // Types only constructed inside the server bodies.
 #[cfg(feature = "ssr")]
 use crate::api::{
-    AttendanceEntry, BadgeItem, ContributorItem, LeaderboardEntry, ProjectRights, ShareItem, TrackView,
+    AttendanceEntry, BadgeItem, ChatMessage, ContributorItem, LeaderboardEntry, MySubmission, ProjectRights, ShareItem, TestItem, TrackView,
     VerdictItem, XpEntry,
 };
 
@@ -82,6 +82,18 @@ mod ctx {
             .await
             .ok()??;
         jwt::is_session_live(claims.iat, record.sessions_valid_from).then_some(claims.sub)
+    }
+
+    /// A cookie from the current request.
+    pub fn cookie(name: &str) -> Option<String> {
+        let parts = use_context::<axum::http::request::Parts>()?;
+        let header = parts.headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+        let prefix = format!("{name}=");
+        header
+            .split(';')
+            .map(str::trim)
+            .find_map(|kv| kv.strip_prefix(prefix.as_str()))
+            .map(str::to_string)
     }
 
     /// Format a timestamp the way the UI shows it.
@@ -165,6 +177,10 @@ pub async fn get_me() -> Result<Option<MeView>, ServerFnError> {
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
 
+        let admission = crate::db::queries::entrance::admission(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+
         let rank = GlobalRank::parse(&record.global_rank);
         // Progress is shown towards the next title, not a numbered level.
         let next = rank.next_milestone();
@@ -205,6 +221,8 @@ pub async fn get_me() -> Result<Option<MeView>, ServerFnError> {
                 .tracks
                 .iter()
                 .any(|m| m.role >= gamecloud_shared::roles::TrackRole::Reviewer),
+            can_see_tests: authority.can(Action::AccessAdminPanel) || !record.email_verified,
+            is_candidate: admission.candidate,
         }));
     }
 
@@ -1228,7 +1246,13 @@ pub async fn submit_resource(
         let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
         let user_id = ctx::current_user_id(&state)
             .await
-            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+            .ok_or_else(|| ServerFnError::new("connecte-toi pour proposer une ressource"))?;
+        // Same rule as the REST route: proposing is for members.
+        if !ctx::is_registered(&state, Some(user_id)).await {
+            return Err(ServerFnError::new(
+                "vérifie ton adresse Epitech pour proposer une ressource",
+            ));
+        }
 
         let new = crate::db::queries::resources::NewResource {
             title,
@@ -1426,6 +1450,428 @@ pub async fn delete_share(id: String) -> Result<(), ServerFnError> {
             .map_err(fail)?;
         if let Some(name) = stored {
             let _ = tokio::fs::remove_file(state.config().shares_dir.join(name)).await;
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = id;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chat with Kumo
+// ---------------------------------------------------------------------------
+
+/// Cookie that finds a visitor's conversation with Kumo again.
+#[cfg(feature = "ssr")]
+const KUMO_CHAT_COOKIE: &str = "gc_kumo_chat";
+
+/// The conversation this browser, or this signed-in member, already has.
+#[cfg(feature = "ssr")]
+async fn current_conversation(
+    state: &crate::state::AppState,
+) -> Result<Option<uuid::Uuid>, ServerFnError> {
+    use crate::db::queries::kumo_chat;
+
+    let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+    if let Some(token) = ctx::cookie(KUMO_CHAT_COOKIE) {
+        let hash = crate::services::tokens::hash(&token);
+        if let Some(id) = kumo_chat::find_by_token(state.pool(), &hash).await.map_err(fail)? {
+            return Ok(Some(id));
+        }
+    }
+    match ctx::current_user_id(state).await {
+        Some(user) => kumo_chat::latest_for_user(state.pool(), user).await.map_err(fail),
+        None => Ok(None),
+    }
+}
+
+/// Give this browser the cookie of a new conversation.
+#[cfg(feature = "ssr")]
+fn remember_conversation(state: &crate::state::AppState, token: &str) {
+    use axum_extra::extract::cookie::{Cookie, SameSite};
+
+    let Some(response) = use_context::<leptos_axum::ResponseOptions>() else {
+        return;
+    };
+    let cookie = Cookie::build((KUMO_CHAT_COOKIE, token.to_string()))
+        .http_only(true)
+        .secure(state.config().is_production)
+        .same_site(SameSite::Lax)
+        .path("/")
+        .max_age(time::Duration::days(30))
+        .build();
+    if let Ok(value) = axum::http::HeaderValue::from_str(&cookie.to_string()) {
+        response.append_header(axum::http::header::SET_COOKIE, value);
+    }
+}
+
+/// The viewer's conversation with Kumo, if they have one.
+///
+/// # Errors
+/// Returns a `ServerFnError` on database failure.
+#[server(GetKumoChat, "/_fn")]
+pub async fn get_kumo_chat() -> Result<KumoChatView, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let Some(state) = ctx::state() else {
+            return Ok(KumoChatView::default());
+        };
+        let Some(conversation) = current_conversation(&state).await? else {
+            return Ok(KumoChatView::default());
+        };
+        let rows = crate::db::queries::kumo_chat::messages(state.pool(), conversation)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(KumoChatView {
+            messages: rows
+                .into_iter()
+                .map(|m| ChatMessage {
+                    status: if m.from_kumo {
+                        "kumo"
+                    } else if m.relay_failed {
+                        "failed"
+                    } else if m.relayed_at.is_some() {
+                        "relayed"
+                    } else {
+                        "pending"
+                    }
+                    .to_string(),
+                    author: if m.from_kumo {
+                        m.answered_by
+                            .clone()
+                            .map_or_else(|| "Kumo".to_string(), |name| format!("{name} (Bureau)"))
+                    } else {
+                        String::new()
+                    },
+                    from_kumo: m.from_kumo,
+                    body: m.body,
+                    when: format!("{} UTC", ctx::stamp(m.created_at)),
+                })
+                .collect(),
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(KumoChatView::default())
+}
+
+/// Write to Kumo. Needs no account.
+///
+/// The first message starts the conversation and gives the browser its
+/// cookie. The bot relays the message to Kumo within a few seconds.
+///
+/// # Errors
+/// Returns a `ServerFnError` for an empty or overlong message, or when
+/// the conversation, or Kumo's channel as a whole, is sending too much.
+#[server(SendKumoMessage, "/_fn")]
+pub async fn send_kumo_message(body: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::db::queries::kumo_chat;
+
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let body = kumo_chat::validate_body(&body).map_err(ServerFnError::new)?;
+
+        if kumo_chat::pending_total(state.pool()).await.map_err(fail)? >= kumo_chat::MAX_PENDING_TOTAL {
+            return Err(ServerFnError::new(
+                "Kumo reçoit beaucoup de messages en ce moment, réessaie dans quelques minutes",
+            ));
+        }
+
+        let viewer = ctx::current_user_id(&state).await;
+        let conversation = if let Some(id) = current_conversation(&state).await? {
+            id
+        } else {
+            let token = crate::services::tokens::generate();
+            let id = kumo_chat::create(state.pool(), &crate::services::tokens::hash(&token), viewer)
+                .await
+                .map_err(fail)?;
+            remember_conversation(&state, &token);
+            id
+        };
+        if let Some(user) = viewer {
+            kumo_chat::attach_user(state.pool(), conversation, user).await.map_err(fail)?;
+        }
+
+        if kumo_chat::recent_from_visitor(state.pool(), conversation).await.map_err(fail)?
+            >= kumo_chat::MAX_RECENT_MESSAGES
+        {
+            return Err(ServerFnError::new(
+                "doucement : attends quelques minutes avant d'envoyer d'autres messages",
+            ));
+        }
+
+        kumo_chat::post(state.pool(), conversation, &body).await.map_err(fail)?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = body;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Entrance tests
+// ---------------------------------------------------------------------------
+
+/// The caller, if they hold a Bureau office.
+#[cfg(feature = "ssr")]
+async fn require_bureau(state: &crate::state::AppState) -> Result<uuid::Uuid, ServerFnError> {
+    let user_id = ctx::current_user_id(state)
+        .await
+        .ok_or_else(|| ServerFnError::new("connecte-toi d'abord"))?;
+    let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    if authority.can(gamecloud_shared::roles::Action::AccessAdminPanel) {
+        Ok(user_id)
+    } else {
+        Err(ServerFnError::new("réservé au Bureau"))
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn present_test(
+    test: &crate::db::queries::entrance::EntranceTest,
+    mine: Option<&crate::db::queries::entrance::Submission>,
+) -> TestItem {
+    use crate::api::format_bytes;
+    TestItem {
+        id: test.id.to_string(),
+        title: test.title.clone(),
+        description: test.description.clone(),
+        closes: format!("{} UTC", ctx::stamp(test.closes_at)),
+        time_left: ctx::time_left(test.closes_at),
+        open: test.closes_at > chrono::Utc::now(),
+        subject_size: format_bytes(test.subject_size),
+        submissions: test.submissions,
+        mine: mine.map(|m| MySubmission {
+            filename: m.filename.clone(),
+            size: format_bytes(m.size_bytes),
+            when: format!("{} UTC", ctx::stamp(m.submitted_at)),
+            verdict: m.verdict.clone(),
+        }),
+    }
+}
+
+/// The entrance tests page.
+///
+/// For the Bureau, every session. For somebody who is not a verified
+/// member yet, the open sessions and the ones they handed work in for.
+/// For members, nothing: the page is not for them.
+///
+/// # Errors
+/// Returns a `ServerFnError` on database failure.
+#[server(GetTests, "/_fn")]
+pub async fn get_tests() -> Result<TestsView, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::db::queries::entrance;
+        use gamecloud_shared::roles::Action;
+
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+        let Some(state) = ctx::state() else {
+            return Ok(TestsView::default());
+        };
+        let signin = TestsView {
+            access: "signin".into(),
+            ..TestsView::default()
+        };
+        let Some(user_id) = ctx::current_user_id(&state).await else {
+            return Ok(signin);
+        };
+        let Some(record) = crate::db::queries::users::find_by_id(state.pool(), user_id)
+            .await
+            .map_err(fail)?
+        else {
+            return Ok(signin);
+        };
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(fail)?;
+        let bureau = authority.can(Action::AccessAdminPanel);
+        if !bureau && record.email_verified {
+            return Ok(TestsView {
+                access: "member".into(),
+                ..TestsView::default()
+            });
+        }
+
+        let sessions = entrance::list(state.pool()).await.map_err(fail)?;
+        if bureau {
+            return Ok(TestsView {
+                access: "bureau".into(),
+                tests: sessions.iter().map(|t| present_test(t, None)).collect(),
+                ..TestsView::default()
+            });
+        }
+
+        let mine = entrance::my_submissions(state.pool(), user_id).await.map_err(fail)?;
+        let admission = entrance::admission(state.pool(), user_id).await.map_err(fail)?;
+        let now = chrono::Utc::now();
+        return Ok(TestsView {
+            access: "candidate".into(),
+            tests: sessions
+                .iter()
+                .filter_map(|t| {
+                    let handed_in = mine.iter().find(|m| m.test_id == t.id);
+                    (t.closes_at > now || handed_in.is_some()).then(|| present_test(t, handed_in))
+                })
+                .collect(),
+            is_candidate: admission.candidate,
+            admitted: admission.admitted_at.is_some(),
+            invite_url: admission.discord_invite_url,
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(TestsView::default())
+}
+
+/// The work handed in for a session. Bureau only.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau.
+#[server(GetTestSubmissions, "/_fn")]
+pub async fn get_test_submissions(test_id: String) -> Result<Vec<SubmissionItem>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::api::format_bytes;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        require_bureau(&state).await?;
+        let id = test_id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("test introuvable"))?;
+        let rows = crate::db::queries::entrance::submissions(state.pool(), id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(rows
+            .into_iter()
+            .map(|s| SubmissionItem {
+                id: s.id.to_string(),
+                candidate: s.candidate_name,
+                handle: s.discord_username,
+                filename: s.filename,
+                size: format_bytes(s.size_bytes),
+                when: format!("{} UTC", ctx::stamp(s.submitted_at)),
+                comment: s.comment,
+                verdict: s.verdict,
+            })
+            .collect());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = test_id;
+        Ok(Vec::new())
+    }
+}
+
+/// Admit or turn down a candidate on their work. Bureau only.
+///
+/// Admitting creates their single-use invitation to the Discord server,
+/// which they then see on their tests page. Returns what to tell the
+/// Bureau member, invitation link included.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau or the
+/// work is already graded.
+#[server(JudgeSubmission, "/_fn")]
+pub async fn judge_submission(id: String, verdict: String) -> Result<String, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::db::queries::entrance;
+
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let reviewer = require_bureau(&state).await?;
+        let submission = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("rendu introuvable"))?;
+
+        let candidate = entrance::judge(state.pool(), submission, reviewer, &verdict)
+            .await
+            .map_err(fail)?;
+        if verdict != "Admitted" {
+            return Ok("Candidature refusée.".into());
+        }
+
+        let admission = entrance::admission(state.pool(), candidate).await.map_err(fail)?;
+        if let Some(url) = admission.discord_invite_url {
+            return Ok(format!("Admis. Son invitation existait déjà : {url}"));
+        }
+        return Ok(match crate::services::discord::create_invite(state.config()).await {
+            Some(url) => {
+                entrance::set_invite(state.pool(), candidate, &url).await.map_err(fail)?;
+                format!("Admis. Invitation au serveur créée : {url} — le candidat la voit sur sa page Tests.")
+            }
+            None => "Admis, mais l'invitation au serveur n'a pas pu être créée : \
+                     envoie-lui un lien d'invitation à la main."
+                .into(),
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (id, verdict);
+        Ok(String::new())
+    }
+}
+
+/// Stop accepting work for a session now. Bureau only.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau.
+#[server(CloseTest, "/_fn")]
+pub async fn close_test(id: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        require_bureau(&state).await?;
+        let id = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("test introuvable"))?;
+        crate::db::queries::entrance::close_now(state.pool(), id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = id;
+        Ok(())
+    }
+}
+
+/// Delete a session, its subject and every piece of work. Bureau only.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau.
+#[server(DeleteTest, "/_fn")]
+pub async fn delete_test(id: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        require_bureau(&state).await?;
+        let id = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("test introuvable"))?;
+        let (subject, work) = crate::db::queries::entrance::delete(state.pool(), id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let base = &state.config().tests_dir;
+        let _ = tokio::fs::remove_file(base.join("subjects").join(subject)).await;
+        for stored in work {
+            let _ = tokio::fs::remove_file(base.join("submissions").join(stored)).await;
         }
         return Ok(());
     }
@@ -1819,14 +2265,14 @@ pub async fn get_calendar(
                 .expect("the current month is always a valid YYYY-MM")
         });
 
-        // Signed out is not an error here: the calendar is readable by
-        // anyone who reaches the page, they simply manage nothing.
-        let authority = match ctx::current_user_id(&state).await {
-            Some(id) => crate::db::queries::users::load_authority(state.pool(), id)
-                .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?,
-            None => gamecloud_shared::roles::Authority::anonymous(),
+        // The calendar is for people signed in; a visitor gets nothing
+        // and the page asks them to sign in.
+        let Some(viewer) = ctx::current_user_id(&state).await else {
+            return Ok(Vec::new());
         };
+        let authority = crate::db::queries::users::load_authority(state.pool(), viewer)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         let sees_bureau = authority.can(gamecloud_shared::roles::Action::ManageEvents(
             gamecloud_shared::roles::EventScope::Bureau,
@@ -1862,12 +2308,13 @@ pub async fn get_upcoming() -> Result<Vec<CalendarEvent>, ServerFnError> {
         let Some(state) = ctx::state() else {
             return Ok(Vec::new());
         };
-        let authority = match ctx::current_user_id(&state).await {
-            Some(id) => crate::db::queries::users::load_authority(state.pool(), id)
-                .await
-                .map_err(|e| ServerFnError::new(e.to_string()))?,
-            None => gamecloud_shared::roles::Authority::anonymous(),
+        // Like the calendar itself: nothing for a visitor.
+        let Some(viewer) = ctx::current_user_id(&state).await else {
+            return Ok(Vec::new());
         };
+        let authority = crate::db::queries::users::load_authority(state.pool(), viewer)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
         let sees_bureau = authority.can(gamecloud_shared::roles::Action::ManageEvents(
             gamecloud_shared::roles::EventScope::Bureau,
         ));

@@ -104,7 +104,10 @@ mod tests {
     #[test]
     fn an_unknown_role_reads_as_the_lowest_one() {
         // Failing closed: an unrecognised role must never render as
-        // something more senior than it is.
-        assert_eq!(role_label("Sorcerer"), "Observateur");
+        // something more senior than it is. Compared with the Observer
+        // title itself rather than a copy of its text, so renaming or
+        // restyling the title does not break the rule being tested.
+        assert_eq!(role_label("Sorcerer"), role_label("Observer"));
+        assert!(role_label("Sorcerer").contains("Observateur"));
     }
 }

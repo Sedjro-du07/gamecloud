@@ -67,6 +67,11 @@ pub struct Config {
     pub shares_channel_id: Option<u64>,
     /// Validated resources and useful links.
     pub resources_channel_id: Option<u64>,
+    /// Kumo's user id. With the relay channel, turns on the relay:
+    /// private messages to this bot go to Kumo, and Kumo's answers back.
+    pub kumo_bot_id: Option<u64>,
+    /// Channel where Kumo reads relayed messages and answers them.
+    pub kumo_relay_channel_id: Option<u64>,
 }
 
 impl Config {
@@ -97,6 +102,8 @@ impl Config {
             presences_channel_id: parse_optional("DISCORD_PRESENCES_CHANNEL_ID")?,
             shares_channel_id: parse_optional("DISCORD_SHARES_CHANNEL_ID")?,
             resources_channel_id: parse_optional("DISCORD_RESOURCES_CHANNEL_ID")?,
+            kumo_bot_id: parse_optional("KUMO_BOT_ID")?,
+            kumo_relay_channel_id: parse_optional("KUMO_RELAY_CHANNEL_ID")?,
         })
     }
 }

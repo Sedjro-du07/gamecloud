@@ -13,6 +13,7 @@ use crate::{
         admin::AdminPage,
         calendar::CalendarPage,
         home::HomePage,
+        kumo::KumoPage,
         new_project::NewProjectPage,
         leaderboard::LeaderboardPage,
         onboarding::{OnboardingEmailPage, OnboardingVerifyPage},
@@ -24,6 +25,7 @@ use crate::{
         reviews::ReviewsPage,
         scan::ScanPage,
         shares::SharesPage,
+        tests::TestsPage,
         track_detail::TrackDetailPage,
         tracks::TrackPickerPage,
     },
@@ -98,6 +100,8 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("quests") view=QuestsPage />
                     <Route path=StaticSegment("resources") view=ResourcesPage />
                     <Route path=StaticSegment("shares") view=SharesPage />
+                    <Route path=StaticSegment("tests") view=TestsPage />
+                    <Route path=StaticSegment("kumo") view=KumoPage />
                     <Route path=StaticSegment("reviews") view=ReviewsPage />
                     <Route path=StaticSegment("admin") view=AdminPage />
                     <Route path=StaticSegment("scan") view=ScanPage />

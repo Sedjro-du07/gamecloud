@@ -11,8 +11,45 @@
 use leptos::prelude::*;
 
 /// Email submission page.
+///
+/// Somebody who is not on the Discord server and has not been admitted
+/// cannot sign up yet: the page sends them to the entrance tests instead
+/// of offering a form the server would refuse.
 #[component]
 pub fn OnboardingEmailPage() -> impl IntoView {
+    let me = Resource::new(|| (), |()| async { crate::server_fns::get_me().await });
+    view! {
+        <Suspense fallback=|| ()>
+            {move || {
+                me.get()
+                    .map(|result| {
+                        if result.ok().flatten().is_some_and(|u| u.is_candidate) {
+                            view! {
+                                <section class="gc-onboard">
+                                    <h1>"Pas encore sur le serveur"</h1>
+                                    <div class="gc-banner">
+                                        "Tu n'es pas sur le serveur Discord de l'association. Pour
+                                         t'inscrire, réussis d'abord un test d'entrée : une fois admis,
+                                         tu reçois ton invitation et l'inscription s'ouvre."
+                                    </div>
+                                    <a class="gc-btn gc-btn--primary" href="/tests">
+                                        "🎓 Voir les tests d'entrée"
+                                    </a>
+                                </section>
+                            }
+                                .into_any()
+                        } else {
+                            view! { <EmailForm /> }.into_any()
+                        }
+                    })
+            }}
+        </Suspense>
+    }
+}
+
+/// The email form itself.
+#[component]
+fn EmailForm() -> impl IntoView {
     view! {
         <section class="gc-onboard">
             <h1>"Étape 1 sur 2 — Email Epitech"</h1>

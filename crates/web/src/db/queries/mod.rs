@@ -3,8 +3,10 @@
 pub mod audit;
 pub mod auth;
 pub mod badges;
+pub mod entrance;
 pub mod events;
 pub mod files;
+pub mod kumo_chat;
 pub mod leaderboard;
 pub mod projects;
 pub mod quests;

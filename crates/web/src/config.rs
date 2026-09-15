@@ -108,6 +108,20 @@ pub struct Config {
     /// first upload. Must survive restarts and deploys — on a host with an
     /// ephemeral filesystem, point it at a mounted volume.
     pub shares_dir: std::path::PathBuf,
+
+    /// Directory for entrance test subjects and the work handed in.
+    /// Private: nothing in it is ever served without a permission check.
+    pub tests_dir: std::path::PathBuf,
+
+    /// The bot's token, for the two Discord calls the web process makes
+    /// itself: checking whether somebody signing in is on the server, and
+    /// inviting an admitted candidate. Without it nobody is treated as a
+    /// candidate and no invitation is created.
+    pub discord_bot_token: Option<String>,
+    /// The association's Discord server.
+    pub discord_guild_id: Option<u64>,
+    /// Channel an admitted candidate's invitation points at.
+    pub discord_invite_channel: Option<u64>,
 }
 
 impl Config {
@@ -179,6 +193,13 @@ impl Config {
             shares_dir: optional("SHARES_DIR")
                 .unwrap_or_else(|| "data/shares".to_string())
                 .into(),
+            tests_dir: optional("TESTS_DIR")
+                .unwrap_or_else(|| "data/tests".to_string())
+                .into(),
+
+            discord_bot_token: optional("DISCORD_TOKEN"),
+            discord_guild_id: channel("DISCORD_GUILD_ID")?,
+            discord_invite_channel: channel("DISCORD_INVITE_CHANNEL_ID")?,
         })
     }
 }

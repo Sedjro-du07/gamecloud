@@ -7,6 +7,7 @@ pub mod leaderboard_table;
 pub mod project_card;
 pub mod quest_card;
 pub mod review_form;
+pub mod sign_in_prompt;
 pub mod title_ladder;
 pub mod track_list;
 pub mod xp_bar;

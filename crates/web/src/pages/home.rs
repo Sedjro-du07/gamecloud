@@ -69,6 +69,10 @@ fn Hero() -> impl IntoView {
                 <a class="gc-btn gc-btn--primary gc-btn--lg" href="/api/auth/login" rel="external">
                     "🎮 Rejoindre la partie"
                 </a>
+                // Reaching Kumo needs no account.
+                <a class="gc-btn gc-btn--ghost gc-btn--lg" href="/kumo">
+                    "💬 Contacter Kumo"
+                </a>
             </div>
             <ul class="gc-hero__stats">
                 <li>

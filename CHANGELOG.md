@@ -1,5 +1,72 @@
 # Changelog
 
+## Septembre 2026 (suite) — tests d'entrée, admission, contacter Kumo
+
+### Tests d'entrée
+
+Une page **🎓 Tests d'entrée**, visible seulement par le Bureau et par les
+comptes qui ne sont pas encore membres vérifiés. Un membre ordinaire ne la
+voit pas, ni dans le menu ni par l'adresse.
+
+- **Le Bureau** ouvre un test : titre, consignes, durée en heures et sujet
+  en PDF (un faux PDF est refusé). Il télécharge les rendus, **admet** ou
+  **refuse** chaque candidat, peut clore un test plus tôt ou le supprimer
+  avec son sujet et ses rendus.
+- **Les candidats** téléchargent le sujet et rendent un fichier, avec un
+  mot pour le Bureau, remplaçable jusqu'à la fin du test. Ils voient
+  ensuite le résultat.
+
+Aucun GitHub : les fichiers restent sur le serveur, dans `TESTS_DIR`
+(par défaut `data/tests`).
+
+### Admission
+
+S'inscrire demande désormais d'être admis, sauf pour qui est déjà sur le
+serveur Discord :
+
+- à la connexion, un compte non vérifié qui est déjà sur le serveur
+  s'inscrit comme avant ;
+- sinon, c'est un **candidat** : il arrive sur les tests d'entrée, et la
+  vérification de l'adresse Epitech lui est refusée ;
+- quand le Bureau l'admet, une **invitation au serveur** à usage unique,
+  valable 7 jours, est créée automatiquement et s'affiche sur sa page
+  Tests. L'inscription s'ouvre ensuite.
+
+Si Discord ne répond pas à la connexion, le statut déjà connu est gardé.
+La plateforme lit `DISCORD_TOKEN`, `DISCORD_GUILD_ID` et
+`DISCORD_INVITE_CHANNEL_ID`.
+
+### Contacter Kumo
+
+Un onglet **💬 Contacter Kumo**, ouvert à tous, avec un chat qui ne
+demande pas de compte. Quelqu'un qui ne partage aucun serveur avec le bot
+ne peut pas lui écrire en privé sur Discord : c'est pour lui que le chat
+existe.
+
+En arrière-plan, le bot poste chaque message dans le salon privé
+`🤖relais-kumo`, où Kumo lit, et range la réponse dans la conversation.
+Les messages privés au bot sur Discord passent par le même relais.
+
+**Le Bureau peut répondre à la place de Kumo** : dans `🤖relais-kumo`,
+« Répondre » sur le message relayé envoie la réponse à la personne,
+signée de son nom ; ✅ confirme la livraison. Seuls les postes attribués
+sur la plateforme comptent, et un message qui ne répond à rien reste dans
+le salon.
+
+Contre le spam : 1 000 caractères par message, 8 messages par 10 minutes
+par conversation, 100 messages en attente au plus.
+
+### Accès
+
+- **Connexion** : le bouton « Connexion Discord » est remplacé par le logo
+  Discord.
+- **Ressources** : proposer une ressource demande un compte vérifié.
+- **Calendrier** : réservé aux personnes connectées, comme le bandeau
+  « À venir » de l'accueil.
+
+**Corrigé** : le test `track_list` attendait encore l'ancien libellé
+« Observateur » sans emoji.
+
 ## Septembre 2026 (suite) — partages, salons d'annonces, classement réservé
 
 ### Partages

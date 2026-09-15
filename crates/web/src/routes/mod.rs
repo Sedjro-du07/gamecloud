@@ -6,6 +6,8 @@
 
 pub mod admin;
 pub mod auth;
+pub mod contact;
+pub mod entrance;
 pub mod health;
 pub mod projects;
 pub mod qr;

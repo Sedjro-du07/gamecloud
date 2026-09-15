@@ -3341,3 +3341,231 @@ h1, h2, h3 { overflow-wrap: anywhere; }
   margin: 0;
   padding: 0.8rem 1rem;
 }
+
+// ===========================================================================
+// Sign in with Discord, sign-in prompt
+// ===========================================================================
+
+// The Discord logo on Discord's own colour stands in for "Connexion Discord".
+.gc-btn--discord {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 0.75rem;
+  background: #5865f2;
+  border-color: #5865f2;
+  color: #fff;
+  line-height: 0;
+
+  &:hover {
+    background: #4752c4;
+    border-color: #4752c4;
+    box-shadow: 0 0 16px rgba(88, 101, 242, 0.45);
+  }
+}
+
+.gc-discord-icon { display: block; }
+
+.gc-signin {
+  p { margin: 0 0 0.75rem; }
+
+  &__actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+}
+
+.gc-chip--ok {
+  background: rgba(52, 208, 88, 0.15);
+  color: var(--gc-success);
+  border-color: rgba(52, 208, 88, 0.4);
+}
+
+// ===========================================================================
+// Entrance tests
+// ===========================================================================
+
+.gc-tests {
+  max-width: 880px;
+  margin: 0 auto;
+
+  &__intro { color: var(--gc-fg-mute); line-height: 1.6; }
+  &__heading { font-family: var(--gc-font-display); font-size: 1.1rem; margin: 2rem 0 0.9rem; }
+
+  &__form {
+    max-width: none;
+    margin: 1.5rem 0 1rem;
+    padding: 1.2rem;
+    background: var(--gc-bg-elev);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--gc-radius-md);
+
+    h2 { margin: 0; font-size: 1.05rem; font-family: var(--gc-font-display); }
+  }
+
+  &__form, .gc-test__form {
+    input[type="text"], input[type="number"], textarea {
+      background: var(--gc-bg);
+      color: var(--gc-fg);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: var(--gc-radius-sm);
+      padding: 0.5rem 0.65rem;
+      font-family: inherit;
+      font-size: inherit;
+      width: 100%;
+    }
+
+    textarea { resize: vertical; }
+    input[type="file"] { color: var(--gc-fg-mute); font-family: inherit; max-width: 100%; }
+  }
+
+  &__list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.8rem; }
+}
+
+.gc-test {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 1rem 1.1rem;
+  background: var(--gc-bg-elev);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--gc-radius-md);
+
+  &--open { border-left: 3px solid var(--gc-accent); }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+
+    h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+  }
+
+  &__desc { margin: 0; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
+  &__meta { margin: 0; font-size: 0.8rem; color: var(--gc-fg-mute); }
+  &__mine { margin: 0; font-size: 0.88rem; overflow-wrap: anywhere; }
+  &__error { margin: 0; font-size: 0.85rem; color: var(--gc-danger); }
+  &__actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+  &__form {
+    max-width: none;
+    width: 100%;
+    gap: 0.4rem;
+  }
+}
+
+.gc-subs {
+  list-style: none;
+  padding: 0;
+  margin: 0.4rem 0 0;
+  width: 100%;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.gc-sub {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--gc-bg);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--gc-radius-sm);
+
+  &__body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  &__meta { display: block; font-size: 0.8rem; color: var(--gc-fg-mute); margin-top: 0.2rem; }
+  &__comment { margin: 0.35rem 0 0; font-size: 0.85rem; white-space: pre-line; }
+  &__ok { margin: 0.35rem 0 0; font-size: 0.85rem; color: var(--gc-success); }
+  &__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; flex-shrink: 0; }
+
+  @media (max-width: 560px) {
+    flex-direction: column;
+
+    &__actions { width: 100%; }
+  }
+}
+
+// ===========================================================================
+// Contact Kumo
+// ===========================================================================
+
+.gc-kumo {
+  max-width: 760px;
+  margin: 0 auto;
+
+  &__intro { color: var(--gc-fg-mute); line-height: 1.6; }
+
+  // Laid out bottom-up, so the newest message stays in view above the
+  // composer without any scrolling code.
+  &__chat {
+    display: flex;
+    flex-direction: column-reverse;
+    height: min(60vh, 520px);
+    overflow-y: auto;
+    margin: 1.25rem 0 0.75rem;
+    padding: 1rem;
+    background: var(--gc-bg-elev);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--gc-radius-md);
+  }
+
+  &__messages {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.6rem;
+  }
+
+  &__empty { margin: auto; color: var(--gc-fg-mute); }
+  &__error { margin: 0.4rem 0; font-size: 0.85rem; color: var(--gc-danger); }
+  &__hint { margin-top: 1.25rem; font-size: 0.85rem; color: var(--gc-fg-mute); }
+
+  &__composer {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-end;
+
+    textarea {
+      flex: 1;
+      min-width: 0;
+      resize: vertical;
+      background: var(--gc-bg);
+      color: var(--gc-fg);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: var(--gc-radius-sm);
+      padding: 0.6rem 0.75rem;
+      font-family: inherit;
+      font-size: inherit;
+    }
+  }
+}
+
+.gc-msg {
+  max-width: 80%;
+  padding: 0.6rem 0.85rem;
+  border-radius: var(--gc-radius-md);
+
+  &__body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+  &__meta { display: block; margin-top: 0.3rem; font-size: 0.72rem; color: var(--gc-fg-mute); }
+
+  &--me {
+    align-self: flex-end;
+    background: rgba(0, 242, 255, 0.1);
+    border: 1px solid rgba(0, 242, 255, 0.28);
+  }
+
+  &--kumo {
+    align-self: flex-start;
+    background: rgba(191, 0, 255, 0.1);
+    border: 1px solid rgba(191, 0, 255, 0.28);
+  }
+
+  &--typing {
+    align-self: flex-start;
+    font-size: 0.85rem;
+    color: var(--gc-fg-mute);
+    font-style: italic;
+  }
+}

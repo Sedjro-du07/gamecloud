@@ -71,6 +71,8 @@ pub fn build(state: AppState) -> Router {
         .nest("/resources", routes::resources::router())
         .nest("/seasons", routes::seasons::router())
         .nest("/shares", routes::shares::router())
+        .nest("/tests", routes::entrance::router())
+        .nest("/contact", routes::contact::router())
         .nest("/admin", routes::admin::router())
         .merge(routes::webhooks::router());
 

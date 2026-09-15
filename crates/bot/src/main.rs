@@ -50,8 +50,10 @@ async fn main() -> anyhow::Result<()> {
     // GUILDS carries the role cache that GuildMemberUpdate is resolved
     // against; GUILD_MEMBERS is the privileged intent that delivers the
     // member events themselves.
+    // DIRECT_MESSAGES: private messages to the bot are relayed to Kumo.
     let intents = serenity::GatewayIntents::GUILDS
         | serenity::GatewayIntents::GUILD_MESSAGES
+        | serenity::GatewayIntents::DIRECT_MESSAGES
         | serenity::GatewayIntents::MESSAGE_CONTENT
         | serenity::GatewayIntents::GUILD_MEMBERS;
 
@@ -72,6 +74,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!(user = %ready.user.name, "bot ready");
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                 events::outbox::spawn(state_for_setup.clone(), ctx.http.clone());
+                events::kumo::spawn(state_for_setup.clone(), ctx.http.clone());
                 spawn_role_sync(state_for_setup.clone(), ctx.http.clone());
                 Ok(state_for_setup)
             })
@@ -124,6 +127,7 @@ async fn handle_event(
     if let FullEvent::Message { new_message } = event {
         events::draftbot::on_message_create(ctx, new_message, &state).await;
         events::mention::on_message(ctx, new_message, &state).await;
+        events::kumo::on_message(ctx, new_message, &state).await;
     }
     Ok(())
 }

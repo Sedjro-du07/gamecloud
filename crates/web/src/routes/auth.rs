@@ -89,12 +89,15 @@ struct DiscordUser {
 }
 
 /// Where to send the user after a successful OAuth callback. If the
-/// account is already verified, jump straight to the profile; if it
+/// account is already verified, jump straight to the profile; a candidate
+/// — not on the server, not admitted — goes to the entrance tests; if it
 /// has submitted an email but not verified, jump to /onboarding/verify;
 /// otherwise (`Pending`), show /onboarding/email.
-fn post_login_target(record: &UserRecord) -> &'static str {
+fn post_login_target(record: &UserRecord, candidate: bool) -> &'static str {
     if record.email_verified {
         "/profile"
+    } else if candidate {
+        "/tests"
     } else if record.email.is_some() {
         "/onboarding/verify"
     } else {
@@ -208,12 +211,64 @@ async fn callback(
         tracing::warn!(error = %e, user = %user.id, "legacy XP not credited");
     }
 
-    let target = post_login_target(&user);
+    let candidate = settle_admission(&state, &user).await?;
+    let target = post_login_target(&user, candidate);
 
     let (jar, _exp) = issue_session(&state, jar, user.id, None, None).await?;
     let jar = jar.remove(Cookie::from(OAUTH_STATE_COOKIE));
 
     Ok((jar, Redirect::to(target)).into_response())
+}
+
+/// Decide at login whether an account is a candidate.
+///
+/// Somebody already on the association's Discord server signs up as
+/// before. Somebody who is not must pass an entrance test first: until
+/// the Bureau admits them they are a candidate, and signing up waits.
+/// Members, office holders (an office can be given before its holder
+/// signs up) and admitted accounts are never candidates.
+///
+/// When Discord cannot say — no bot token configured, or no answer —
+/// the stored status stands, so a Discord outage neither locks members
+/// out nor lets candidates skip the test.
+async fn settle_admission(state: &AppState, user: &UserRecord) -> WebResult<bool> {
+    use crate::db::queries::entrance;
+
+    let admission = entrance::admission(state.pool(), user.id).await?;
+    if user.email_verified || user.bureau_role.is_some() || admission.admitted_at.is_some() {
+        if admission.candidate {
+            entrance::set_candidate(state.pool(), user.id, false).await?;
+        }
+        return Ok(false);
+    }
+
+    match crate::services::discord::is_guild_member(state.config(), &user.discord_id).await {
+        Some(on_server) => {
+            let candidate = !on_server;
+            entrance::set_candidate(state.pool(), user.id, candidate).await?;
+            Ok(candidate)
+        }
+        None => Ok(admission.candidate),
+    }
+}
+
+/// Refuse a candidate's attempt to sign up.
+///
+/// A browser form goes back to the entrance tests with the reason; an API
+/// call gets the error.
+fn refuse_candidate(is_form: bool) -> WebResult<Response> {
+    if is_form {
+        let query = serde_urlencoded::to_string([(
+            "erreur",
+            "passe d'abord un test d'entrée : l'inscription s'ouvre une fois admis",
+        )])
+        .unwrap_or_default();
+        Ok(Redirect::to(&format!("/tests?{query}")).into_response())
+    } else {
+        Err(WebError::Domain(DomainError::Forbidden(
+            "entrance test not passed yet",
+        )))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +331,12 @@ async fn submit_email(
     }
 
     let is_form = is_form_request(&request);
+    if crate::db::queries::entrance::admission(state.pool(), user.id)
+        .await?
+        .candidate
+    {
+        return refuse_candidate(is_form);
+    }
     let bytes = read_body(request).await?;
     let body: SubmitEmailBody = decode_body(is_form, &bytes)?;
 
@@ -330,6 +391,12 @@ async fn verify_otp(
     request: Request,
 ) -> WebResult<Response> {
     let is_form = is_form_request(&request);
+    if crate::db::queries::entrance::admission(state.pool(), user.id)
+        .await?
+        .candidate
+    {
+        return refuse_candidate(is_form);
+    }
     let bytes = read_body(request).await?;
     let body: VerifyOtpBody = decode_body(is_form, &bytes)?;
 

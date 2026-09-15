@@ -297,7 +297,9 @@ fn help_embed() -> CreateEmbed {
              • **les quêtes**\n\
              • **l'agenda**, **la prochaine séance**\n\n\
              Les commandes `/profil`, `/xp`, `/track`, `/leaderboard`, \
-             `/quetes` et `/badges` font la même chose en plus précis.",
+             `/quetes` et `/badges` font la même chose en plus précis.\n\n\
+             Pour écrire à **Kumo**, envoie-moi un message privé : je lui \
+             transmets et je te renvoie sa réponse.",
         )
         .color(0xbf_00ff)
 }

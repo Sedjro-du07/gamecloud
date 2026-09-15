@@ -810,9 +810,34 @@ fn CalendarHead(
     }
 }
 
-/// Calendar page.
+/// Calendar page. Signed-in people only: a visitor is asked to sign in.
 #[component]
 pub fn CalendarPage() -> impl IntoView {
+    let me = Resource::new(|| (), |()| async { crate::server_fns::get_me().await });
+    view! {
+        <Suspense fallback=|| view! { <p class="gc-empty">"Chargement du calendrier…"</p> }>
+            {move || {
+                me.get()
+                    .map(|result| match result.ok().flatten() {
+                        Some(_) => view! { <CalendarBoard /> }.into_any(),
+                        None => {
+                            view! {
+                                <section class="gc-cal">
+                                    <h1>"Calendrier"</h1>
+                                    <crate::components::sign_in_prompt::SignInPrompt what="voir le calendrier" />
+                                </section>
+                            }
+                                .into_any()
+                        }
+                    })
+            }}
+        </Suspense>
+    }
+}
+
+/// The calendar itself.
+#[component]
+fn CalendarBoard() -> impl IntoView {
     // Start on the current month. Computed once, from the browser on
     // hydration and from the server on the first render — both agree,
     // because both ask for "now" in UTC.
