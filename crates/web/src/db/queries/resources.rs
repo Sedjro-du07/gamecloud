@@ -207,6 +207,17 @@ pub async fn submit(
     Ok(id)
 }
 
+/// What validating a resource needs to know about it.
+#[derive(sqlx::FromRow)]
+struct ToValidate {
+    submitted_by: Uuid,
+    title: String,
+    validated_by: Option<Uuid>,
+    url: String,
+    resource_type: Option<String>,
+    tracks: Vec<String>,
+}
+
 /// Validate a resource, paying the submitter.
 ///
 /// Idempotent: a second validation of the same entry pays nothing,
@@ -222,14 +233,23 @@ pub async fn validate_entry(
 ) -> WebResult<bool> {
     let mut tx = pool.begin().await?;
 
-    let row: Option<(Uuid, String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT submitted_by, title, validated_by FROM resources WHERE id = $1 FOR UPDATE",
+    let row = sqlx::query_as::<_, ToValidate>(
+        "SELECT submitted_by, title, validated_by, url, resource_type, tracks \
+           FROM resources WHERE id = $1 FOR UPDATE",
     )
     .bind(resource_id)
     .fetch_optional(&mut *tx)
     .await?;
 
-    let Some((submitter, title, already)) = row else {
+    let Some(ToValidate {
+        submitted_by: submitter,
+        title,
+        validated_by: already,
+        url,
+        resource_type: kind,
+        tracks,
+    }) = row
+    else {
         return Err(WebError::NotFound);
     };
     if already.is_some() {
@@ -258,6 +278,20 @@ pub async fn validate_entry(
         &mut tx,
         channels,
         &crate::services::notifications::Announcement::resource_reviewed(submitter, &title, true),
+    )
+    .await?;
+
+    let author: String = sqlx::query_scalar(
+        "SELECT member_display_name(current_title, discord_global_name, discord_username, discord_id) \
+           FROM users WHERE id = $1",
+    )
+    .bind(submitter)
+    .fetch_one(&mut *tx)
+    .await?;
+    notifications::enqueue(
+        &mut tx,
+        channels,
+        &Announcement::resource_published(&title, &url, kind.as_deref(), &author, &tracks),
     )
     .await?;
 

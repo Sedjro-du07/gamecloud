@@ -11,6 +11,17 @@ pub async fn leaderboard(
     ctx: Context<'_>,
     #[description = "Track to filter on (Engineering, GameDesign, …)"] track: Option<String>,
 ) -> Result<(), anyhow::Error> {
+    if !super::is_registered(ctx.data().pool(), &ctx.author().id.to_string()).await {
+        ctx.send(
+            poise::CreateReply::default().ephemeral(true).content(
+                "Le classement est réservé aux membres inscrits : connecte-toi sur \
+                 GameCloud OS avec Discord et vérifie ton adresse Epitech.",
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
+
     let body = if let Some(track_str) = track.as_deref() {
         if Track::parse(track_str).is_none() {
             ctx.reply(format!("Track inconnu : `{track_str}`")).await?;

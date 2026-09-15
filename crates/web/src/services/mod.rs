@@ -11,3 +11,4 @@ pub mod notifications;
 pub mod otp;
 pub mod password;
 pub mod tokens;
+pub mod uploads;

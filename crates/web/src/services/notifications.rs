@@ -377,6 +377,79 @@ impl Announcement {
         }
     }
 
+    /// A member shared a file or a link.
+    ///
+    /// Points at the platform rather than at the file: downloading is for
+    /// members, and the page is where that is checked and counted.
+    #[must_use]
+    pub fn share_posted(
+        title: &str,
+        kind_label: &str,
+        author: &str,
+        description: Option<&str>,
+        detail: &str,
+        page_url: &str,
+    ) -> Self {
+        use std::fmt::Write as _;
+
+        let mut body = format!("**{author}** partage **{title}** · {kind_label}\n{detail}");
+        if let Some(text) = description.map(str::trim).filter(|d| !d.is_empty()) {
+            let short: String = text.chars().take(300).collect();
+            let more = if text.chars().count() > 300 { "…" } else { "" };
+            let _ = write!(body, "\n\n{short}{more}");
+        }
+        let _ = write!(body, "\n\n⬇️ À télécharger sur la plateforme : {page_url}");
+        Self {
+            kind: "SharePosted",
+            title: "📦 Nouveau partage".to_string(),
+            description: body,
+            color: 0x00_f2ff,
+            user_id: None,
+            track: None,
+            mention: Mention::Nobody,
+            dm: false,
+        }
+    }
+
+    /// A resource was validated and joins the library.
+    ///
+    /// Only validated resources are announced: until then the library
+    /// hides them from members, and the channel must not show what the
+    /// page does not.
+    #[must_use]
+    pub fn resource_published(
+        title: &str,
+        url: &str,
+        kind: Option<&str>,
+        author: &str,
+        tracks: &[String],
+    ) -> Self {
+        use std::fmt::Write as _;
+
+        let kind = match kind {
+            Some("Tutorial") => "Tutoriel",
+            Some("Tool") => "Outil",
+            Some("Asset") => "Asset",
+            Some("Doc") => "Documentation",
+            Some("Video") => "Vidéo",
+            _ => "Lien",
+        };
+        let mut body = format!("**{title}**\n🔗 {url}\n\n{kind} · proposé par {author}");
+        if !tracks.is_empty() {
+            let _ = write!(body, " · {}", tracks.join(", "));
+        }
+        Self {
+            kind: "ResourcePublished",
+            title: "📚 Nouvelle ressource".to_string(),
+            description: body,
+            color: 0x00_ff88,
+            user_id: None,
+            track: None,
+            mention: Mention::Nobody,
+            dm: false,
+        }
+    }
+
     /// A meeting was called for the Bureau.
     ///
     /// Separate from [`Self::event_scheduled`] rather than a flag on it,
@@ -588,6 +661,39 @@ pub async fn enqueue(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_share_announcement_points_members_to_the_platform() {
+        let a = Announcement::share_posted(
+            "Pack forêt",
+            "Assets",
+            "Ada",
+            Some(&"x".repeat(400)),
+            "📁 foret.zip · 2,0 Mo",
+            "https://gamecloud.example/shares",
+        );
+        assert_eq!(a.kind, "SharePosted");
+        assert_eq!(a.mention, Mention::Nobody);
+        assert!(a.description.contains("https://gamecloud.example/shares"));
+        // A long description is cut, so one upload cannot fill the channel.
+        assert!(a.description.contains(&format!("{}…", "x".repeat(300))));
+        assert!(!a.description.contains(&"x".repeat(301)));
+    }
+
+    #[test]
+    fn a_resource_announcement_carries_its_link() {
+        let a = Announcement::resource_published(
+            "Shaders Godot",
+            "https://docs.godotengine.org",
+            Some("Tutorial"),
+            "Ada",
+            &["VisualArt".to_string()],
+        );
+        assert_eq!(a.kind, "ResourcePublished");
+        assert!(a.description.contains("https://docs.godotengine.org"));
+        assert!(a.description.contains("Tutoriel"));
+        assert!(a.description.contains("VisualArt"));
+    }
 
     #[test]
     fn parses_hex_colors_with_and_without_hash() {

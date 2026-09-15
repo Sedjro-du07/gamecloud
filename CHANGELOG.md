@@ -1,5 +1,46 @@
 # Changelog
 
+## Septembre 2026 (suite) — partages, salons d'annonces, classement réservé
+
+### Partages
+
+Une page **Partages** (📦 dans le menu) où tout membre inscrit dépose un
+**fichier** (zip, script, pdf, build… jusqu'à 500 Mo) ou un **lien**
+(itch.io, GitHub, Drive…) : un script, du lore, un jeu, des assets. Tous
+les membres peuvent télécharger, et chaque partage affiche son **nombre de
+téléchargements** — les liens aussi, parce qu'ils passent par la
+plateforme. Filtre par type, retrait par l'auteur ou la modération.
+
+Pas d'XP pour un partage : ça récompenserait la quantité, pas la qualité.
+
+Les fichiers sont gardés dans `SHARES_DIR` (par défaut `data/shares`), avec
+leur SHA-256. En production, ce dossier doit être sur un volume qui
+survit aux redéploiements.
+
+**Corrigé** : télécharger un build dont le nom contient un accent ou un
+guillemet cassait la réponse.
+
+### Salons d'annonces
+
+- **`📦partages`** annonce chaque nouveau partage, avec un lien vers la
+  page.
+- **`📚ressources`** annonce chaque ressource **validée**, avec son lien.
+  Les demandes de validation restent dans `🔍a-valider` ou le salon de la
+  track : une ressource non validée n'est pas montrée aux membres.
+
+Les deux salons existaient déjà — `🪄créations` et `📰veille-gamedev` —
+et ont été renommés plutôt que doublés. Aucun des deux ne retombe sur
+`📢annonces` s'il n'est pas configuré.
+
+### Classement réservé aux inscrits
+
+Le classement nomme les membres et leur XP : il n'est plus visible par
+quelqu'un qui n'a pas de compte vérifié. Sur la plateforme, la page le
+dit, et le lien du menu, le bouton de l'accueil et l'API disparaissent ou
+refusent. Sur Discord, `#🏅classement` n'est lisible que par les rôles de
+titre membre — le bot remet la permission si on la change à la main — et
+`/leaderboard` comme la mention « le classement » répondent de s'inscrire.
+
 ## Septembre 2026 (suite) — réunions du Bureau, rail de navigation, bot qui répond
 
 ### Réunions du Bureau

@@ -12,5 +12,6 @@ pub mod qr;
 pub mod quests;
 pub mod resources;
 pub mod seasons;
+pub mod shares;
 pub mod users;
 pub mod webhooks;

@@ -23,6 +23,7 @@ use crate::{
         resources::ResourcesPage,
         reviews::ReviewsPage,
         scan::ScanPage,
+        shares::SharesPage,
         track_detail::TrackDetailPage,
         tracks::TrackPickerPage,
     },
@@ -96,6 +97,7 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("leaderboard") view=LeaderboardPage />
                     <Route path=StaticSegment("quests") view=QuestsPage />
                     <Route path=StaticSegment("resources") view=ResourcesPage />
+                    <Route path=StaticSegment("shares") view=SharesPage />
                     <Route path=StaticSegment("reviews") view=ReviewsPage />
                     <Route path=StaticSegment("admin") view=AdminPage />
                     <Route path=StaticSegment("scan") view=ScanPage />

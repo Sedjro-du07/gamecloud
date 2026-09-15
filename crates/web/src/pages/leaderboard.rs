@@ -88,6 +88,16 @@ pub fn LeaderboardPage() -> impl IntoView {
                         }
                             .into_any()
                     }
+                    Some(Ok(view_model)) if view_model.restricted => {
+                        view! {
+                            <div class="gc-banner gc-banner--warning">
+                                "Le classement est réservé aux membres inscrits. "
+                                <a href="/api/auth/login" rel="external">"Connecte-toi avec Discord"</a>
+                                " et vérifie ton adresse Epitech pour le voir."
+                            </div>
+                        }
+                            .into_any()
+                    }
                     Some(Ok(view_model)) => {
                         let caption = match (view_model.scope.as_str(), view_model.label.clone()) {
                             ("season", Some(name)) => format!("Saison en cours — {name}"),

@@ -95,7 +95,21 @@ fn NavRail(
                         <NavGroup label="Association">
                             <NavLink href="/calendar" icon="📅" label="Calendrier" />
                             <NavLink href="/projects" icon="🎮" label="Projets" />
-                            <NavLink href="/leaderboard" icon="🏅" label="Classement" />
+                            <NavLink href="/shares" icon="📦" label="Partages" />
+                            // Members only, like the page itself.
+                            <Suspense fallback=|| ()>
+                                {move || {
+                                    me.get()
+                                        .and_then(Result::ok)
+                                        .flatten()
+                                        .filter(|u| u.email_verified)
+                                        .map(|_| {
+                                            view! {
+                                                <NavLink href="/leaderboard" icon="🏅" label="Classement" />
+                                            }
+                                        })
+                                }}
+                            </Suspense>
                             <NavLink href="/resources" icon="📚" label="Ressources" />
                         </NavGroup>
 

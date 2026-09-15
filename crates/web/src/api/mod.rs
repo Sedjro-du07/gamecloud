@@ -183,6 +183,8 @@ pub struct LeaderboardView {
     pub label: Option<String>,
     /// The rows.
     pub entries: Vec<LeaderboardEntry>,
+    /// The viewer is not a registered member, so no rows were sent.
+    pub restricted: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +377,49 @@ pub struct FileItem {
     pub changelog: Option<String>,
     /// Pre-formatted upload date.
     pub when: String,
+}
+
+/// A member share: a script, some lore, a game or assets.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ShareItem {
+    /// Row id, used to build the download link.
+    pub id: String,
+    /// Title.
+    pub title: String,
+    /// What it is about.
+    pub description: Option<String>,
+    /// `Script`, `Lore`, `Game`, `Asset` or `Other`.
+    pub kind: String,
+    /// French label for the kind.
+    pub kind_label: String,
+    /// Whether it is a link rather than a file.
+    pub is_link: bool,
+    /// Original filename, for a file.
+    pub filename: Option<String>,
+    /// Human-readable size, for a file.
+    pub size: Option<String>,
+    /// Site the link points to, for a link.
+    pub host: Option<String>,
+    /// Downloads so far.
+    pub downloads: i64,
+    /// Who posted it.
+    pub author: String,
+    /// Pre-formatted posting date.
+    pub when: String,
+    /// Whether the viewer may remove it (its author, or moderation).
+    pub may_delete: bool,
+}
+
+/// The shares page.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SharesView {
+    /// Every share, newest first.
+    pub items: Vec<ShareItem>,
+    /// Whether the viewer is signed in.
+    pub signed_in: bool,
+    /// Whether the viewer may post and download: signed in with a
+    /// verified address.
+    pub can_upload: bool,
 }
 
 /// A resource-library entry.

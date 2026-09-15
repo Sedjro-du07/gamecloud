@@ -8,3 +8,4 @@
 .vscode/
 .idea/
 /Cargo.lock.bak
+/data

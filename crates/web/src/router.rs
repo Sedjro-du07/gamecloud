@@ -16,7 +16,8 @@ impl axum::extract::FromRef<AppState> for LeptosOptions {
 
 /// Largest request body accepted by an ordinary endpoint, in bytes.
 ///
-/// Build uploads opt out of this — see `routes::projects`, which streams
+/// Build and share uploads opt out of this — see `routes::projects` and
+/// `routes::shares`, which stream
 /// to a temporary file and enforces its own 500 MB ceiling, so the size
 /// of what members upload never becomes the size of this process.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
@@ -69,6 +70,7 @@ pub fn build(state: AppState) -> Router {
         .nest("/quests", routes::quests::router())
         .nest("/resources", routes::resources::router())
         .nest("/seasons", routes::seasons::router())
+        .nest("/shares", routes::shares::router())
         .nest("/admin", routes::admin::router())
         .merge(routes::webhooks::router());
 

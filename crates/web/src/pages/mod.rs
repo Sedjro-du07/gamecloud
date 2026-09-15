@@ -13,5 +13,6 @@ pub mod quests;
 pub mod resources;
 pub mod reviews;
 pub mod scan;
+pub mod shares;
 pub mod track_detail;
 pub mod tracks;

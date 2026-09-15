@@ -281,10 +281,17 @@ struct LeaderboardResponse {
     rows: Vec<leaderboard::LeaderboardRow>,
 }
 
+/// Members only: the board names people and their XP.
 async fn leaderboard_route(
     State(state): State<AppState>,
+    user: CurrentUser,
     Query(q): Query<LeaderboardQuery>,
 ) -> WebResult<Json<LeaderboardResponse>> {
+    if !user.record.email_verified {
+        return Err(WebError::Domain(
+            gamecloud_shared::DomainError::EmailNotVerified,
+        ));
+    }
     let limit = q.limit.unwrap_or(20);
     let scope = q.scope.as_deref().unwrap_or("season");
 

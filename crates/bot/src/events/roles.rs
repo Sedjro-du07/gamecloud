@@ -54,7 +54,7 @@ const fn readable(track: Track) -> &'static str {
 ///
 /// Returns an empty map when the guild's roles cannot be read, which
 /// makes every downstream call a no-op rather than an error storm.
-async fn rank_roles(http: &Http, guild: GuildId) -> HashMap<String, RoleId> {
+pub(crate) async fn rank_roles(http: &Http, guild: GuildId) -> HashMap<String, RoleId> {
     let Ok(roles) = guild.roles(http).await else {
         tracing::warn!(%guild, "could not read guild roles; rank sync disabled");
         return HashMap::new();

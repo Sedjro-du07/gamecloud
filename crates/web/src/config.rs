@@ -103,6 +103,11 @@ pub struct Config {
     /// Only enable when a reverse proxy you control overwrites the
     /// header; otherwise callers can spoof it to dodge the limiter.
     pub trust_forwarded_for: bool,
+
+    /// Directory where files shared by members are kept. Created on the
+    /// first upload. Must survive restarts and deploys — on a host with an
+    /// ephemeral filesystem, point it at a mounted volume.
+    pub shares_dir: std::path::PathBuf,
 }
 
 impl Config {
@@ -159,6 +164,8 @@ impl Config {
                 journal: channel("DISCORD_JOURNAL_CHANNEL_ID")?,
                 bureau: channel("DISCORD_BUREAU_CHANNEL_ID")?,
                 presences: channel("DISCORD_PRESENCES_CHANNEL_ID")?,
+                shares: channel("DISCORD_SHARES_CHANNEL_ID")?,
+                resources: channel("DISCORD_RESOURCES_CHANNEL_ID")?,
                 tracks: track_channels(),
             },
 
@@ -168,6 +175,10 @@ impl Config {
             rate_limit_sensitive_per_min: parse_or("RATE_LIMIT_SENSITIVE_PER_MIN", 10_u32)?,
             rate_limit_default_per_min: parse_or("RATE_LIMIT_DEFAULT_PER_MIN", 120_u32)?,
             trust_forwarded_for: get("TRUST_FORWARDED_FOR").is_ok_and(|v| v == "true"),
+
+            shares_dir: optional("SHARES_DIR")
+                .unwrap_or_else(|| "data/shares".to_string())
+                .into(),
         })
     }
 }
@@ -200,11 +211,20 @@ pub struct DiscordChannels {
     /// Attendance recorded by QR scan. No fallback: a line per scan would
     /// drown the general feed.
     pub presences: Option<u64>,
+    /// Files and links members share. No fallback: a line per upload
+    /// belongs with the shares, not in the general feed.
+    pub shares: Option<u64>,
+    /// Validated resources and useful links. No fallback either.
+    pub resources: Option<u64>,
     /// One channel per track, in [`Track::ALL`] order. A review request
     /// lands in the channel of the discipline being asked, which is the
     /// difference between a queue nobody reads and a question addressed
     /// to the people who can answer it.
-    pub tracks: [Option<u64>; 8],
+    ///
+    /// `NonZeroU64` because a channel id is never zero, which lets
+    /// `Option` cost nothing: the struct is copied into every handler
+    /// that announces, and it stays small enough to pass by value.
+    pub tracks: [Option<std::num::NonZeroU64>; 8],
 }
 
 impl DiscordChannels {
@@ -240,6 +260,8 @@ impl DiscordChannels {
             // unset would be worse than not announcing it at all.
             "BureauMeeting" | "BureauMeetingCancelled" => self.bureau,
             "AttendanceRecorded" => self.presences,
+            "SharePosted" => self.shares,
+            "ResourcePublished" => self.resources,
             // An event concerning one track belongs in that track's
             // channel, where the people it concerns already are.
             "EventScheduled" | "EventCancelled" => track
@@ -260,6 +282,7 @@ impl DiscordChannels {
             .iter()
             .position(|t| *t == track)
             .and_then(|i| self.tracks[i])
+            .map(std::num::NonZeroU64::get)
     }
 }
 
@@ -269,7 +292,7 @@ impl DiscordChannels {
 /// unparseable entry is skipped with a warning instead of stopping the
 /// boot — a mistyped channel id should cost one silent track, not the
 /// whole deployment.
-fn track_channels() -> [Option<u64>; 8] {
+fn track_channels() -> [Option<std::num::NonZeroU64>; 8] {
     let mut out = [None; 8];
     let Some(raw) = optional("DISCORD_TRACK_CHANNELS") else {
         return out;
@@ -279,7 +302,10 @@ fn track_channels() -> [Option<u64>; 8] {
             tracing::warn!(entry, "DISCORD_TRACK_CHANNELS: expected Track=id");
             continue;
         };
-        let (Some(track), Ok(id)) = (Track::parse(name.trim()), id.trim().parse::<u64>()) else {
+        let (Some(track), Ok(id)) = (
+            Track::parse(name.trim()),
+            id.trim().parse::<std::num::NonZeroU64>(),
+        ) else {
             tracing::warn!(entry, "DISCORD_TRACK_CHANNELS: unknown track or bad id");
             continue;
         };
@@ -391,6 +417,34 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shares_and_resources_go_to_their_own_channels_and_nowhere_else() {
+        let routed = DiscordChannels {
+            announce: Some(1),
+            shares: Some(2),
+            resources: Some(3),
+            ..DiscordChannels::default()
+        };
+        assert_eq!(routed.for_kind("SharePosted"), Some(2));
+        assert_eq!(routed.for_kind("ResourcePublished"), Some(3));
+
+        // Unset, they stay silent rather than flooding the general feed.
+        let unset = DiscordChannels {
+            announce: Some(1),
+            ..DiscordChannels::default()
+        };
+        assert_eq!(unset.for_kind("SharePosted"), None);
+        assert_eq!(unset.for_kind("ResourcePublished"), None);
+    }
+
+    #[test]
+    fn a_track_channel_id_round_trips() {
+        let mut channels = DiscordChannels::default();
+        channels.tracks[0] = std::num::NonZeroU64::new(42);
+        assert_eq!(channels.for_track(Track::ALL[0]), Some(42));
+        assert_eq!(channels.for_track(Track::ALL[1]), None);
+    }
+
     use super::*;
 
     const GOOD: &str = "8qP1x4tZ0nR7vK2mB5cY9wS3jL6hD0fA1gE4uI7oQ2rT5yV8";

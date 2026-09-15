@@ -20,3 +20,18 @@ pub fn all() -> Vec<poise::Command<BotState, anyhow::Error>> {
         badges::badges(),
     ]
 }
+
+/// Whether a Discord user is a registered member: a platform account
+/// with a verified Epitech address.
+///
+/// The leaderboard names members and their XP, so it is shown to members
+/// only. A database error counts as "no": refusing is the safe answer.
+pub async fn is_registered(pool: &sqlx::PgPool, discord_id: &str) -> bool {
+    sqlx::query_scalar::<_, bool>("SELECT email_verified FROM users WHERE discord_id = $1")
+        .bind(discord_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false)
+}

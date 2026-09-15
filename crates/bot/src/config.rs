@@ -63,6 +63,10 @@ pub struct Config {
     pub reviews_channel_id: Option<u64>,
     /// Attendance recorded at sessions.
     pub presences_channel_id: Option<u64>,
+    /// Files and links members share.
+    pub shares_channel_id: Option<u64>,
+    /// Validated resources and useful links.
+    pub resources_channel_id: Option<u64>,
 }
 
 impl Config {
@@ -91,6 +95,8 @@ impl Config {
             hall_channel_id: parse_optional("DISCORD_HALL_CHANNEL_ID")?,
             reviews_channel_id: parse_optional("DISCORD_REVIEWS_CHANNEL_ID")?,
             presences_channel_id: parse_optional("DISCORD_PRESENCES_CHANNEL_ID")?,
+            shares_channel_id: parse_optional("DISCORD_SHARES_CHANNEL_ID")?,
+            resources_channel_id: parse_optional("DISCORD_RESOURCES_CHANNEL_ID")?,
         })
     }
 }

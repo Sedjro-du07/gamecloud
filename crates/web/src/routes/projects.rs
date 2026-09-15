@@ -319,14 +319,9 @@ struct Upload {
 
 /// Drain a multipart body into a temporary file.
 ///
-/// Streaming to disk rather than buffering is the whole point: a 500 MB
-/// build held in memory would be a denial of service against our own
-/// server. The SHA-256 is computed on the way past, which costs nothing
-/// and lets a download be checked against the record later.
+/// The file itself goes through [`crate::services::uploads`], which
+/// streams to disk and computes the checksum on the way past.
 async fn consume_upload(mut multipart: axum::extract::Multipart) -> WebResult<Upload> {
-    use sha2::{Digest, Sha256};
-    use tokio::io::AsyncWriteExt;
-
     let mut out = Upload {
         version: "v1.0".to_string(),
         changelog: None,
@@ -346,44 +341,13 @@ async fn consume_upload(mut multipart: axum::extract::Multipart) -> WebResult<Up
             "file" => {
                 let filename = field
                     .file_name()
-                    .map(ToString::to_string)
+                    .map(crate::services::uploads::clean_filename)
                     .ok_or_else(|| WebError::Validation("fichier sans nom".into()))?;
 
                 let path = std::env::temp_dir().join(format!("gc-upload-{}", Uuid::new_v4()));
-                let mut sink = tokio::fs::File::create(&path)
-                    .await
-                    .map_err(|e| WebError::Internal(anyhow::anyhow!("temp file: {e}")))?;
-
-                let mut hasher = Sha256::new();
-                let mut size: u64 = 0;
-                while let Some(chunk) = field
-                    .chunk()
-                    .await
-                    .map_err(|e| WebError::Validation(format!("lecture interrompue : {e}")))?
-                {
-                    size += chunk.len() as u64;
-                    if size > crate::db::queries::files::MAX_FILE_BYTES {
-                        let _ = tokio::fs::remove_file(&path).await;
-                        return Err(WebError::Validation(
-                            "fichier trop volumineux (500 Mo maximum)".into(),
-                        ));
-                    }
-                    hasher.update(&chunk);
-                    sink.write_all(&chunk)
-                        .await
-                        .map_err(|e| WebError::Internal(anyhow::anyhow!("temp write: {e}")))?;
-                }
-                sink.flush()
-                    .await
-                    .map_err(|e| WebError::Internal(anyhow::anyhow!("temp flush: {e}")))?;
-
-                let digest = hasher.finalize();
-                let mut checksum = String::with_capacity(digest.len() * 2);
-                for byte in digest {
-                    use std::fmt::Write;
-                    let _ = write!(&mut checksum, "{byte:02x}");
-                }
-                out.file = Some((filename, path, size, checksum));
+                let written =
+                    crate::services::uploads::stream_to_file(&mut field, &path).await?;
+                out.file = Some((filename, path, written.size, written.checksum));
             }
             _ => {}
         }
@@ -545,7 +509,7 @@ async fn download_file(
             ),
             (
                 axum::http::header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{}\"", file.filename),
+                crate::services::uploads::attachment_header(&file.filename),
             ),
         ],
         body,

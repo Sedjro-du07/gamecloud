@@ -9,8 +9,8 @@ use std::fmt::Write as _;
 
 use gamecloud_shared::roles::{BureauRole, GlobalRank, Track};
 use serenity::all::{
-    ChannelId, CreateEmbed, CreateEmbedFooter, CreateMessage, EditMessage, GetMessages, Http,
-    Timestamp,
+    Channel, ChannelId, CreateEmbed, CreateEmbedFooter, CreateMessage, EditMessage, GetMessages,
+    GuildId, Http, PermissionOverwrite, PermissionOverwriteType, Permissions, RoleId, Timestamp,
 };
 
 use crate::state::BotState;
@@ -26,11 +26,72 @@ const GUIDE_TITLE: &str = "📖 Guide de GameCloud OS";
 pub async fn refresh(state: &BotState, http: &Http) {
     let config = state.config();
     if let Some(id) = config.leaderboard_channel_id {
+        if let Some(guild) = config.guild_id {
+            members_only(http, GuildId::new(guild), ChannelId::new(id)).await;
+        }
         let embed = leaderboard(state).await;
         upsert(http, ChannelId::new(id), LEADERBOARD_TITLE, embed).await;
     }
     if let Some(id) = config.guide_channel_id {
         upsert(http, ChannelId::new(id), GUIDE_TITLE, guide(state)).await;
+    }
+}
+
+/// Keep `channel` readable by registered members only.
+///
+/// The leaderboard names members and their XP, so the server at large
+/// should not read it. `@everyone` loses the right to see the channel,
+/// and every member-title role gets it back — those roles are exactly the
+/// people the platform recognises, and the bot keeps them in step. Nobody
+/// but the bot may post.
+///
+/// Checked on every pass, so a title role recreated by hand, or a
+/// permission changed in Discord, is put back. When no title role can be
+/// read, nothing is touched: locking the channel with nobody let in
+/// would be worse than leaving it open.
+async fn members_only(http: &Http, guild: GuildId, channel: ChannelId) {
+    let titles = super::roles::rank_roles(http, guild).await;
+    if titles.is_empty() {
+        return;
+    }
+    let current = match channel.to_channel(http).await {
+        Ok(Channel::Guild(c)) => c.permission_overwrites,
+        Ok(_) => return,
+        Err(e) => {
+            tracing::warn!(error = %e, %channel, "boards: could not read channel permissions");
+            return;
+        }
+    };
+
+    // `@everyone` shares the guild's id.
+    let mut wanted = vec![PermissionOverwrite {
+        allow: Permissions::empty(),
+        deny: Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES,
+        kind: PermissionOverwriteType::Role(RoleId::new(guild.get())),
+    }];
+    wanted.extend(
+        GlobalRank::ALL
+            .iter()
+            // The not-yet-verified title is not a member.
+            .filter(|rank| **rank != GlobalRank::Pending)
+            .filter_map(|rank| titles.get(rank.title()))
+            .map(|role| PermissionOverwrite {
+                allow: Permissions::VIEW_CHANNEL,
+                deny: Permissions::empty(),
+                kind: PermissionOverwriteType::Role(*role),
+            }),
+    );
+
+    for overwrite in wanted {
+        let in_place = current
+            .iter()
+            .any(|o| o.kind == overwrite.kind && o.allow == overwrite.allow && o.deny == overwrite.deny);
+        if in_place {
+            continue;
+        }
+        if let Err(e) = channel.create_permission(http, overwrite).await {
+            tracing::warn!(error = %e, %channel, "boards: could not set channel permission");
+        }
     }
 }
 
@@ -145,8 +206,16 @@ fn guide(state: &BotState) -> CreateEmbed {
         "annonces de l'association, séances, rangs et badges",
     );
     line(config.quests_channel_id, "quêtes ouvertes");
-    line(config.leaderboard_channel_id, "classement, tenu à jour");
+    line(
+        config.leaderboard_channel_id,
+        "classement, tenu à jour (réservé aux membres inscrits)",
+    );
     line(config.hall_channel_id, "projets publiés");
+    line(
+        config.shares_channel_id,
+        "partages des membres : scripts, lore, jeux, assets",
+    );
+    line(config.resources_channel_id, "ressources validées et liens utiles");
     line(config.reviews_channel_id, "ressources en attente de validation");
     line(config.presences_channel_id, "présences enregistrées aux séances");
     if config.draftbot_enabled {

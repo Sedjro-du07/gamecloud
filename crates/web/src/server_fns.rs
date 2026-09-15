@@ -25,14 +25,14 @@ use leptos::prelude::*;
 // Types that appear in the function signatures, so both targets need them.
 use crate::api::{
     AuditLine, CalendarEvent, CalendarRights, EventAttendee, EventDraft, FileItem, LeaderboardView, MeView, ProjectCard,
-    ProjectDetailView, QrTicket, QuestItem, ResourceItem, ReviewItem, SheetView, TrackBoard,
+    ProjectDetailView, QrTicket, QuestItem, ResourceItem, ReviewItem, SharesView, SheetView, TrackBoard,
     TrackOption,
 };
 
 // Types only constructed inside the server bodies.
 #[cfg(feature = "ssr")]
 use crate::api::{
-    AttendanceEntry, BadgeItem, ContributorItem, LeaderboardEntry, ProjectRights, TrackView,
+    AttendanceEntry, BadgeItem, ContributorItem, LeaderboardEntry, ProjectRights, ShareItem, TrackView,
     VerdictItem, XpEntry,
 };
 
@@ -87,6 +87,20 @@ mod ctx {
     /// Format a timestamp the way the UI shows it.
     pub fn stamp(at: chrono::DateTime<chrono::Utc>) -> String {
         at.format("%d/%m/%Y %H:%M").to_string()
+    }
+
+    /// Whether an account is a registered member: it exists and its
+    /// Epitech address is verified. A database error reads as "no", so a
+    /// hiccup hides members-only data rather than showing it.
+    pub async fn is_registered(state: &AppState, id: Option<Uuid>) -> bool {
+        let Some(id) = id else {
+            return false;
+        };
+        crate::db::queries::users::find_by_id(state.pool(), id)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|u| u.email_verified)
     }
 
     /// Format a date only.
@@ -334,6 +348,16 @@ pub async fn get_leaderboard(
         let viewer = ctx::current_user_id(&state).await;
         let err = |e: crate::error::WebError| ServerFnError::new(e.to_string());
 
+        // The board names members and their XP: it is for members. A
+        // visitor, or an account that has not verified its address,
+        // gets no rows — the page says why.
+        if !ctx::is_registered(&state, viewer).await {
+            return Ok(LeaderboardView {
+                restricted: true,
+                ..LeaderboardView::default()
+            });
+        }
+
         let (scope, label, rows) = match scope.as_str() {
             "all" => (
                 "all".to_string(),
@@ -413,6 +437,7 @@ pub async fn get_leaderboard(
             scope,
             label,
             entries,
+            restricted: false,
         });
     }
 
@@ -1285,6 +1310,129 @@ pub async fn act_on_resource(id: String, action: String) -> Result<(), ServerFnE
     #[cfg(not(feature = "ssr"))]
     {
         let _ = (id, action);
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Member shares
+// ---------------------------------------------------------------------------
+
+/// Every share, and what the viewer may do with them.
+///
+/// The list is visible to anyone, signed in or not: it is the club's
+/// shelf. Downloading and posting are for members, and are enforced by
+/// the routes in `routes::shares`, not by what this reports.
+///
+/// # Errors
+/// Returns a `ServerFnError` on database failure.
+#[server(GetShares, "/_fn")]
+pub async fn get_shares() -> Result<SharesView, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let Some(state) = ctx::state() else {
+            return Ok(SharesView::default());
+        };
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+
+        let viewer = ctx::current_user_id(&state).await;
+        let (can_upload, moderator) = match viewer {
+            Some(id) => {
+                let verified = crate::db::queries::users::find_by_id(state.pool(), id)
+                    .await
+                    .map_err(fail)?
+                    .is_some_and(|u| u.email_verified);
+                let authority = crate::db::queries::users::load_authority(state.pool(), id)
+                    .await
+                    .map_err(fail)?;
+                (verified, authority.can(Action::ModerateContent))
+            }
+            None => (false, false),
+        };
+
+        let rows = crate::db::queries::shares::list(state.pool())
+            .await
+            .map_err(fail)?;
+
+        return Ok(SharesView {
+            signed_in: viewer.is_some(),
+            can_upload,
+            items: rows
+                .into_iter()
+                .map(|s| ShareItem {
+                    id: s.id.to_string(),
+                    kind_label: crate::db::queries::shares::kind_label(&s.kind).to_string(),
+                    host: s
+                        .url
+                        .as_deref()
+                        .and_then(|u| url::Url::parse(u).ok())
+                        .and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string())),
+                    is_link: s.url.is_some(),
+                    size: s.size_bytes.map(crate::api::format_bytes),
+                    filename: s.filename,
+                    title: s.title,
+                    description: s.description,
+                    kind: s.kind,
+                    downloads: s.download_count,
+                    author: s.uploaded_by_name,
+                    when: ctx::day(s.created_at),
+                    may_delete: moderator || viewer == Some(s.uploaded_by),
+                })
+                .collect(),
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(SharesView::default())
+}
+
+/// Remove a share. Its author, or moderation.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller may not remove it.
+#[server(DeleteShare, "/_fn")]
+pub async fn delete_share(id: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::Action;
+
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("connecte-toi d'abord"))?;
+        let share_id = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("partage introuvable"))?;
+
+        let share = crate::db::queries::shares::find(state.pool(), share_id)
+            .await
+            .map_err(fail)?;
+        if share.uploaded_by != user_id {
+            let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+                .await
+                .map_err(fail)?;
+            if !authority.can(Action::ModerateContent) {
+                return Err(ServerFnError::new(
+                    "seul l'auteur ou la modération peut retirer ce partage",
+                ));
+            }
+        }
+
+        let stored = crate::db::queries::shares::delete(state.pool(), share_id)
+            .await
+            .map_err(fail)?;
+        if let Some(name) = stored {
+            let _ = tokio::fs::remove_file(state.config().shares_dir.join(name)).await;
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = id;
         Ok(())
     }
 }

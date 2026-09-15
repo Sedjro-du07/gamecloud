@@ -10,6 +10,7 @@ pub mod projects;
 pub mod quests;
 pub mod resources;
 pub mod seasons;
+pub mod shares;
 pub mod tracks;
 pub mod qr;
 pub mod users;

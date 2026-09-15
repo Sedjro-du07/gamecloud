@@ -69,9 +69,6 @@ fn Hero() -> impl IntoView {
                 <a class="gc-btn gc-btn--primary gc-btn--lg" href="/api/auth/login" rel="external">
                     "🎮 Rejoindre la partie"
                 </a>
-                <a class="gc-btn gc-btn--ghost gc-btn--lg" href="/leaderboard">
-                    "Voir le classement"
-                </a>
             </div>
             <ul class="gc-hero__stats">
                 <li>
