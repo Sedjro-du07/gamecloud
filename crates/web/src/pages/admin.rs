@@ -63,7 +63,7 @@ fn GrantPanel() -> impl IntoView {
                 }
                 grant.dispatch((member.get(), parsed, reason.get()));
             }>
-                <Field id="xp-membre" label="Pseudo Discord">
+                <Field id="xp-membre" label="Nom d'utilisateur Discord">
                     <input id="xp-membre" class="ui-control" type="text" required=true placeholder="fred04"
                         prop:value=move || member.get() on:input=move |ev| set_member.set(event_target_value(&ev)) />
                 </Field>
@@ -188,7 +188,7 @@ fn AppointPanel() -> impl IntoView {
                 ev.prevent_default();
                 appoint.dispatch((member.get(), track.get(), role.get()));
             }>
-                <Field id="nomination-membre" label="Pseudo Discord" wide=true>
+                <Field id="nomination-membre" label="Nom d'utilisateur Discord" wide=true>
                     <input id="nomination-membre" class="ui-control" type="text" required=true placeholder="fred04"
                         prop:value=move || member.get() on:input=move |ev| set_member.set(event_target_value(&ev)) />
                 </Field>

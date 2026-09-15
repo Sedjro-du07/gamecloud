@@ -336,37 +336,25 @@ pub struct XpHistoryRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Resolve a member from their Discord pseudo.
+/// Resolve a member from their Discord username.
 ///
-/// The Bureau names members the way everybody sees them: by pseudo, with or
-/// without a leading `@`, in any case. The username is unique and tried
-/// first; a display name is accepted only when a single member carries it.
-/// Identifiers are never asked for, so they never need to be shown.
+/// The Bureau names members the way everybody sees them: by username, with
+/// or without a leading `@`, in any case. Identifiers are never asked for,
+/// so they never need to be shown.
 ///
 /// # Errors
 /// Propagates database errors.
 pub async fn find_by_reference(pool: &PgPool, reference: &str) -> WebResult<Option<Uuid>> {
-    let pseudo = reference.trim().trim_start_matches('@').trim();
-    if pseudo.is_empty() {
+    let username = reference.trim().trim_start_matches('@').trim();
+    if username.is_empty() {
         return Ok(None);
     }
-    let by_username: Option<Uuid> =
+    let found: Option<Uuid> =
         sqlx::query_scalar("SELECT id FROM users WHERE lower(discord_username) = lower($1)")
-            .bind(pseudo)
+            .bind(username)
             .fetch_optional(pool)
             .await?;
-    if by_username.is_some() {
-        return Ok(by_username);
-    }
-    let by_name: Vec<Uuid> =
-        sqlx::query_scalar("SELECT id FROM users WHERE lower(discord_global_name) = lower($1) LIMIT 2")
-            .bind(pseudo)
-            .fetch_all(pool)
-            .await?;
-    Ok(match by_name.as_slice() {
-        [only] => Some(*only),
-        _ => None,
-    })
+    Ok(found)
 }
 
 /// Pseudos of the members with these Discord ids, keyed by id, to write

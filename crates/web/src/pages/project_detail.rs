@@ -219,7 +219,7 @@ fn ContributorForm(
             ev.prevent_default();
             add.dispatch((project_id.clone(), member.get(), track.get(), role.get()));
         }>
-            <Field id="credit-membre" label="Pseudo Discord">
+            <Field id="credit-membre" label="Nom d'utilisateur Discord">
                 <input id="credit-membre" class="ui-control" type="text" required=true placeholder="fred04"
                     prop:value=move || member.get() on:input=move |ev| set_member.set(event_target_value(&ev)) />
             </Field>

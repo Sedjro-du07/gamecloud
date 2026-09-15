@@ -126,27 +126,22 @@ impl UserRecord {
         })
     }
 
-    /// The name to show a human.
+    /// The name to show a human: the Discord username, everywhere.
     ///
     /// Mirrors the `member_display_name` SQL function so a record read
     /// through `sqlx::query_as` and a row read through a hand-written
-    /// `SELECT` agree. The order is deliberate: the title a member
-    /// earned outranks the name they chose, which outranks their handle;
-    /// the raw snowflake appears only when the platform genuinely knows
-    /// nothing else about them.
+    /// `SELECT` agree. The display name is used only when the username is
+    /// missing, and an identifier never is: without either name the member
+    /// reads as a neutral word.
     #[must_use]
     pub fn display_name(&self) -> String {
-        [
-            self.current_title.as_deref(),
-            self.discord_global_name.as_deref(),
-            self.discord_username.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .find(|s| !s.is_empty())
-        .unwrap_or(&self.discord_id)
-        .to_string()
+        [self.discord_username.as_deref(), self.discord_global_name.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|s| !s.is_empty())
+            .unwrap_or("Membre sans pseudo")
+            .to_string()
     }
 }
 

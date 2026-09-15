@@ -1095,7 +1095,7 @@ pub async fn grant_xp(
         let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("aucun membre avec ce pseudo Discord"))?;
+            .ok_or_else(|| ServerFnError::new("aucun membre avec ce nom d'utilisateur Discord"))?;
 
         let outcome = crate::db::queries::xp::grant(
             state.pool(),
@@ -2057,7 +2057,7 @@ pub async fn add_contributor(
         let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("aucun membre avec ce pseudo Discord"))?;
+            .ok_or_else(|| ServerFnError::new("aucun membre avec ce nom d'utilisateur Discord"))?;
 
         crate::db::queries::projects::add_contributor(
             state.pool(),
@@ -2128,7 +2128,7 @@ pub async fn appoint_track_role(
         let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("aucun membre avec ce pseudo Discord"))?;
+            .ok_or_else(|| ServerFnError::new("aucun membre avec ce nom d'utilisateur Discord"))?;
 
         crate::db::queries::tracks::set_role(
             state.pool(),
