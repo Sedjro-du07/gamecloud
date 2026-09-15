@@ -46,8 +46,6 @@ pub struct ErrorEnvelope {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct MeView {
-    /// Member id, as a string so it round-trips without a uuid dependency.
-    pub id: String,
     /// Name to display.
     pub display_name: String,
     /// Avatar URL.
@@ -157,8 +155,6 @@ pub struct BadgeItem {
 pub struct LeaderboardEntry {
     /// 1-based position.
     pub position: usize,
-    /// Member id.
-    pub user_id: String,
     /// Name to display.
     pub display_name: String,
     /// Avatar.
@@ -271,8 +267,6 @@ pub struct VerdictItem {
 /// A credited contributor.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContributorItem {
-    /// Member id.
-    pub user_id: String,
     /// Name.
     pub display_name: String,
     /// Avatar.

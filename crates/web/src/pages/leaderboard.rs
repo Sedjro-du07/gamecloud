@@ -1,141 +1,198 @@
-//! Leaderboard page.
+//! Leaderboard — a dense list, one row per member.
 //!
-//! Three scopes share one table. **Season is the default**, on purpose:
-//! an all-time board freezes, because the members who founded the club
-//! sit on top of it permanently and a first-year joining in September
-//! can see they will never catch up. The season board gives everybody
-//! something they can actually win, while the all-time tab keeps the
-//! permanent record for those who earned it.
+//! **Season is the default**, on purpose: an all-time board freezes, because
+//! the founders sit on top of it for good and somebody joining in September
+//! can see they will never catch up. The season gives everybody something
+//! winnable; the all-time scope keeps the record.
+//!
+//! Members only. Nobody is told apart by colour: position, name and title.
 
 use leptos::prelude::*;
 
-use crate::{components::leaderboard_table::LeaderboardTable, server_fns::get_leaderboard};
+use crate::{
+    api::{format_xp, LeaderboardEntry},
+    components::ui::{
+        segment, vocab::{plain_title, track_choices}, Avatar, ButtonKind, ButtonLink, Cluster,
+        DenseList, EmptyState, ErrorState, Field, FilterBar, IconName, ListRow, Page, PageHeader,
+        Pattern, RowValue, RowsSkeleton, SegmentedControl, Stack, Gap, Tag,
+    },
+    server_fns::get_leaderboard,
+};
+
+/// The sentence over the list.
+fn caption(scope: &str, label: Option<&str>) -> String {
+    match (scope, label) {
+        ("season", Some(name)) => format!("Saison en cours : {name}"),
+        ("track", Some(name)) => format!("Track {name}"),
+        _ => "Toutes saisons confondues".to_string(),
+    }
+}
+
+/// One member's standing.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn EntryRow(
+    /// The row.
+    entry: LeaderboardEntry,
+) -> impl IntoView {
+    let lead = view! {
+        <span>{entry.position}</span>
+        <Avatar name=entry.display_name.clone() src=entry.avatar_url.clone() />
+    }
+    .into_any();
+    let streak = match entry.streak_days {
+        0 => String::new(),
+        1 => " · 1 jour de série".to_string(),
+        n => format!(" · {n} jours de série"),
+    };
+    let meta = format!("{}{streak}", plain_title(&entry.rank_title));
+    let end = view! { <RowValue text=format!("{} XP", format_xp(entry.xp)) /> }.into_any();
+    let me = entry.is_me;
+    view! {
+        <ListRow lead title=entry.display_name meta end>
+            {me.then(|| view! { <Cluster><Tag icon=IconName::User>"Toi"</Tag></Cluster> })}
+        </ListRow>
+    }
+}
+
+/// The standings for the chosen scope, in every state.
+#[component]
+fn Standings(
+    /// The board for the chosen scope.
+    board: Resource<Result<crate::api::LeaderboardView, ServerFnError>>,
+) -> impl IntoView {
+    view! {
+            <Transition fallback=|| view! { <RowsSkeleton rows=6 /> }>
+                {move || {
+                    board
+                        .get()
+                        .map(|result| match result {
+                            Err(_) => {
+                                view! {
+                                    <ErrorState
+                                        message="Impossible de charger le classement."
+                                        on_retry=Callback::new(move |()| board.refetch())
+                                    />
+                                }
+                                    .into_any()
+                            }
+                            Ok(view_model) if view_model.restricted => {
+                                view! {
+                                    <EmptyState
+                                        icon=IconName::LockSimple
+                                        title="Le classement est réservé aux membres inscrits"
+                                        body="Connecte-toi et vérifie ton adresse Epitech pour le voir."
+                                    >
+                                        <Cluster>
+                                            <ButtonLink
+                                                kind=ButtonKind::Primary
+                                                href="/api/auth/login"
+                                                external=true
+                                                icon=IconName::DiscordLogo
+                                                hide_label=true
+                                            >
+                                                "Se connecter avec Discord"
+                                            </ButtonLink>
+                                            <ButtonLink kind=ButtonKind::Ghost href="/onboarding/email" icon=IconName::Envelope>
+                                                "Vérifier mon adresse"
+                                            </ButtonLink>
+                                        </Cluster>
+                                    </EmptyState>
+                                }
+                                    .into_any()
+                            }
+                            Ok(view_model) if view_model.entries.is_empty() => {
+                                view! {
+                                    <EmptyState
+                                        icon=IconName::Trophy
+                                        title="Personne n'a encore marqué de points ici"
+                                        body=caption(&view_model.scope, view_model.label.as_deref())
+                                    />
+                                }
+                                    .into_any()
+                            }
+                            Ok(view_model) => {
+                                let text = caption(&view_model.scope, view_model.label.as_deref());
+                                view! {
+                                    <Stack gap=Gap::Tight>
+                                        <p class="ui-meta">{text}</p>
+                                        <DenseList label="Classement">
+                                            {view_model
+                                                .entries
+                                                .into_iter()
+                                                .map(|entry| view! { <EntryRow entry /> })
+                                                .collect_view()}
+                                        </DenseList>
+                                    </Stack>
+                                }
+                                    .into_any()
+                            }
+                        })
+                }}
+            </Transition>
+    }
+}
 
 /// Leaderboard page.
 #[component]
 pub fn LeaderboardPage() -> impl IntoView {
     let (scope, set_scope) = signal("season".to_string());
-    let (track, set_track) = signal(String::new());
-
+    let (track, set_track) = signal("Engineering".to_string());
     let board = Resource::new(
         move || (scope.get(), track.get()),
         |(scope, track)| async move {
-            let track = if track.is_empty() { None } else { Some(track) };
+            let track = (scope == "track").then_some(track);
             get_leaderboard(scope, track).await
         },
     );
 
-    // The 8 tracks, for the track-scope selector. Static, so no fetch.
-    let track_options = gamecloud_shared::roles::Track::ALL
-        .iter()
-        .map(|t| (t.as_str().to_string(), format!("{} {}", t.emoji(), t.as_str())))
-        .collect::<Vec<_>>();
-
-    view! {
-        <section class="gc-leaderboard">
-            <h1>"Classement"</h1>
-
-            <nav class="gc-tabs" aria-label="Portée du classement">
-                <button
-                    class=move || tab_class(&scope.get(), "season")
-                    on:click=move |_| set_scope.set("season".to_string())
-                >
-                    "Saison"
-                </button>
-                <button
-                    class=move || tab_class(&scope.get(), "all")
-                    on:click=move |_| set_scope.set("all".to_string())
-                >
-                    "Depuis toujours"
-                </button>
-                <button
-                    class=move || tab_class(&scope.get(), "track")
-                    on:click=move |_| {
-                        set_scope.set("track".to_string());
-                        if track.get_untracked().is_empty() {
-                            set_track.set("Engineering".to_string());
-                        }
-                    }
-                >
-                    "Par track"
-                </button>
-            </nav>
-
+    let filters = view! {
+        <FilterBar label="Portée du classement">
+            <SegmentedControl
+                label="Portée"
+                options=vec![segment("season", "Saison"), segment("all", "Depuis toujours"), segment("track", "Par track")]
+                value=scope
+                on_change=Callback::new(move |v| set_scope.set(v))
+            />
             <Show when=move || scope.get() == "track">
-                <label class="gc-field gc-field--inline">
-                    <span>"Track"</span>
+                <Field id="classement-track" label="Track" inline=true>
                     <select
-                        on:change=move |ev| set_track.set(event_target_value(&ev))
+                        id="classement-track"
+                        class="ui-control"
                         prop:value=move || track.get()
+                        on:change=move |ev| set_track.set(event_target_value(&ev))
                     >
-                        {track_options
-                            .clone()
+                        {track_choices()
                             .into_iter()
                             .map(|(id, label)| view! { <option value=id>{label}</option> })
                             .collect_view()}
                     </select>
-                </label>
+                </Field>
             </Show>
+        </FilterBar>
+    }
+    .into_any();
 
-            <Suspense fallback=move || {
-                view! { <p class="gc-empty">"Chargement du classement…"</p> }
-            }>
-                {move || match board.get() {
-                    None => view! { <p class="gc-empty">"Chargement du classement…"</p> }.into_any(),
-                    Some(Err(_)) => {
-                        view! {
-                            <p class="gc-empty">"Impossible de charger le classement."</p>
-                        }
-                            .into_any()
-                    }
-                    Some(Ok(view_model)) if view_model.restricted => {
-                        view! {
-                            <div class="gc-banner gc-banner--warning gc-signin__row">
-                                <span>
-                                    "Le classement est réservé aux membres inscrits : connecte-toi et
-                                     vérifie ton adresse Epitech pour le voir."
-                                </span>
-                                <crate::components::discord_login::DiscordLogin />
-                            </div>
-                        }
-                            .into_any()
-                    }
-                    Some(Ok(view_model)) => {
-                        let caption = match (view_model.scope.as_str(), view_model.label.clone()) {
-                            ("season", Some(name)) => format!("Saison en cours — {name}"),
-                            ("track", Some(name)) => format!("Track {name}"),
-                            _ => "Classement général, toutes saisons confondues".to_string(),
-                        };
-                        view! {
-                            <>
-                                <p class="gc-leaderboard__caption">{caption}</p>
-                                <LeaderboardTable entries=view_model.entries />
-                            </>
-                        }
-                            .into_any()
-                    }
-                }}
-            </Suspense>
-        </section>
+    view! {
+        <Page pattern=Pattern::List>
+            <PageHeader
+                title="Classement"
+                lead="L'XP gagnée par chaque membre. La saison repart de zéro : tout le monde peut la gagner."
+                filters
+            />
+            <Standings board />
+        </Page>
     }
 }
 
-/// Active-tab styling helper.
-fn tab_class(current: &str, this: &str) -> &'static str {
-    if current == this {
-        "gc-tab gc-tab--active"
-    } else {
-        "gc-tab"
-    }
-}
-
-#[cfg(all(test, feature = "ssr"))]
+#[cfg(test)]
 mod tests {
-    use super::tab_class;
+    use super::caption;
 
     #[test]
-    fn the_selected_tab_is_marked_active() {
-        assert!(tab_class("season", "season").contains("--active"));
-        assert!(!tab_class("season", "all").contains("--active"));
+    fn the_caption_names_the_scope() {
+        assert!(caption("season", Some("Automne 2026")).contains("Automne 2026"));
+        assert!(caption("track", Some("Audio")).contains("Audio"));
+        assert!(caption("all", None).contains("Toutes saisons"));
     }
 }

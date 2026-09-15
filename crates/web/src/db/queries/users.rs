@@ -336,29 +336,59 @@ pub struct XpHistoryRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Resolve a member from either a platform UUID or a Discord id.
+/// Resolve a member from their Discord pseudo.
 ///
-/// The Bureau reads names and ids in Discord but acts on the platform,
-/// so accepting both saves a lookup step that would otherwise be done by
-/// hand every time.
+/// The Bureau names members the way everybody sees them: by pseudo, with or
+/// without a leading `@`, in any case. The username is unique and tried
+/// first; a display name is accepted only when a single member carries it.
+/// Identifiers are never asked for, so they never need to be shown.
 ///
 /// # Errors
 /// Propagates database errors.
 pub async fn find_by_reference(pool: &PgPool, reference: &str) -> WebResult<Option<Uuid>> {
-    if let Ok(id) = reference.parse::<Uuid>() {
-        let found: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE id = $1")
-            .bind(id)
+    let pseudo = reference.trim().trim_start_matches('@').trim();
+    if pseudo.is_empty() {
+        return Ok(None);
+    }
+    let by_username: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM users WHERE lower(discord_username) = lower($1)")
+            .bind(pseudo)
             .fetch_optional(pool)
             .await?;
-        if found.is_some() {
-            return Ok(found);
-        }
+    if by_username.is_some() {
+        return Ok(by_username);
     }
-    let found: Option<Uuid> = sqlx::query_scalar("SELECT id FROM users WHERE discord_id = $1")
-        .bind(reference)
-        .fetch_optional(pool)
-        .await?;
-    Ok(found)
+    let by_name: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM users WHERE lower(discord_global_name) = lower($1) LIMIT 2")
+            .bind(pseudo)
+            .fetch_all(pool)
+            .await?;
+    Ok(match by_name.as_slice() {
+        [only] => Some(*only),
+        _ => None,
+    })
+}
+
+/// Pseudos of the members with these Discord ids, keyed by id, to write
+/// mentions out without showing a number.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn pseudos_by_discord_id(
+    pool: &PgPool,
+    discord_ids: &[String],
+) -> WebResult<std::collections::HashMap<String, String>> {
+    if discord_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT discord_id, member_display_name(current_title, discord_global_name, discord_username, discord_id) \
+           FROM users WHERE discord_id = ANY($1)",
+    )
+    .bind(discord_ids)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().collect())
 }
 
 /// Tracks whose unpublished work a member may see.

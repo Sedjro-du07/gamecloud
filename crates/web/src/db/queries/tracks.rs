@@ -164,7 +164,7 @@ pub async fn join(
          WHERE id = $1
            AND global_rank = 'Visitor'
            AND email_verified = TRUE
-        RETURNING COALESCE(current_title, discord_id), TRUE
+        RETURNING member_display_name(current_title, discord_global_name, discord_username, discord_id), TRUE
         "#,
     )
     .bind(user_id)
@@ -182,7 +182,7 @@ pub async fn join(
     }
 
     let display: String = sqlx::query_scalar(
-        "SELECT COALESCE(current_title, discord_id) FROM users WHERE id = $1",
+        "SELECT member_display_name(current_title, discord_global_name, discord_username, discord_id) FROM users WHERE id = $1",
     )
     .bind(user_id)
     .fetch_one(&mut *tx)

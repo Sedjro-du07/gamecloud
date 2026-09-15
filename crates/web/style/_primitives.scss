@@ -1,0 +1,1256 @@
+// Primitives of the interface: page ground, type, button, card, field, tag,
+// icon, the three page patterns and what they are built from. Tokens only —
+// see `_tokens.scss`.
+//
+// Every state is designed, never left to the browser: hover, pressed,
+// keyboard focus, disabled, invalid, loading. The `is-*` classes force a
+// state so the `/design` preview can show it without a pointer.
+
+// ===========================================================================
+// Page ground — floor, one depth, a technical grid. Nothing else.
+// ===========================================================================
+
+.ui-ground {
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--size-body);
+  font-weight: var(--weight-body);
+  line-height: var(--lh-body);
+
+  // 2. Depth: one soft radial glow where the content starts, breathing
+  // very slowly. The only thing that moves in the background.
+  &::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    background: var(--depth);
+    animation: ui-breathe var(--dur-breathe) ease-in-out infinite alternate;
+  }
+
+  // 3. Grid: 1px lines, fading out towards the edges so it reads as graph
+  // paper rather than decoration.
+  &::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: var(--grid-step) var(--grid-step);
+    background-attachment: fixed;
+    mask-image: radial-gradient(ellipse 70% 60% at 20% 10%, var(--text) 0%, transparent 100%);
+  }
+
+  ::selection { background: var(--selection); color: var(--text); }
+}
+
+@keyframes ui-breathe {
+  from { opacity: 0.5; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-ground::before { animation: none; }
+}
+
+// Type scale.
+.ui-display,
+.ui-h1,
+.ui-h2,
+.ui-h3 {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-weight: var(--weight-heading);
+  color: var(--text);
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.ui-display { font-size: var(--size-display); line-height: var(--lh-display); letter-spacing: var(--ls-display); }
+.ui-h1 { font-size: var(--size-h1); line-height: var(--lh-heading); }
+.ui-h2 { font-size: var(--size-h2); line-height: var(--lh-heading); }
+.ui-h3 { font-size: var(--size-h3); line-height: var(--lh-heading); }
+.ui-body { margin: 0; font-size: var(--size-body); line-height: var(--lh-body); color: var(--text); max-width: var(--reading-max); }
+.ui-muted { color: var(--text-muted); }
+.ui-meta { margin: 0; font-size: var(--size-meta); color: var(--text-faint); }
+.ui-label {
+  font-size: var(--size-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: var(--weight-heading);
+}
+// "GameCloud OS", and nothing else, in the association's face.
+.ui-wordmark {
+  font-family: var(--font-wordmark);
+  font-weight: var(--weight-heading);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-wordmark);
+  color: var(--text);
+}
+
+// Read by screen readers, not shown.
+.ui-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  border: 0;
+}
+
+// A horizontal rule fades out over its last 48px on each side.
+.ui-divider {
+  border: 0;
+  height: 1px;
+  margin: 0;
+  background: linear-gradient(90deg, transparent, var(--divider) 48px, var(--divider) calc(100% - 48px), transparent);
+}
+
+// ===========================================================================
+// Icon — Phosphor, regular weight, inherited colour
+// ===========================================================================
+
+.ui-icon {
+  display: inline-block;
+  flex: none;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  fill: currentColor;
+  vertical-align: middle;
+
+  &--md {
+    width: var(--icon-md);
+    height: var(--icon-md);
+  }
+}
+
+// ===========================================================================
+// Button — an outline, never a fill
+// ===========================================================================
+
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--size-body);
+  font-weight: var(--weight-heading);
+  line-height: var(--lh-heading);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--dur-fade), border-color var(--dur-fade), color var(--dur-fade);
+
+  &:hover,
+  &.is-hover {
+    background: var(--hover-neutral);
+    border-color: var(--n-600);
+  }
+
+  &:active,
+  &.is-pressed {
+    border-color: var(--accent-400);
+    color: var(--accent-400);
+  }
+
+  &:focus-visible,
+  &.is-focus {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset);
+  }
+
+  &:disabled,
+  &[aria-disabled='true'] {
+    opacity: var(--disabled-opacity);
+    cursor: not-allowed;
+    background: transparent;
+    border-color: var(--border);
+    color: var(--text);
+  }
+
+  // Primary: accent outline, accent text (the 300 step, readable at 15px).
+  &--primary {
+    border-color: var(--accent);
+    color: var(--accent-300);
+
+    &:hover,
+    &.is-hover {
+      background: var(--accent-900);
+      border-color: var(--accent);
+    }
+
+    &:active,
+    &.is-pressed {
+      background: var(--accent-800);
+      border-color: var(--accent-400);
+      color: var(--accent-400);
+    }
+
+    &:disabled,
+    &[aria-disabled='true'] {
+      border-color: var(--accent);
+      color: var(--accent-300);
+    }
+  }
+
+  // Ghost: text only, tinted on hover.
+  &--ghost {
+    border-color: transparent;
+    color: var(--text-muted);
+
+    &:hover,
+    &.is-hover {
+      background: var(--accent-900);
+      border-color: transparent;
+      color: var(--text);
+    }
+
+    &:active,
+    &.is-pressed {
+      background: var(--accent-900);
+      border-color: transparent;
+      color: var(--accent-400);
+    }
+
+    &:disabled,
+    &[aria-disabled='true'] {
+      border-color: transparent;
+      color: var(--text-muted);
+    }
+  }
+}
+
+// ===========================================================================
+// Card — kicker, title, body, meta
+// ===========================================================================
+
+.ui-card {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  min-width: 0;
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+
+  &__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  &__kicker {
+    font-size: var(--size-label);
+    letter-spacing: var(--ls-label);
+    text-transform: uppercase;
+    font-weight: var(--weight-heading);
+    color: var(--text-faint);
+  }
+
+  &__title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin: 0;
+    font-size: var(--size-h3);
+    line-height: var(--lh-heading);
+    font-weight: var(--weight-heading);
+    overflow-wrap: anywhere;
+
+    > .ui-icon { color: var(--accent); }
+  }
+
+  // What can be done with it: download, join, remove.
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+    padding-top: var(--space-3);
+  }
+
+  &__body {
+    margin: 0;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+
+  &__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-4);
+    margin: 0;
+    padding-top: var(--space-2);
+    font-size: var(--size-meta);
+    color: var(--text-faint);
+  }
+
+  // The status mark in the corner: a check once achieved.
+  &__status {
+    color: var(--accent);
+    line-height: 0;
+  }
+
+  // A photo sits in the page instead of on it.
+  &__media {
+    margin: calc(-1 * var(--space-5)) calc(-1 * var(--space-5)) var(--space-3);
+    aspect-ratio: 16 / 9;
+    max-width: calc(100% + 2 * var(--space-5));
+    overflow: hidden;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    background: var(--bg);
+
+    img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      mix-blend-mode: lighten;
+    }
+  }
+
+  // Until the real visual is supplied: an honest empty frame.
+  &__placeholder {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    font-size: var(--size-meta);
+    color: var(--text-faint);
+    border-bottom: 1px dashed var(--border);
+  }
+
+  // No visual supplied: a quiet ground and the thing's icon, not a hole.
+  &__none {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    background: var(--field-bg);
+    color: var(--text-faint);
+  }
+
+  // A card the member can open.
+  &--link {
+    text-decoration: none;
+    transition: border-color var(--dur-fade), background-color var(--dur-fade);
+
+    &:hover,
+    &.is-hover {
+      border-color: var(--n-600);
+      background: color-mix(in srgb, var(--surface) 92%, var(--text));
+    }
+
+    &:focus-visible,
+    &.is-focus {
+      outline: var(--focus-ring);
+      outline-offset: var(--focus-offset);
+    }
+  }
+
+  // Milestone reached, quest validated: an accent edge, never a fill.
+  &--achieved {
+    border-color: var(--accent);
+  }
+
+  // Loading: the shape of the card, in skeleton blocks.
+  &--loading {
+    background: transparent;
+  }
+}
+
+// Skeleton block: the surface colour on the page ground, no spinner.
+.ui-skeleton {
+  display: block;
+  height: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+
+  &--title { height: var(--space-5); width: 60%; }
+  &--line { width: 100%; }
+  &--short { width: 40%; }
+}
+
+// ===========================================================================
+// Field — native control, label above
+// ===========================================================================
+
+.ui-field {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+
+  &__label {
+    font-size: var(--size-meta);
+    font-weight: var(--weight-heading);
+    color: var(--text-muted);
+  }
+
+  &__hint {
+    margin: 0;
+    font-size: var(--size-meta);
+    color: var(--text-faint);
+  }
+
+  // An error is never colour alone: icon and words, in the error hue.
+  &__error {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: var(--size-meta);
+    color: var(--error);
+
+    .ui-icon { color: var(--error); margin-top: var(--space-1); }
+  }
+
+  // Spans the whole form row.
+  &--wide { grid-column: 1 / -1; }
+
+  // Label beside the control, for a filter bar.
+  &--inline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+
+    .ui-control { width: auto; max-width: 100%; }
+  }
+
+  &--disabled {
+    opacity: var(--disabled-opacity);
+
+    .ui-control { cursor: not-allowed; }
+  }
+}
+
+.ui-control {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--field-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--size-body);
+  line-height: var(--lh-body);
+  transition: border-color var(--dur-fade);
+
+  &::placeholder { color: var(--text-faint); }
+
+  &:hover,
+  &.is-hover { border-color: var(--n-600); }
+
+  &:focus-visible,
+  &.is-focus {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset);
+    border-color: var(--accent);
+  }
+
+  &:disabled { cursor: not-allowed; }
+
+  &[aria-invalid='true'] { border-color: var(--error); }
+
+  // The file picker's own button, styled as a secondary button rather than
+  // left to the browser.
+  &::file-selector-button {
+    margin-right: var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: var(--size-meta);
+    font-weight: var(--weight-heading);
+    cursor: pointer;
+  }
+
+  &::file-selector-button:hover { background: var(--hover-neutral); border-color: var(--n-600); }
+}
+
+textarea.ui-control { resize: vertical; }
+
+// ===========================================================================
+// Tag — 12px capitals, outline
+// ===========================================================================
+
+.ui-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--size-label);
+  font-weight: var(--weight-heading);
+  letter-spacing: var(--ls-label);
+  line-height: var(--lh-heading);
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+
+  // The member's title, and anything achieved: accent outline.
+  &--accent {
+    border-color: var(--accent);
+    color: var(--accent-300);
+  }
+
+  .ui-icon { width: var(--size-label); height: var(--size-label); }
+}
+
+// ===========================================================================
+// Gamified details — shown in the interface, never in the decor
+// ===========================================================================
+
+// XP bar: a 4px rail, an accent fill with the only glow, the value beside it.
+.ui-xp {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  min-width: 0;
+
+  &__rail {
+    flex: 1 1 calc(var(--space-8) * 3);
+    min-width: 0;
+    height: var(--xp-rail-height);
+    border-radius: var(--xp-rail-height);
+    background: var(--xp-rail);
+  }
+
+  &__fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+    box-shadow: var(--xp-glow);
+  }
+
+  &__value {
+    font-size: var(--size-meta);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+// Streak: small solid marks, the inactive ones in the border grey.
+.ui-streak {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+
+  &__mark {
+    width: var(--streak-mark-w);
+    height: var(--streak-mark-h);
+    border-radius: var(--radius-mark);
+    background: var(--streak-off);
+
+    &--on { background: var(--streak-on); }
+  }
+}
+
+// XP just earned: one number, faded in.
+.ui-xp-gain {
+  color: var(--accent-300);
+  font-variant-numeric: tabular-nums;
+  animation: ui-fade-in var(--dur-fade) ease-out both;
+}
+
+@keyframes ui-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-xp-gain { animation: none; }
+}
+
+// ===========================================================================
+// Screen states — empty, error, loading
+// ===========================================================================
+
+.ui-state {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  padding-block: var(--space-5);
+  color: var(--text-muted);
+
+  > .ui-icon { color: var(--text-faint); }
+
+  &__title {
+    margin: 0;
+    font-size: var(--size-body);
+    font-weight: var(--weight-heading);
+    color: var(--text);
+  }
+}
+
+.ui-rows-skeleton {
+  display: grid;
+  gap: var(--space-5);
+  padding-block: var(--space-4);
+
+  &__row {
+    display: grid;
+    gap: var(--space-2);
+  }
+}
+
+// An error sentence under what failed: icon and words, 13px, never a fill.
+.ui-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--size-meta);
+  color: var(--error);
+  overflow-wrap: anywhere;
+
+  .ui-icon { color: var(--error); margin-top: var(--space-1); }
+}
+
+// ===========================================================================
+// Page — three patterns: dense list, card grid, detail on the left
+// ===========================================================================
+
+.ui-page {
+  display: grid;
+  align-content: start;
+  gap: var(--space-7);
+  min-width: 0;
+
+  &--detail { max-width: var(--detail-max); }
+
+  // The same header on every screen: title, context, actions to the right,
+  // then the filter bar.
+  &__head {
+    display: grid;
+    gap: var(--space-5);
+    min-width: 0;
+  }
+
+  &__title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4) var(--space-6);
+  }
+
+  &__heading {
+    display: grid;
+    gap: var(--space-3);
+    flex: 1 1 calc(var(--space-8) * 5);
+    min-width: 0;
+    max-width: var(--reading-max);
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
+  }
+}
+
+// Filters under the header.
+.ui-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-5);
+  min-width: 0;
+}
+
+// Choose one of a few: the chosen one gets the text colour and the accent
+// mark under it, never a tinted ground.
+.ui-segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+
+  &__option {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--size-meta);
+    font-weight: var(--weight-heading);
+    line-height: var(--lh-heading);
+    cursor: pointer;
+    transition: color var(--dur-fade), background-color var(--dur-fade);
+
+    &:hover {
+      color: var(--text);
+      background: var(--hover-neutral);
+    }
+
+    &:focus-visible {
+      outline: var(--focus-ring);
+      outline-offset: var(--focus-offset);
+    }
+
+    &[aria-pressed='true'] {
+      color: var(--text);
+
+      &::after {
+        content: "";
+        position: absolute;
+        left: var(--space-4);
+        right: var(--space-4);
+        bottom: 0;
+        height: var(--nav-mark);
+        background: var(--accent);
+      }
+    }
+  }
+}
+
+// Previous / label / next.
+.ui-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+
+  &__label {
+    font-weight: var(--weight-heading);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+
+    &::first-letter { text-transform: uppercase; }
+  }
+}
+
+// A titled block of a page.
+.ui-section {
+  display: grid;
+  align-content: start;
+  gap: var(--space-5);
+  min-width: 0;
+
+  &__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3) var(--space-5);
+
+    // Wrapped under the heading, the ghost link's text lines up with it.
+    > .ui-btn--ghost { margin-inline-start: calc(-1 * var(--space-5)); }
+  }
+
+  &__heading {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+}
+
+// Things side by side that wrap: tags, buttons.
+.ui-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  min-width: 0;
+}
+
+// Things one under the other.
+.ui-stack {
+  display: grid;
+  align-content: start;
+  gap: var(--space-5);
+  min-width: 0;
+
+  &--tight { gap: var(--space-3); }
+  &--loose { gap: var(--space-7); }
+  &--reading { max-width: var(--reading-max); }
+}
+
+// A main column and a narrower one, stacked on small screens.
+.ui-split {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-7) var(--space-6);
+  align-items: start;
+}
+
+// A panel on the page: a form that opened, the tools for one item.
+.ui-panel {
+  display: grid;
+  align-content: start;
+  gap: var(--space-5);
+  min-width: 0;
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+// Something to read only when wanted.
+.ui-disclosure {
+  display: grid;
+  gap: var(--space-5);
+
+  &__summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: fit-content;
+    list-style: none;
+    cursor: pointer;
+    font-size: var(--size-body);
+    font-weight: var(--weight-heading);
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+
+    &::-webkit-details-marker { display: none; }
+
+    &:hover { color: var(--text); }
+
+    &:focus-visible {
+      outline: var(--focus-ring);
+      outline-offset: var(--focus-offset);
+    }
+  }
+
+  &__caret {
+    display: inline-flex;
+    color: var(--accent);
+    transition: transform var(--dur-fade);
+  }
+
+  &[open] &__caret { transform: rotate(90deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-disclosure__caret { transition: none; }
+}
+
+// Label over value, a few across.
+.ui-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(calc(var(--space-8) * 2), 100%), 1fr));
+  gap: var(--space-4) var(--space-6);
+  margin: 0;
+
+  > div {
+    display: grid;
+    align-content: start;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+
+  dd {
+    margin: 0;
+    font-size: var(--size-h3);
+    line-height: var(--lh-heading);
+    font-weight: var(--weight-heading);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+}
+
+// A short sequence, in order.
+.ui-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(calc(var(--space-8) * 3.5), 100%), 1fr));
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  > li {
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+
+    > .ui-icon { color: var(--accent); }
+  }
+}
+
+// ===========================================================================
+// Dense list — one row per item, rules that fade at both ends
+// ===========================================================================
+
+.ui-list {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  // A label over the rows that follow it: a day, a state.
+  &__group {
+    padding-block: var(--space-6) var(--space-2);
+
+    &:first-child { padding-top: 0; }
+  }
+
+  &__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-2) var(--space-4);
+    min-width: 0;
+    padding-block: var(--space-4);
+    background: linear-gradient(90deg, transparent, var(--divider) var(--rule-fade), var(--divider) calc(100% - var(--rule-fade)), transparent) bottom / 100% 1px no-repeat;
+
+    // Past, locked, cancelled: still there, quieter.
+    &--dimmed .ui-list__title,
+    &--dimmed .ui-list__lead { color: var(--text-faint); }
+  }
+
+  &__lead {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: var(--list-lead-w);
+    color: var(--text-muted);
+    font-size: var(--size-meta);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--lh-body);
+  }
+
+  &__main {
+    display: grid;
+    flex: 1 1 calc(var(--space-8) * 3);
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  &__title {
+    font-weight: var(--weight-heading);
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  a.ui-list__title {
+    width: fit-content;
+    text-decoration: none;
+
+    &:hover {
+      color: var(--text);
+      text-decoration: underline;
+      text-decoration-color: var(--accent);
+    }
+  }
+
+  &__meta {
+    font-size: var(--size-meta);
+    color: var(--text-faint);
+    overflow-wrap: anywhere;
+  }
+
+  &__text {
+    margin: 0;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+    white-space: pre-line;
+  }
+
+  &__end {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3);
+    margin-inline-start: auto;
+  }
+
+  &__value {
+    font-size: var(--size-meta);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+// ===========================================================================
+// Card grid
+// ===========================================================================
+
+.ui-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--card-min), 100%), 1fr));
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+// ===========================================================================
+// Notice — something the page wants read before the rest
+// ===========================================================================
+
+.ui-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  color: var(--text);
+
+  > .ui-icon { color: var(--accent); }
+
+  &__text {
+    display: flex;
+    flex: 1 1 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3) var(--space-4);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  // An error: the edge stays neutral; icon and words carry it.
+  &--error {
+    border-color: var(--border);
+
+    > .ui-icon { color: var(--error); }
+
+    .ui-notice__text {
+      font-size: var(--size-meta);
+      color: var(--error);
+    }
+  }
+}
+
+// ===========================================================================
+// Avatar — the member's picture or initial, never a coloured ring
+// ===========================================================================
+
+.ui-avatar {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: var(--avatar-sm);
+  height: var(--avatar-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-round);
+  background: var(--field-bg);
+  color: var(--text-muted);
+  font-size: var(--size-meta);
+  font-weight: var(--weight-heading);
+  line-height: 1;
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  &--lg {
+    width: var(--avatar-lg);
+    height: var(--avatar-lg);
+    font-size: var(--size-h3);
+  }
+}
+
+// ===========================================================================
+// Conversation
+// ===========================================================================
+
+// Newest last, anchored to the bottom as it scrolls.
+.ui-chat {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--space-4);
+  max-height: var(--chat-max-h);
+  min-height: calc(var(--space-8) * 2);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.ui-message {
+  display: grid;
+  gap: var(--space-2);
+  align-self: flex-start;
+  max-width: min(100%, var(--reading-max));
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+
+  &__body {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  &__meta {
+    font-size: var(--size-meta);
+    color: var(--text-faint);
+  }
+
+  // What the viewer wrote: on the other side, an outline only.
+  &--own {
+    align-self: flex-end;
+    background: transparent;
+  }
+
+  // Being written.
+  &--typing {
+    border-style: dashed;
+    background: transparent;
+    color: var(--text-muted);
+  }
+}
+
+// ===========================================================================
+// Form — fields in columns, actions on their own row
+// ===========================================================================
+
+.ui-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(var(--form-col-min), 100%), 1fr));
+  align-items: start;
+  gap: var(--space-5) var(--space-6);
+  min-width: 0;
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    grid-column: 1 / -1;
+    gap: var(--space-3) var(--space-4);
+  }
+
+  &__full { grid-column: 1 / -1; }
+}
+
+// ===========================================================================
+// Figure and visual
+// ===========================================================================
+
+// Something to show as it is: a QR code.
+.ui-figure {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+
+  &__frame {
+    width: min(100%, var(--figure-max));
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    line-height: 0;
+
+    svg,
+    img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+  }
+
+  figcaption {
+    font-size: var(--size-meta);
+    color: var(--text-faint);
+    overflow-wrap: anywhere;
+  }
+}
+
+// An author's 16:9 screenshot, blended into the ground; without one, the
+// surface and an icon.
+.ui-visual {
+  aspect-ratio: 16 / 9;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    mix-blend-mode: lighten;
+  }
+
+  &--none {
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: var(--space-2);
+    background: var(--surface);
+    color: var(--text-faint);
+    font-size: var(--size-meta);
+  }
+}
+
+// ===========================================================================
+// Title ladder
+// ===========================================================================
+
+.ui-ladder {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(calc(var(--space-8) * 4), 100%), 1fr));
+  column-gap: var(--space-7);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  &__rung {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    padding-block: var(--space-3);
+    background: linear-gradient(90deg, transparent, var(--divider) var(--rule-fade), var(--divider) calc(100% - var(--rule-fade)), transparent) bottom / 100% 1px no-repeat;
+
+    > .ui-icon { color: var(--text-faint); }
+
+    &--reached > .ui-icon { color: var(--accent); }
+    &--locked { color: var(--text-muted); }
+  }
+
+  &__title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
+  &__xp {
+    font-size: var(--size-meta);
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (max-width: 860px) {
+  .ui-split { grid-template-columns: minmax(0, 1fr); }
+}

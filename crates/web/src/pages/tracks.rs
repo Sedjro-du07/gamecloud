@@ -1,178 +1,136 @@
-//! Track selection — the third and final onboarding step.
+//! Tracks — a grid of cards, one per track.
 //!
-//! This page is what unblocks the whole horizontal axis of the design.
-//! Before it existed there was no path into `track_memberships`, so
-//! track XP never accrued, track roles never progressed, the per-track
-//! leaderboard was permanently empty, and the multi-track bonus always
-//! evaluated to 1.0 because nobody was ever in a track. Joining a track
-//! is also what promotes a `Visitor` to `Initiate` and puts them on the
-//! XP ladder.
+//! Joining a track is what puts a member on the XP ladder and makes track
+//! XP, track titles and the multi-track bonus exist at all. A card says the
+//! track's name with its icon, its specialisations, and whether the member
+//! is in it; joining happens on the card.
 
 use leptos::prelude::*;
 
 use crate::{
     api::TrackOption,
-    server_fns::{get_track_options, join_track},
+    components::ui::{
+        vocab::{track_icon_by_id, track_name},
+        Button, ButtonKind, ButtonLink, Card, CardGrid, Cluster, ErrorState, Field, Gap,
+        GridSkeleton, IconName, Notice, NoticeKind, Page, PageHeader, Pattern, SignInState, Stack,
+    },
+    server_fns::{get_me, get_track_options, join_track},
 };
 
-/// Outcome of a join attempt, as shown in the banner.
-type Feedback = Result<String, String>;
+/// A join to fire: track and optional specialisation.
+type Join = (String, Option<String>);
 
-/// One selectable track, with its specialization picker.
+/// The joining controls of a card not joined yet.
+#[component]
+fn JoinControls(
+    /// Track identifier.
+    id: String,
+    /// Its specialisations.
+    specializations: Vec<String>,
+    /// Which card is open.
+    selected: ReadSignal<Option<String>>,
+    /// Opens a card.
+    set_selected: WriteSignal<Option<String>>,
+    /// Fires the join.
+    on_join: Callback<Join>,
+    /// A join is in flight.
+    pending: Memo<bool>,
+) -> impl IntoView {
+    let id = StoredValue::new(id);
+    let specs = StoredValue::new(specializations);
+    let (spec, set_spec) = signal(String::new());
+    let is_open = Memo::new(move |_| selected.get().as_deref() == Some(id.get_value().as_str()));
+    let field_id = StoredValue::new(format!("specialisation-{}", id.get_value().to_lowercase()));
+    view! {
+        <Show
+            when=move || is_open.get()
+            fallback=move || view! {
+                <Button kind=ButtonKind::Primary icon=IconName::Plus
+                    on:click=move |_| { set_spec.set(String::new()); set_selected.set(Some(id.get_value())); }>
+                    "Rejoindre"
+                </Button>
+                <ButtonLink kind=ButtonKind::Ghost href=format!("/tracks/{}", id.get_value())>"Voir le tableau"</ButtonLink>
+            }
+        >
+            <Stack gap=Gap::Tight>
+                <Field id=field_id.get_value() label="Spécialisation (optionnel)">
+                    <select id=field_id.get_value() class="ui-control" on:change=move |ev| set_spec.set(event_target_value(&ev))>
+                        <option value="">"Je verrai plus tard"</option>
+                        {specs.get_value().into_iter().map(|s| { let value = s.clone(); view! { <option value=value>{s}</option> } }).collect_view()}
+                    </select>
+                </Field>
+                <Cluster>
+                    <Button kind=ButtonKind::Primary icon=IconName::Check disabled=pending
+                        on:click=move |_| {
+                            let chosen = spec.get();
+                            on_join.run((id.get_value(), (!chosen.trim().is_empty()).then_some(chosen)));
+                        }>
+                        {move || if pending.get() { "Inscription…" } else { "Confirmer" }}
+                    </Button>
+                    <Button kind=ButtonKind::Ghost on:click=move |_| set_selected.set(None)>"Annuler"</Button>
+                </Cluster>
+            </Stack>
+        </Show>
+    }
+}
+
+/// One track.
 #[component]
 #[allow(clippy::needless_pass_by_value)] // Leptos prop convention
-fn TrackOptionCard(
+fn TrackCard(
     /// The track on offer.
     option: TrackOption,
-    /// Which track is currently expanded.
+    /// Which card is open.
     selected: ReadSignal<Option<String>>,
-    /// Expand a track.
+    /// Opens a card.
     set_selected: WriteSignal<Option<String>>,
-    /// Fire the join.
-    on_join: Callback<(String, Option<String>)>,
-    /// Whether a join is in flight.
+    /// Fires the join.
+    on_join: Callback<Join>,
+    /// A join is in flight.
     pending: Memo<bool>,
 ) -> impl IntoView {
-    let id = option.id.clone();
-    let board_href = format!("/tracks/{id}");
-    let specs = option.specializations.clone();
-    let (specialization, set_specialization) = signal(String::new());
-
-    let is_selected = {
-        let id = id.clone();
-        move || selected.get().as_deref() == Some(id.as_str())
-    };
-
-    let pick = {
-        let id = id.clone();
-        move |_| {
-            set_selected.set(Some(id.clone()));
-            set_specialization.set(String::new());
+    let name = track_name(&option.id);
+    let icon = track_icon_by_id(&option.id).unwrap_or(IconName::Compass);
+    let body = option.specializations.join(" · ");
+    let actions = if option.joined {
+        view! {
+            <ButtonLink href=format!("/tracks/{}", option.id) trailing_icon=IconName::ArrowRight>"Voir le tableau"</ButtonLink>
         }
-    };
-
-    let confirm = {
-        let id = id.clone();
-        move |_| {
-            let spec = specialization.get();
-            let spec = (!spec.trim().is_empty()).then_some(spec);
-            on_join.run((id.clone(), spec));
+        .into_any()
+    } else {
+        view! {
+            <JoinControls id=option.id.clone() specializations=option.specializations.clone() selected set_selected on_join pending />
         }
+        .into_any()
     };
-
-    view! {
-        <li
-            class=move || {
-                if is_selected() {
-                    "gc-track-option gc-track-option--selected"
-                } else {
-                    "gc-track-option"
-                }
-            }
-            style=format!("--gc-track: {};", option.color)
-        >
-            <button class="gc-track-option__button" disabled=option.joined on:click=pick>
-                <span class="gc-track-option__emoji">{option.emoji}</span>
-                <span class="gc-track-option__name">{id}</span>
-                {option
-                    .joined
-                    .then(|| view! { <span class="gc-chip">"Déjà rejointe"</span> })}
-            </button>
-
-            // Readable by anyone, joined or not: seeing who is in a
-            // track and what it has shipped is most of how somebody
-            // decides whether to join it.
-            <a class="gc-link gc-track-option__board" href=board_href>
-                "Voir le tableau →"
-            </a>
-
-            <Show when=is_selected.clone()>
-                <div class="gc-track-option__detail">
-                    <label class="gc-field">
-                        <span>"Spécialisation (optionnel)"</span>
-                        <select on:change=move |ev| {
-                            set_specialization.set(event_target_value(&ev));
-                        }>
-                            <option value="">"— Je verrai plus tard —"</option>
-                            {specs
-                                .clone()
-                                .into_iter()
-                                .map(|s| {
-                                    let value = s.clone();
-                                    view! { <option value=value>{s}</option> }
-                                })
-                                .collect_view()}
-                        </select>
-                    </label>
-                    <button
-                        class="gc-btn gc-btn--primary"
-                        disabled=move || pending.get()
-                        on:click=confirm.clone()
-                    >
-                        {move || {
-                            if pending.get() { "Inscription…" } else { "Rejoindre cette track" }
-                        }}
-                    </button>
-                </div>
-            </Show>
-        </li>
+    if option.joined {
+        // No accent edge: a member in every track would get eight, and the
+        // accent is kept for their title.
+        view! { <Card title=name icon kicker="Rejointe" actions>{body}</Card> }.into_any()
+    } else {
+        view! { <Card title=name icon actions>{body}</Card> }.into_any()
     }
 }
 
-/// The grid of track options, once loaded.
+/// The grid, for a signed-in member.
 #[component]
-#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
-fn TrackGrid(
-    /// Every track, flagged with whether the member already joined it.
-    options: Vec<TrackOption>,
-    /// Which track is expanded.
-    selected: ReadSignal<Option<String>>,
-    /// Expand a track.
-    set_selected: WriteSignal<Option<String>>,
-    /// Fire the join.
-    on_join: Callback<(String, Option<String>)>,
-    /// Whether a join is in flight.
-    pending: Memo<bool>,
-) -> impl IntoView {
-    view! {
-        <ul class="gc-tracks-picker__grid">
-            {options
-                .into_iter()
-                .map(|option| {
-                    view! {
-                        <TrackOptionCard option selected set_selected on_join pending />
-                    }
-                })
-                .collect_view()}
-        </ul>
-    }
-}
-
-/// Track selection page.
-#[component]
-pub fn TrackPickerPage() -> impl IntoView {
+fn TrackGrid() -> impl IntoView {
     let options = Resource::new(|| (), |()| async { get_track_options().await });
     let (selected, set_selected) = signal(Option::<String>::None);
-    let (feedback, set_feedback) = signal(Option::<Feedback>::None);
-
-    let join = Action::new(move |(track, spec): &(String, Option<String>)| {
-        let track = track.clone();
-        let spec = spec.clone();
+    let (feedback, set_feedback) = signal(Option::<Result<String, String>>::None);
+    let join = Action::new(move |(track, spec): &Join| {
+        let (track, spec) = (track.clone(), spec.clone());
         async move {
             match join_track(track.clone(), spec).await {
-                Ok(()) => Ok(format!("Bienvenue dans la track {track} !")),
+                Ok(()) => Ok(format!("Bienvenue dans la track {}.", track_name(&track))),
                 Err(e) => Err(e.to_string()),
             }
         }
     });
-
     let pending = Memo::new(move |_| join.pending().get());
-    let on_join = Callback::new(move |args: (String, Option<String>)| {
+    let on_join = Callback::new(move |args: Join| {
         join.dispatch(args);
     });
-
-    // Reflect the action's result into the banner, and refresh the list
-    // so a joined track immediately shows as joined.
     Effect::new(move |_| {
         if let Some(result) = join.value().get() {
             set_feedback.set(Some(result));
@@ -182,52 +140,49 @@ pub fn TrackPickerPage() -> impl IntoView {
     });
 
     view! {
-        <section class="gc-onboard gc-tracks-picker">
-            <h1>"Choisis ta track"</h1>
-            <p>
-                "Une track, c'est ta discipline dans l'association. Tu peux en
-                 rejoindre plusieurs — et c'est même encouragé : à partir de deux
-                 tracks actives, tout ton XP est multiplié."
-            </p>
+        {move || feedback.get().map(|result| match result {
+            Ok(m) => view! { <Notice kind=NoticeKind::Success>{m}</Notice> }.into_any(),
+            Err(m) => view! { <Notice kind=NoticeKind::Error>{m}</Notice> }.into_any(),
+        })}
+        <Suspense fallback=|| view! { <GridSkeleton cards=8 /> }>
+            {move || options.get().map(|result| match result {
+                Err(_) => view! {
+                    <ErrorState message="Impossible de charger les tracks." on_retry=Callback::new(move |()| options.refetch()) />
+                }
+                .into_any(),
+                Ok(list) => view! {
+                    <CardGrid>
+                        {list.into_iter().map(|option| view! { <TrackCard option selected set_selected on_join pending /> }).collect_view()}
+                    </CardGrid>
+                }
+                .into_any(),
+            })}
+        </Suspense>
+    }
+}
 
-            {move || {
-                feedback
-                    .get()
-                    .map(|result| match result {
-                        Ok(message) => {
-                            view! { <div class="gc-banner gc-banner--ok">{message}</div> }
-                                .into_any()
-                        }
-                        Err(message) => {
-                            view! { <div class="gc-banner gc-banner--warning">{message}</div> }
-                                .into_any()
-                        }
-                    })
-            }}
-
-            <Suspense fallback=move || view! { <p class="gc-empty">"Chargement…"</p> }>
-                {move || match options.get() {
-                    None | Some(Err(_)) => {
-                        view! { <p class="gc-empty">"Chargement des tracks…"</p> }.into_any()
+/// Track selection page.
+#[component]
+pub fn TrackPickerPage() -> impl IntoView {
+    let me = Resource::new(|| (), |()| async { get_me().await });
+    view! {
+        <Page pattern=Pattern::Grid>
+            <PageHeader
+                title="Tracks"
+                lead="Une track, c'est ta discipline dans l'association. Tu peux en rejoindre plusieurs : à partir de deux tracks actives, toute ton XP est multipliée."
+            >
+                <ButtonLink kind=ButtonKind::Ghost href="/profile" trailing_icon=IconName::ArrowRight>"Mon profil"</ButtonLink>
+            </PageHeader>
+            <Suspense fallback=|| view! { <GridSkeleton cards=8 /> }>
+                {move || me.get().map(|result| match result {
+                    Ok(Some(_)) => view! { <TrackGrid /> }.into_any(),
+                    Ok(None) => view! { <SignInState what="choisir tes tracks" /> }.into_any(),
+                    Err(_) => view! {
+                        <ErrorState message="Impossible de charger les tracks." on_retry=Callback::new(move |()| me.refetch()) />
                     }
-                    Some(Ok(list)) => {
-                        view! {
-                            <TrackGrid
-                                options=list
-                                selected
-                                set_selected
-                                on_join
-                                pending
-                            />
-                        }
-                            .into_any()
-                    }
-                }}
+                    .into_any(),
+                })}
             </Suspense>
-
-            <p class="gc-onboard__hint">
-                <a href="/profile" rel="external">"Aller à mon profil"</a>
-            </p>
-        </section>
+        </Page>
     }
 }

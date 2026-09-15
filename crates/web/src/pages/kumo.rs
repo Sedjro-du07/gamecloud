@@ -1,4 +1,4 @@
-//! Talking to Kumo from the platform.
+//! Talking to Kumo from the platform — a detail page.
 //!
 //! Anybody may write, with or without an account. Somebody who shares no
 //! Discord server with the GameCloud OS bot cannot write to it in private,
@@ -16,6 +16,10 @@ use leptos::prelude::*;
 
 use crate::{
     api::{ChatMessage, KumoChatView},
+    components::ui::{
+        Button, ButtonKind, ChatLog, EmptyState, ErrorState, ErrorText, Field, Form, FormActions,
+        FormRow, IconName, Message, MessageSide, Page, PageHeader, Pattern, RowsSkeleton,
+    },
     server_fns::{get_kumo_chat, send_kumo_message},
 };
 
@@ -35,81 +39,55 @@ fn human(error: &ServerFnError) -> String {
     .map_or_else(|| text.clone(), str::to_string)
 }
 
-/// One message.
-#[component]
-#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
-fn Bubble(
-    /// The message.
-    message: ChatMessage,
-) -> impl IntoView {
-    // An answer is signed by whoever wrote it: Kumo, or a Bureau member
-    // who answered in its place.
-    let (class, who) = if message.from_kumo {
-        ("gc-msg gc-msg--kumo", message.author.clone())
-    } else {
-        ("gc-msg gc-msg--me", "Toi".to_string())
-    };
+/// Who wrote a message, when, and where it stands.
+fn message_meta(message: &ChatMessage) -> String {
+    // An answer is signed by whoever wrote it: Kumo, or a Bureau member.
+    let who = if message.from_kumo { message.author.as_str() } else { "Toi" };
     let status = match message.status.as_str() {
         "pending" => " · en cours d'envoi",
         "relayed" => " · transmis à Kumo",
         "failed" => " · non transmis, réessaie plus tard",
         _ => "",
     };
-    view! {
-        <li class=class>
-            <p class="gc-msg__body">{message.body}</p>
-            <span class="gc-msg__meta">{who} " · " {message.when} {status}</span>
-        </li>
-    }
+    format!("{who} · {}{status}", message.when)
 }
 
-/// The conversation so far, newest message nearest the composer.
+/// The conversation so far.
 #[component]
 fn Conversation(
     /// The conversation, refreshed by the page.
     chat: Resource<Result<KumoChatView, ServerFnError>>,
 ) -> impl IntoView {
     view! {
-        <div class="gc-kumo__chat" aria-live="polite">
-            <Transition fallback=|| view! { <p class="gc-empty">"Chargement…"</p> }>
-                {move || {
-                    chat.get()
-                        .map(|result| match result {
-                            Err(e) => view! { <p class="gc-kumo__error">{human(&e)}</p> }.into_any(),
-                            Ok(view) if view.messages.is_empty() => {
-                                view! { <p class="gc-kumo__empty">"Dis bonjour à Kumo 👋"</p> }
-                                    .into_any()
-                            }
-                            Ok(view) => {
-                                // Passed on and not answered yet.
-                                let waiting = view
-                                    .messages
-                                    .last()
-                                    .is_some_and(|m| m.status == "relayed");
-                                // Newest first: the list is laid out bottom-up,
-                                // so the latest message sits above the composer.
-                                view! {
-                                    <ol class="gc-kumo__messages">
-                                        {waiting
-                                            .then(|| {
-                                                view! {
-                                                    <li class="gc-msg gc-msg--typing">"Kumo va répondre…"</li>
-                                                }
-                                            })}
-                                        {view
-                                            .messages
-                                            .into_iter()
-                                            .rev()
-                                            .map(|message| view! { <Bubble message /> })
-                                            .collect_view()}
-                                    </ol>
-                                }
-                                    .into_any()
-                            }
-                        })
-                }}
-            </Transition>
-        </div>
+        <Transition fallback=|| view! { <RowsSkeleton rows=3 /> }>
+            {move || chat.get().map(|result| match result {
+                Err(e) => view! {
+                    <ErrorState message=human(&e) on_retry=Callback::new(move |()| chat.refetch()) />
+                }
+                .into_any(),
+                Ok(view) if view.messages.is_empty() => view! {
+                    <EmptyState icon=IconName::ChatCircle title="Aucun message pour l'instant"
+                        body="Dis bonjour à Kumo : ta question part dès que tu l'envoies." />
+                }
+                .into_any(),
+                Ok(view) => {
+                    // Passed on and not answered yet.
+                    let waiting = view.messages.last().is_some_and(|m| m.status == "relayed");
+                    view! {
+                        <ChatLog label="Conversation avec Kumo">
+                            {waiting.then(|| view! {
+                                <Message side=MessageSide::Typing meta="Kumo" body="Kumo va répondre…" />
+                            })}
+                            {view.messages.into_iter().rev().map(|message| {
+                                let side = if message.from_kumo { MessageSide::Theirs } else { MessageSide::Own };
+                                view! { <Message side meta=message_meta(&message) body=message.body /> }
+                            }).collect_view()}
+                        </ChatLog>
+                    }
+                    .into_any()
+                }
+            })}
+        </Transition>
     }
 }
 
@@ -155,50 +133,46 @@ pub fn KumoPage() -> impl IntoView {
     };
 
     view! {
-        <section class="gc-kumo">
-            <h1>"💬 Contacter Kumo"</h1>
-            <p class="gc-kumo__intro">
-                "Une question sur l'association ? Écris-la ici, pas besoin de compte. Kumo te
-                 répond dans cette conversation : garde la page ouverte, ou reviens plus tard
-                 sur ce navigateur."
-            </p>
-
+        <Page pattern=Pattern::Detail>
+            <PageHeader
+                title="Contacter Kumo"
+                lead="Une question sur l'association ? Écris-la ici, pas besoin de compte. Kumo répond dans cette conversation : garde la page ouverte, ou reviens plus tard sur ce navigateur."
+            />
             <Conversation chat />
-
-            <form
-                class="gc-kumo__composer"
-                on:submit=move |ev| {
-                    ev.prevent_default();
-                    submit();
-                }
-            >
-                <textarea
-                    rows="2"
-                    maxlength="1000"
-                    placeholder="Ton message… (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)"
-                    aria-label="Ton message pour Kumo"
-                    prop:value=move || draft.get()
-                    on:input=move |ev| set_draft.set(event_target_value(&ev))
-                    on:keydown=move |ev| {
-                        if ev.key() == "Enter" && !ev.shift_key() {
-                            ev.prevent_default();
-                            submit();
+            <Form on:submit=move |ev| {
+                ev.prevent_default();
+                submit();
+            }>
+                <Field id="kumo-message" label="Ton message" hint="Entrée pour envoyer, Maj+Entrée pour aller à la ligne." wide=true>
+                    <textarea
+                        id="kumo-message"
+                        class="ui-control"
+                        rows="3"
+                        maxlength="1000"
+                        aria-describedby="kumo-message-hint"
+                        prop:value=move || draft.get()
+                        on:input=move |ev| set_draft.set(event_target_value(&ev))
+                        on:keydown=move |ev| {
+                            if ev.key() == "Enter" && !ev.shift_key() {
+                                ev.prevent_default();
+                                submit();
+                            }
                         }
-                    }
-                ></textarea>
-                <button class="gc-btn gc-btn--primary" type="submit" disabled=move || send.pending().get()>
-                    {move || if send.pending().get() { "Envoi…" } else { "Envoyer" }}
-                </button>
-            </form>
-            {move || error.get().map(|e| view! { <p class="gc-kumo__error">{e}</p> })}
-
-            <p class="gc-kumo__hint">
-                "Déjà sur Discord ? Tu peux aussi écrire en privé au bot GameCloud OS : "
-                <a href="/api/contact/kumo" rel="external noopener" target="_blank">
-                    "ouvrir la conversation"
-                </a>
-                "."
-            </p>
-        </section>
+                    ></textarea>
+                </Field>
+                {move || error.get().map(|message| view! { <FormRow><ErrorText message /></FormRow> })}
+                <FormActions>
+                    <Button kind=ButtonKind::Primary button_type="submit" icon=IconName::PaperPlaneRight
+                        disabled=Signal::derive(move || send.pending().get())>
+                        {move || if send.pending().get() { "Envoi…" } else { "Envoyer" }}
+                    </Button>
+                    <span class="ui-meta">
+                        "Déjà sur Discord ? "
+                        <a href="/api/contact/kumo" rel="external noopener" target="_blank">"Écris en privé au bot GameCloud OS"</a>
+                        "."
+                    </span>
+                </FormActions>
+            </Form>
+        </Page>
     }
 }

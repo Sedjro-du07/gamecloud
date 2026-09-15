@@ -37,6 +37,7 @@
 pub mod account;
 pub mod badges;
 pub mod errors;
+pub mod mentions;
 pub mod models;
 pub mod projects;
 pub mod roles;

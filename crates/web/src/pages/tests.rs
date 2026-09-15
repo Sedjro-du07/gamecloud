@@ -1,25 +1,49 @@
-//! Entrance tests.
+//! Entrance tests — a detail page.
 //!
 //! The Bureau opens a session with a PDF subject and a duration. Until it
-//! closes, candidates — anybody signed in who is not a verified member
-//! yet — download the subject and hand in their work. The Bureau
-//! downloads the work here and admits or turns down each candidate;
-//! admitting somebody who is not on the Discord server creates their
-//! invitation, shown to them on this same page.
+//! closes, candidates — anybody signed in who is not a verified member yet —
+//! download the subject and hand in their work. The Bureau downloads the
+//! work here and admits or turns down each candidate; admitting somebody
+//! who is not on the Discord server creates their invitation, shown to them
+//! on this same page.
 //!
-//! Members never see this page: once verified, it is no longer for them,
-//! unless they hold a Bureau office. Uploads are plain multipart forms
-//! posting to `/api/tests`, which redirect back here with `?ok` or
-//! `?erreur=…`.
+//! Members never see this page unless they hold a Bureau office. Uploads are
+//! plain multipart forms posting to `/api/tests`, which redirect back here
+//! with `?ok` or `?erreur=…`.
+
+use std::fmt::Write as _;
 
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
 
 use crate::{
     api::{SubmissionItem, TestItem, TestsView},
-    components::sign_in_prompt::SignInPrompt,
+    components::ui::{
+        Button, ButtonKind, ButtonLink, Cluster, DenseList, EmptyState, ErrorState, ErrorText,
+        Field, Form, FormActions, IconName, ListRow, Notice, NoticeKind, Page, PageHeader, Panel,
+        Pattern, RowText, RowsSkeleton, Section, SignInState, Step, Steps, Tag,
+    },
     server_fns::{close_test, delete_test, get_test_submissions, get_tests, judge_submission},
 };
+
+/// A session's time left, or that it is over.
+fn time_tag(test: &TestItem) -> AnyView {
+    if test.open {
+        let left = test.time_left.clone();
+        view! { <Tag icon=IconName::Clock>{left}</Tag> }.into_any()
+    } else {
+        view! { <Tag icon=IconName::Prohibit>"Terminé"</Tag> }.into_any()
+    }
+}
+
+/// A candidate's verdict as a tag.
+fn verdict_tag(verdict: Option<&str>) -> AnyView {
+    match verdict {
+        Some("Admitted") => view! { <Tag icon=IconName::CheckCircle>"Admis"</Tag> }.into_any(),
+        Some("Rejected") => view! { <Tag icon=IconName::XCircle>"Non retenu"</Tag> }.into_any(),
+        _ => view! { <Tag icon=IconName::Clock>"En attente de correction"</Tag> }.into_any(),
+    }
+}
 
 /// Entrance tests page.
 #[component]
@@ -29,195 +53,142 @@ pub fn TestsPage() -> impl IntoView {
     let query = use_query_map();
 
     view! {
-        <section class="gc-tests">
-            <h1>"🎓 Tests d'entrée"</h1>
-
-            {move || {
-                query
-                    .read()
-                    .get("ok")
-                    .map(|what| {
-                        let text = if what == "session" {
-                            "Test ouvert : les candidats peuvent télécharger le sujet."
-                        } else {
-                            "Rendu reçu. Tu peux le remplacer jusqu'à la fin du test."
-                        };
-                        view! { <div class="gc-banner gc-banner--ok">{text}</div> }
-                    })
-            }}
-            {move || {
-                query
-                    .read()
-                    .get("erreur")
-                    .map(|e| view! { <div class="gc-banner gc-banner--warning">{e}</div> })
-            }}
-
-            <Suspense fallback=|| view! { <p class="gc-empty">"Chargement…"</p> }>
-                {move || {
-                    tests
-                        .get()
-                        .map(|result| match result {
-                            Err(_) => {
-                                view! { <p class="gc-empty">"Impossible de charger les tests."</p> }
-                                    .into_any()
-                            }
-                            Ok(view) => match view.access.as_str() {
-                                "bureau" => view! { <BureauView view on_changed /> }.into_any(),
-                                "candidate" => view! { <CandidateView view /> }.into_any(),
-                                "signin" => view! { <VisitorView view /> }.into_any(),
-                                _ => {
-                                    view! {
-                                        <div class="gc-banner">
-                                            "Cette partie est réservée au Bureau et aux candidats
-                                             qui passent le test d'entrée."
-                                        </div>
-                                    }
-                                        .into_any()
-                                }
-                            },
-                        })
-                }}
+        <Page pattern=Pattern::Detail>
+            <PageHeader
+                title="Tests d'entrée"
+                lead="Le Bureau ouvre un test avec un sujet et une durée ; les candidats rendent leur travail avant la fin et reçoivent la réponse ici."
+            />
+            {move || query.read().get("ok").map(|what| {
+                let text = if what == "session" {
+                    "Test ouvert : les candidats peuvent télécharger le sujet."
+                } else {
+                    "Rendu reçu. Tu peux le remplacer jusqu'à la fin du test."
+                };
+                view! { <Notice kind=NoticeKind::Success>{text}</Notice> }
+            })}
+            {move || query.read().get("erreur").map(|e| view! { <Notice kind=NoticeKind::Error>{e}</Notice> })}
+            <Suspense fallback=|| view! { <RowsSkeleton rows=3 /> }>
+                {move || tests.get().map(|result| match result {
+                    Err(_) => view! {
+                        <ErrorState message="Impossible de charger les tests." on_retry=Callback::new(move |()| tests.refetch()) />
+                    }
+                    .into_any(),
+                    Ok(view) => match view.access.as_str() {
+                        "bureau" => view! { <BureauView view on_changed /> }.into_any(),
+                        "candidate" => view! { <CandidateView view /> }.into_any(),
+                        "signin" => view! { <VisitorView view /> }.into_any(),
+                        _ => view! {
+                            <EmptyState icon=IconName::LockSimple title="Réservé au Bureau et aux candidats"
+                                body="Une fois membre, les tests d'entrée ne te concernent plus." />
+                        }
+                        .into_any(),
+                    },
+                })}
             </Suspense>
-        </section>
+        </Page>
     }
 }
 
-// ---------------------------------------------------------------------------
-// Visitors
-// ---------------------------------------------------------------------------
+/// The open sessions, as a visitor or candidate reads them.
+fn open_tests_list(tests: Vec<TestItem>) -> AnyView {
+    if tests.is_empty() {
+        return view! {
+            <EmptyState icon=IconName::Hourglass title="Aucun test ouvert pour l'instant" body="Reviens bientôt." />
+        }
+        .into_any();
+    }
+    view! {
+        <DenseList label="Tests ouverts">
+            {tests
+                .into_iter()
+                .map(|test| {
+                    let end = time_tag(&test);
+                    view! {
+                        <ListRow title=test.title meta=format!("Fin : {}", test.closes) end>
+                            {test.description.map(|text| view! { <RowText text /> })}
+                        </ListRow>
+                    }
+                })
+                .collect_view()}
+        </DenseList>
+    }
+    .into_any()
+}
 
-/// What somebody who is not signed in sees: how joining works, and the
-/// tests open right now. The subject and handing in need an account.
+/// Somebody signed out: how joining works, and the sessions open now.
 #[component]
 #[allow(clippy::needless_pass_by_value)] // Leptos prop convention
 fn VisitorView(
     /// The page.
     view: TestsView,
 ) -> impl IntoView {
-    let list = if view.tests.is_empty() {
-        view! { <p class="gc-empty">"Aucun test ouvert pour l'instant. Reviens bientôt."</p> }
-            .into_any()
-    } else {
-        view! {
-            <ul class="gc-tests__list">
-                {view
-                    .tests
-                    .into_iter()
-                    .map(|test| {
-                        view! {
-                            <li class="gc-test gc-test--open">
-                                <div class="gc-test__head">
-                                    <h3>{test.title}</h3>
-                                    <span class="gc-chip">{test.time_left}</span>
-                                </div>
-                                {test.description.map(|d| view! { <p class="gc-test__desc">{d}</p> })}
-                                <p class="gc-test__meta">"Fin : " {test.closes}</p>
-                            </li>
-                        }
-                    })
-                    .collect_view()}
-            </ul>
-        }
-            .into_any()
-    };
-
     view! {
-        <div class="gc-tests__how">
-            <h2>"Rejoindre l'association"</h2>
-            <ol>
-                <li>
-                    "Déjà sur le serveur Discord de l'association ? Connecte-toi avec Discord :
-                     l'inscription est directe."
-                </li>
-                <li>
-                    "Sinon, connecte-toi avec Discord, télécharge le sujet d'un test ouvert et rends
-                     ton travail avant la fin."
-                </li>
-                <li>
-                    "Le Bureau corrige. Une fois admis, ton invitation au serveur s'affiche ici et tu
-                     finis ton inscription."
-                </li>
-            </ol>
-        </div>
-        <SignInPrompt what="passer le test d'entrée" />
-        <h2 class="gc-tests__heading">"Tests ouverts"</h2>
-        {list}
+        <Section title="Rejoindre l'association">
+            <Steps>
+                <Step icon=IconName::DiscordLogo title="Déjà sur le serveur ?">
+                    "Connecte-toi avec Discord : l'inscription est directe."
+                </Step>
+                <Step icon=IconName::GraduationCap title="Sinon, passe un test">
+                    "Connecte-toi avec Discord, télécharge le sujet d'un test ouvert et rends ton travail avant la fin."
+                </Step>
+                <Step icon=IconName::CheckCircle title="Le Bureau corrige">
+                    "Une fois admis, ton invitation au serveur s'affiche ici et tu finis ton inscription."
+                </Step>
+            </Steps>
+            <SignInState what="passer le test d'entrée" />
+        </Section>
+        <Section title="Tests ouverts">{open_tests_list(view.tests)}</Section>
     }
 }
 
-// ---------------------------------------------------------------------------
-// Candidates
-// ---------------------------------------------------------------------------
-
-/// What a candidate sees.
+/// A candidate: where they stand, and the sessions.
 #[component]
 #[allow(clippy::needless_pass_by_value)] // Leptos prop convention
 fn CandidateView(
     /// The page.
     view: TestsView,
 ) -> impl IntoView {
-    let banner = if let Some(url) = view.invite_url.clone() {
-        view! {
-            <div class="gc-banner gc-banner--ok">
-                "🎉 Tu es admis ! "
-                <a href=url rel="external noopener" target="_blank">"Rejoins le serveur Discord"</a>
-                " (lien valable une semaine), puis "
-                <a href="/onboarding/email">"vérifie ton adresse Epitech"</a>
-                " pour finir ton inscription."
-            </div>
-        }
-            .into_any()
+    let status = if let Some(url) = view.invite_url.clone() {
+        Some(view! {
+            <Notice kind=NoticeKind::Success>
+                <span>"Tu es admis. Rejoins le serveur Discord (lien valable une semaine), puis vérifie ton adresse Epitech."</span>
+                <ButtonLink kind=ButtonKind::Primary href=url new_tab=true icon=IconName::DiscordLogo>"Rejoindre le serveur"</ButtonLink>
+                <ButtonLink href="/onboarding/email" icon=IconName::Envelope>"Vérifier mon adresse"</ButtonLink>
+            </Notice>
+        }.into_any())
     } else if view.admitted {
-        view! {
-            <div class="gc-banner gc-banner--ok">
-                "🎉 Tu es admis ! "
-                <a href="/onboarding/email">"Vérifie ton adresse Epitech"</a>
-                " pour finir ton inscription."
-            </div>
-        }
-            .into_any()
+        Some(view! {
+            <Notice kind=NoticeKind::Success>
+                <span>"Tu es admis. Vérifie ton adresse Epitech pour finir ton inscription."</span>
+                <ButtonLink kind=ButtonKind::Primary href="/onboarding/email" icon=IconName::Envelope>"Vérifier mon adresse"</ButtonLink>
+            </Notice>
+        }.into_any())
     } else if view.is_candidate {
-        view! {
-            <div class="gc-banner">
-                "Tu n'es pas encore sur le serveur Discord de l'association : l'inscription
-                 s'ouvre quand tu as réussi un test d'entrée. Une fois admis, ton invitation
-                 au serveur apparaît ici."
-            </div>
-        }
-            .into_any()
+        Some(view! {
+            <Notice>
+                "Tu n'es pas encore sur le serveur Discord de l'association : l'inscription s'ouvre quand tu as réussi un test. Une fois admis, ton invitation apparaît ici."
+            </Notice>
+        }.into_any())
     } else {
-        view! {
-            <p class="gc-tests__intro">
-                "Télécharge le sujet et rends ton travail avant la fin du test. Le Bureau
-                 corrige et te répond ici."
-            </p>
-        }
-            .into_any()
+        None
     };
-
     let list = if view.tests.is_empty() {
-        view! { <p class="gc-empty">"Aucun test ouvert pour l'instant. Reviens bientôt."</p> }
-            .into_any()
+        open_tests_list(Vec::new())
     } else {
         view! {
-            <ul class="gc-tests__list">
-                {view
-                    .tests
-                    .into_iter()
-                    .map(|test| view! { <CandidateTest test /> })
-                    .collect_view()}
-            </ul>
+            <DenseList label="Tests">
+                {view.tests.into_iter().map(|test| view! { <CandidateTest test /> }).collect_view()}
+            </DenseList>
         }
-            .into_any()
+        .into_any()
     };
-
     view! {
-        {banner}
-        {list}
+        {status}
+        <Section title="Tests">{list}</Section>
     }
 }
 
-/// One session, for a candidate.
+/// One session, for a candidate: the subject, their work, handing in.
 #[component]
 #[allow(clippy::needless_pass_by_value)] // Leptos prop convention
 fn CandidateTest(
@@ -225,83 +196,51 @@ fn CandidateTest(
     test: TestItem,
 ) -> impl IntoView {
     let (sending, set_sending) = signal(false);
-    let subject = format!("/api/tests/{}/subject", test.id);
-    let action = format!("/api/tests/{}/submit", test.id);
     let open = test.open;
     let graded = test.mine.as_ref().is_some_and(|m| m.verdict.is_some());
-
-    let mine = test.mine.clone().map(|m| {
-        let verdict = match m.verdict.as_deref() {
-            Some("Admitted") => "✅ Admis",
-            Some("Rejected") => "❌ Non retenu",
-            _ => "⏳ En attente de correction",
-        };
-        view! {
-            <p class="gc-test__mine">
-                "Ton rendu : " <strong>{m.filename}</strong> " · " {m.size} " · " {m.when}
-                " — " {verdict}
-            </p>
-        }
+    let end = time_tag(&test);
+    let subject = format!("/api/tests/{}/subject", test.id);
+    let subject_label = format!("Télécharger le sujet ({})", test.subject_size);
+    let submit_to = format!("/api/tests/{}/submit", test.id);
+    let (file_id, note_id) = (format!("rendu-{}", test.id), format!("mot-{}", test.id));
+    let mine = test.mine.clone().map(|m| view! {
+        <Cluster>
+            {verdict_tag(m.verdict.as_deref())}
+            <span class="ui-meta">{format!("Ton rendu : {} · {} · {}", m.filename, m.size, m.when)}</span>
+        </Cluster>
     });
-
     view! {
-        <li class=if open { "gc-test gc-test--open" } else { "gc-test" }>
-            <div class="gc-test__head">
-                <h3>{test.title}</h3>
-                <span class="gc-chip">
-                    {if open { test.time_left.clone() } else { "Terminé".to_string() }}
-                </span>
-            </div>
-            {test.description.map(|d| view! { <p class="gc-test__desc">{d}</p> })}
-            <p class="gc-test__meta">"Fin : " {test.closes}</p>
-            {open
-                .then(|| {
-                    view! {
-                        <a class="gc-btn" href=subject rel="external">
-                            "📄 Télécharger le sujet (" {test.subject_size} ")"
-                        </a>
-                    }
-                })}
+        <ListRow title=test.title meta=format!("Fin : {}", test.closes) end>
+            {test.description.map(|text| view! { <RowText text /> })}
+            {open.then(|| view! {
+                <Cluster>
+                    <ButtonLink href=subject external=true icon=IconName::FileText>{subject_label}</ButtonLink>
+                </Cluster>
+            })}
             {mine}
-            {(open && !graded)
-                .then(|| {
-                    view! {
-                        <form
-                            class="gc-form gc-test__form"
-                            method="post"
-                            action=action
-                            enctype="multipart/form-data"
-                            on:submit=move |_| set_sending.set(true)
-                        >
-                            <label class="gc-field">
-                                <span>"Ton travail — zip, pdf… (500 Mo maximum)"</span>
-                                <input type="file" name="file" required=true />
-                            </label>
-                            <label class="gc-field">
-                                <span>"Un mot pour le Bureau (optionnel)"</span>
-                                <textarea name="comment" rows="2" maxlength="1000"></textarea>
-                            </label>
-                            <button
-                                class="gc-btn gc-btn--primary"
-                                type="submit"
-                                disabled=move || sending.get()
-                            >
-                                {move || {
-                                    if sending.get() { "Envoi en cours…" } else { "Rendre mon travail" }
-                                }}
-                            </button>
-                        </form>
-                    }
-                })}
-        </li>
+            {(open && !graded).then(|| view! {
+                <Panel>
+                    <Form attr:method="post" attr:action=submit_to
+                        attr:enctype="multipart/form-data" on:submit=move |_| set_sending.set(true)>
+                        <Field id=file_id.clone() label="Ton travail : zip, pdf… (500 Mo maximum)" wide=true>
+                            <input id=file_id class="ui-control" type="file" name="file" required=true />
+                        </Field>
+                        <Field id=note_id.clone() label="Un mot pour le Bureau (optionnel)" wide=true>
+                            <textarea id=note_id class="ui-control" name="comment" rows="2" maxlength="1000"></textarea>
+                        </Field>
+                        <FormActions>
+                            <Button kind=ButtonKind::Primary button_type="submit" icon=IconName::UploadSimple disabled=Signal::derive(move || sending.get())>
+                                {move || if sending.get() { "Envoi en cours…" } else { "Rendre mon travail" }}
+                            </Button>
+                        </FormActions>
+                    </Form>
+                </Panel>
+            })}
+        </ListRow>
     }
 }
 
-// ---------------------------------------------------------------------------
-// Bureau
-// ---------------------------------------------------------------------------
-
-/// What the Bureau sees.
+/// The Bureau: open a session, follow each one.
 #[component]
 #[allow(clippy::needless_pass_by_value)] // Leptos prop convention
 fn BureauView(
@@ -310,25 +249,33 @@ fn BureauView(
     /// Refresh after closing or deleting.
     on_changed: Callback<()>,
 ) -> impl IntoView {
+    let (opening, set_opening) = signal(false);
+    let action = view! {
+        <Button kind=ButtonKind::Primary icon=IconName::Plus on:click=move |_| set_opening.update(|o| *o = !*o)>
+            "Ouvrir un test"
+        </Button>
+    }
+    .into_any();
     let list = if view.tests.is_empty() {
-        view! { <p class="gc-empty">"Aucun test pour l'instant."</p> }.into_any()
+        view! { <EmptyState icon=IconName::GraduationCap title="Aucun test pour l'instant" body="Ouvre le premier avec un sujet en PDF." /> }.into_any()
     } else {
         view! {
-            <ul class="gc-tests__list">
-                {view
-                    .tests
-                    .into_iter()
-                    .map(|test| view! { <BureauTest test on_changed /> })
-                    .collect_view()}
-            </ul>
+            <DenseList label="Tests">
+                {view.tests.into_iter().map(|test| view! { <BureauTest test on_changed /> }).collect_view()}
+            </DenseList>
         }
-            .into_any()
+        .into_any()
     };
-
     view! {
-        <OpenTestForm />
-        <h2 class="gc-tests__heading">"Tests"</h2>
-        {list}
+        <Section title="Tests" action>
+            <Show when=move || opening.get()>
+                <Panel>
+                    <h3 class="ui-h3">"Ouvrir un test"</h3>
+                    <OpenTestForm />
+                </Panel>
+            </Show>
+            {list}
+        </Section>
     }
 }
 
@@ -337,45 +284,26 @@ fn BureauView(
 fn OpenTestForm() -> impl IntoView {
     let (sending, set_sending) = signal(false);
     view! {
-        <form
-            class="gc-form gc-tests__form"
-            method="post"
-            action="/api/tests"
-            enctype="multipart/form-data"
-            on:submit=move |_| set_sending.set(true)
-        >
-            <h2>"Ouvrir un test"</h2>
-            <label class="gc-field">
-                <span>"Titre"</span>
-                <input
-                    type="text"
-                    name="title"
-                    required=true
-                    maxlength="120"
-                    placeholder="Test d'entrée — Engineering"
-                />
-            </label>
-            <label class="gc-field">
-                <span>"Consignes (optionnel)"</span>
-                <textarea
-                    name="description"
-                    rows="3"
-                    maxlength="2000"
-                    placeholder="Ce qu'il faut rendre, sous quelle forme…"
-                ></textarea>
-            </label>
-            <label class="gc-field">
-                <span>"Durée, en heures (les rendus ferment ensuite)"</span>
-                <input type="number" name="hours" min="1" max="720" value="72" required=true />
-            </label>
-            <label class="gc-field">
-                <span>"Sujet (PDF)"</span>
-                <input type="file" name="subject" accept=".pdf,application/pdf" required=true />
-            </label>
-            <button class="gc-btn gc-btn--primary" type="submit" disabled=move || sending.get()>
-                {move || if sending.get() { "Ouverture…" } else { "Ouvrir le test" }}
-            </button>
-        </form>
+        <Form attr:method="post" attr:action="/api/tests" attr:enctype="multipart/form-data" on:submit=move |_| set_sending.set(true)>
+            <Field id="test-titre" label="Titre" wide=true>
+                <input id="test-titre" class="ui-control" type="text" name="title" required=true maxlength="120" placeholder="Test d'entrée — Engineering" />
+            </Field>
+            <Field id="test-consignes" label="Consignes (optionnel)" wide=true>
+                <textarea id="test-consignes" class="ui-control" name="description" rows="3" maxlength="2000"
+                    placeholder="Ce qu'il faut rendre, sous quelle forme…"></textarea>
+            </Field>
+            <Field id="test-duree" label="Durée, en heures" hint="Les rendus ferment ensuite.">
+                <input id="test-duree" class="ui-control" type="number" name="hours" min="1" max="720" value="72" required=true aria-describedby="test-duree-hint" />
+            </Field>
+            <Field id="test-sujet" label="Sujet (PDF)">
+                <input id="test-sujet" class="ui-control" type="file" name="subject" accept=".pdf,application/pdf" required=true />
+            </Field>
+            <FormActions>
+                <Button kind=ButtonKind::Primary button_type="submit" icon=IconName::GraduationCap disabled=Signal::derive(move || sending.get())>
+                    {move || if sending.get() { "Ouverture…" } else { "Ouvrir le test" }}
+                </Button>
+            </FormActions>
+        </Form>
     }
 }
 
@@ -392,7 +320,6 @@ fn BureauTest(
     let (confirming, set_confirming) = signal(false);
     let (error, set_error) = signal(Option::<String>::None);
     let id = StoredValue::new(test.id.clone());
-
     let close = Action::new(move |id: &String| {
         let id = id.clone();
         async move { close_test(id).await }
@@ -401,91 +328,56 @@ fn BureauTest(
         let id = id.clone();
         async move { delete_test(id).await }
     });
-    Effect::new(move |_| {
-        if let Some(result) = close.value().get() {
-            match result {
-                Ok(()) => on_changed.run(()),
-                Err(e) => set_error.set(Some(e.to_string())),
+    for action in [close, remove] {
+        Effect::new(move |_| {
+            if let Some(result) = action.value().get() {
+                match result {
+                    Ok(()) => on_changed.run(()),
+                    Err(e) => set_error.set(Some(e.to_string())),
+                }
             }
-        }
-    });
-    Effect::new(move |_| {
-        if let Some(result) = remove.value().get() {
-            match result {
-                Ok(()) => on_changed.run(()),
-                Err(e) => set_error.set(Some(e.to_string())),
-            }
-        }
-    });
-
-    let subject = format!("/api/tests/{}/subject", test.id);
+        });
+    }
     let open = test.open;
     let count = match test.submissions {
         0 => "aucun rendu".to_string(),
         1 => "1 rendu".to_string(),
         n => format!("{n} rendus"),
     };
-
+    let end = time_tag(&test);
     view! {
-        <li class=if open { "gc-test gc-test--open" } else { "gc-test" }>
-            <div class="gc-test__head">
-                <h3>{test.title}</h3>
-                <span class="gc-chip">
-                    {if open { test.time_left.clone() } else { "Terminé".to_string() }}
-                </span>
-                <span class="gc-chip">{count}</span>
-            </div>
-            {test.description.map(|d| view! { <p class="gc-test__desc">{d}</p> })}
-            <p class="gc-test__meta">"Fin : " {test.closes}</p>
-
-            <div class="gc-test__actions">
-                <a class="gc-btn" href=subject rel="external">
-                    "📄 Sujet (" {test.subject_size} ")"
-                </a>
-                <button class="gc-btn" on:click=move |_| set_show.update(|s| *s = !*s)>
+        <ListRow title=test.title meta=format!("Fin : {} · {count}", test.closes) end>
+            {test.description.map(|text| view! { <RowText text /> })}
+            <Cluster>
+                <ButtonLink href=format!("/api/tests/{}/subject", test.id) external=true icon=IconName::FileText>
+                    {format!("Sujet ({})", test.subject_size)}
+                </ButtonLink>
+                <Button icon=IconName::Eye attr:aria-expanded=move || show.get().to_string() on:click=move |_| set_show.update(|s| *s = !*s)>
                     {move || if show.get() { "Masquer les rendus" } else { "Voir les rendus" }}
-                </button>
-                <Show when=move || open>
-                    <button
-                        class="gc-btn gc-btn--ghost"
-                        disabled=move || close.pending().get()
-                        on:click=move |_| {
-                            close.dispatch(id.get_value());
-                        }
-                    >
+                </Button>
+                {open.then(|| view! {
+                    <Button kind=ButtonKind::Ghost icon=IconName::Prohibit disabled=Signal::derive(move || close.pending().get())
+                        on:click=move |_| { close.dispatch(id.get_value()); }>
                         "Clore maintenant"
-                    </button>
-                </Show>
+                    </Button>
+                })}
                 <Show
                     when=move || confirming.get()
-                    fallback=move || {
-                        view! {
-                            <button
-                                class="gc-btn gc-btn--ghost"
-                                on:click=move |_| set_confirming.set(true)
-                            >
-                                "Supprimer"
-                            </button>
-                        }
+                    fallback=move || view! {
+                        <Button kind=ButtonKind::Ghost icon=IconName::Trash on:click=move |_| set_confirming.set(true)>"Supprimer"</Button>
                     }
                 >
-                    <button
-                        class="gc-btn gc-btn--ghost"
-                        disabled=move || remove.pending().get()
-                        on:click=move |_| {
-                            remove.dispatch(id.get_value());
-                        }
-                    >
+                    <Button kind=ButtonKind::Ghost icon=IconName::Trash disabled=Signal::derive(move || remove.pending().get())
+                        on:click=move |_| { remove.dispatch(id.get_value()); }>
                         "Confirmer : supprimer le sujet et tous les rendus"
-                    </button>
+                    </Button>
                 </Show>
-            </div>
-            {move || error.get().map(|e| view! { <p class="gc-test__error">{e}</p> })}
-
+            </Cluster>
+            {move || error.get().map(|message| view! { <ErrorText message /> })}
             <Show when=move || show.get()>
-                <Submissions test_id=id.get_value() />
+                <Panel><Submissions test_id=id.get_value() /></Panel>
             </Show>
-        </li>
+        </ListRow>
     }
 }
 
@@ -495,32 +387,22 @@ fn Submissions(
     /// Session.
     test_id: String,
 ) -> impl IntoView {
-    let rows = Resource::new(
-        move || test_id.clone(),
-        |id| async move { get_test_submissions(id).await },
-    );
+    let rows = Resource::new(move || test_id.clone(), |id| async move { get_test_submissions(id).await });
     view! {
-        <Suspense fallback=|| view! { <p class="gc-empty">"Chargement des rendus…"</p> }>
-            {move || {
-                rows.get()
-                    .map(|result| match result {
-                        Err(e) => view! { <p class="gc-test__error">{e.to_string()}</p> }.into_any(),
-                        Ok(list) if list.is_empty() => {
-                            view! { <p class="gc-empty">"Aucun rendu pour l'instant."</p> }.into_any()
-                        }
-                        Ok(list) => {
-                            view! {
-                                <ul class="gc-subs">
-                                    {list
-                                        .into_iter()
-                                        .map(|sub| view! { <SubmissionRow sub /> })
-                                        .collect_view()}
-                                </ul>
-                            }
-                                .into_any()
-                        }
-                    })
-            }}
+        <Suspense fallback=|| view! { <RowsSkeleton rows=2 /> }>
+            {move || rows.get().map(|result| match result {
+                Err(_) => view! {
+                    <ErrorState message="Impossible de charger les rendus." on_retry=Callback::new(move |()| rows.refetch()) />
+                }
+                .into_any(),
+                Ok(list) if list.is_empty() => view! { <EmptyState icon=IconName::Clock title="Aucun rendu pour l'instant" /> }.into_any(),
+                Ok(list) => view! {
+                    <DenseList label="Rendus">
+                        {list.into_iter().map(|sub| view! { <SubmissionRow sub /> }).collect_view()}
+                    </DenseList>
+                }
+                .into_any(),
+            })}
         </Suspense>
     }
 }
@@ -536,7 +418,6 @@ fn SubmissionRow(
     let (chosen, set_chosen) = signal(String::new());
     let (notice, set_notice) = signal(Option::<Result<String, String>>::None);
     let id = StoredValue::new(sub.id.clone());
-
     let judge = Action::new(move |(id, verdict): &(String, String)| {
         let (id, verdict) = (id.clone(), verdict.clone());
         async move { judge_submission(id, verdict).await }
@@ -556,53 +437,30 @@ fn SubmissionRow(
         set_chosen.set(what.to_string());
         judge.dispatch((id.get_value(), what.to_string()));
     };
-
-    let href = format!("/api/tests/submissions/{}/download", sub.id);
-
+    let busy = Signal::derive(move || judge.pending().get());
+    let mut meta = String::new();
+    let _ = write!(meta, "{} · {} · {}", sub.filename, sub.size, sub.when);
+    let end = view! {
+        <ButtonLink href=format!("/api/tests/submissions/{}/download", sub.id) external=true icon=IconName::DownloadSimple>
+            "Télécharger"
+        </ButtonLink>
+        {move || match verdict.get().as_deref() {
+            Some(v) => verdict_tag(Some(v)),
+            None => view! {
+                <Button kind=ButtonKind::Primary icon=IconName::CheckCircle disabled=busy on:click=move |_| decide("Admitted")>"Admettre"</Button>
+                <Button kind=ButtonKind::Ghost icon=IconName::XCircle disabled=busy on:click=move |_| decide("Rejected")>"Refuser"</Button>
+            }
+            .into_any(),
+        }}
+    }
+    .into_any();
     view! {
-        <li class="gc-sub">
-            <div class="gc-sub__body">
-                <strong>{sub.candidate}</strong>
-                {sub.handle.map(|h| format!(" · @{h}"))}
-                <span class="gc-sub__meta">
-                    {sub.filename} " · " {sub.size} " · " {sub.when}
-                </span>
-                {sub.comment.map(|c| view! { <p class="gc-sub__comment">{c}</p> })}
-                {move || {
-                    notice
-                        .get()
-                        .map(|n| match n {
-                            Ok(m) => view! { <p class="gc-sub__ok">{m}</p> }.into_any(),
-                            Err(m) => view! { <p class="gc-test__error">{m}</p> }.into_any(),
-                        })
-                }}
-            </div>
-            <div class="gc-sub__actions">
-                <a class="gc-btn" href=href rel="external">"⬇ Télécharger"</a>
-                {move || match verdict.get().as_deref() {
-                    Some("Admitted") => view! { <span class="gc-chip gc-chip--ok">"✅ Admis"</span> }.into_any(),
-                    Some(_) => view! { <span class="gc-chip">"❌ Refusé"</span> }.into_any(),
-                    None => {
-                        view! {
-                            <button
-                                class="gc-btn gc-btn--primary"
-                                disabled=move || judge.pending().get()
-                                on:click=move |_| decide("Admitted")
-                            >
-                                "Admettre"
-                            </button>
-                            <button
-                                class="gc-btn gc-btn--ghost"
-                                disabled=move || judge.pending().get()
-                                on:click=move |_| decide("Rejected")
-                            >
-                                "Refuser"
-                            </button>
-                        }
-                            .into_any()
-                    }
-                }}
-            </div>
-        </li>
+        <ListRow title=sub.candidate meta end>
+            {sub.comment.map(|text| view! { <RowText text /> })}
+            {move || notice.get().map(|n| match n {
+                Ok(m) => view! { <p class="ui-meta">{m}</p> }.into_any(),
+                Err(message) => view! { <ErrorText message /> }.into_any(),
+            })}
+        </ListRow>
     }
 }

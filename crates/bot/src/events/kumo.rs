@@ -314,6 +314,10 @@ async fn back_to_requester(ctx: &Context, msg: &Message, state: &BotState, respo
                     body.push_str(&written);
                 }
             }
+            // The platform never shows a Discord id: mentions become pseudos.
+            let pseudos: std::collections::HashMap<u64, String> =
+                msg.mentions.iter().map(|u| (u.id.get(), u.name.clone())).collect();
+            let mut body = gamecloud_shared::mentions::humanize(&body, |id| pseudos.get(&id).cloned());
             if body.trim().is_empty() {
                 body = "(réponse sans texte)".to_string();
             }

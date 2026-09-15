@@ -1,203 +1,183 @@
-//! One track's board.
+//! One track's board — a detail page.
 //!
-//! A track is the unit the association actually works in, and until now
-//! it had no page of its own: you could join one from the onboarding
-//! list and then never see it again. This is where a track's people,
-//! its verdicts and its own sessions live.
-//!
-//! The page is readable by anyone. What changes with the viewer's role
-//! is what it *offers*: a reviewer sees the queue of projects awaiting
-//! this track's verdict as work to do, everyone else sees the same
-//! projects as a record of what the track has judged.
+//! The track's people, its sessions and the projects it judged. Readable by
+//! anyone; what changes with the viewer's role is what it offers: a reviewer
+//! sees the projects awaiting this track's verdict as work to do.
+
+use std::fmt::Write as _;
 
 use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 
-use crate::{api::TrackBoard, server_fns::get_track_board};
+use crate::{
+    api::{format_xp, CalendarEvent, TrackBoard, TrackMemberRow, TrackProjectRow},
+    components::ui::{
+        vocab::{plain_title, status_label, track_name, verdict},
+        ButtonKind, ButtonLink, DenseList, EmptyState, ErrorState, Fact, Facts, Icon, IconName,
+        ListRow, Page, PageHeader, PageSkeleton, Pattern, RowValue, Section, Tag,
+    },
+    server_fns::get_track_board,
+};
 
-/// A project row, with the track's verdict and mark.
+/// The projects this track judged, awaiting ones first.
 #[component]
-fn ProjectRow(
-    /// The row.
-    row: crate::api::TrackProjectRow,
-    /// Whether the viewer may render verdicts here.
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn Projects(
+    /// Rows.
+    projects: Vec<TrackProjectRow>,
+    /// Whether the viewer reviews here.
     can_review: bool,
 ) -> impl IntoView {
-    let (verdict_class, verdict_label) = match row.verdict.as_str() {
-        "Approved" => ("gc-verdict--ok", "Approuvé"),
-        "Rejected" => ("gc-verdict--no", "Refusé"),
-        "NotApplicable" => ("gc-verdict--na", "Non applicable"),
-        _ => ("gc-verdict--wait", "En attente"),
-    };
-    let href = format!("/projects/{}", row.id);
-    let pending = row.verdict == "Pending";
-
-    view! {
-        <tr class=if pending { "gc-track__row gc-track__row--todo" } else { "gc-track__row" }>
-            <td>
-                <a class="gc-link" href=href>
-                    {row.name}
-                </a>
-            </td>
-            <td>
-                <span class="gc-chip">{row.status}</span>
-            </td>
-            <td>
-                <span class=format!("gc-chip {verdict_class}")>{verdict_label}</span>
-            </td>
-            <td class="gc-track__score">
-                {row.score.map_or_else(|| "—".to_string(), |n| format!("{n}/100"))}
-            </td>
-            <td>{row.reviewer_name.unwrap_or_else(|| "—".to_string())}</td>
-            <td class="gc-track__files">
-                {if row.file_count == 0 {
-                    "—".to_string()
-                } else {
-                    format!("{} build(s)", row.file_count)
-                }}
-            </td>
-            <td>
-                {(pending && can_review)
-                    .then(|| {
-                        view! {
-                            <span class="gc-chip gc-chip--call">"à noter"</span>
+    let lead = can_review.then_some("Tu es relecteur ici : les projets en attente t'attendent. La note se met sur la page du projet.");
+    let list = if projects.is_empty() {
+        view! { <EmptyState icon=IconName::Cube title="Aucun projet ne concerne encore cette track" /> }.into_any()
+    } else {
+        let mut projects = projects;
+        projects.sort_by_key(|p| p.verdict != "Pending");
+        view! {
+            <DenseList label="Projets jugés">
+                {projects
+                    .into_iter()
+                    .map(|row| {
+                        let (label, icon) = verdict(&row.verdict);
+                        let pending = row.verdict == "Pending";
+                        let mut meta = format!("{} · {label}", status_label(&row.status));
+                        if let Some(score) = row.score {
+                            let _ = write!(meta, " · {score}/100");
                         }
-                    })}
-            </td>
-        </tr>
+                        if let Some(reviewer) = &row.reviewer_name {
+                            let _ = write!(meta, " · relu par {reviewer}");
+                        }
+                        match row.file_count {
+                            0 => {}
+                            1 => meta.push_str(" · 1 build"),
+                            n => {
+            let _ = write!(meta, " · {n} builds");
+        }
+                        }
+                        let lead = view! { <Icon name=icon /> }.into_any();
+                        let end = if pending && can_review {
+                            view! { <Tag icon=IconName::Eye>"À noter"</Tag> }.into_any()
+                        } else {
+                            ().into_any()
+                        };
+                        view! { <ListRow lead title=row.name href=format!("/projects/{}", row.id) meta end /> }
+                    })
+                    .collect_view()}
+            </DenseList>
+        }
+        .into_any()
+    };
+    match lead {
+        Some(lead) => view! { <Section title="Projets jugés par la track" lead>{list}</Section> }.into_any(),
+        None => view! { <Section title="Projets jugés par la track">{list}</Section> }.into_any(),
     }
 }
 
-/// The people in the track.
+/// The people in the track, strongest title first.
 #[component]
-fn MemberList(
-    /// Members, strongest role first.
-    members: Vec<crate::api::TrackMemberRow>,
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn Members(
+    /// Members.
+    members: Vec<TrackMemberRow>,
 ) -> impl IntoView {
-    view! {
-        <ul class="gc-track__members">
-            {members
-                .into_iter()
-                .map(|m| {
-                    let role_class = match m.role.as_str() {
-                        "Lead" | "CoLead" => "gc-track__member--lead",
-                        "Mentor" | "Reviewer" => "gc-track__member--senior",
-                        _ => "gc-track__member",
-                    };
-                    view! {
-                        <li class=role_class>
-                            <span class="gc-track__name">{m.display_name}</span>
-                            <span class="gc-track__role">{m.role_label}</span>
-                            {m
-                                .specialization
-                                .map(|s| view! { <span class="gc-track__spec">{s}</span> })}
-                            <span class="gc-track__xp">{format!("{} XP", m.track_xp)}</span>
-                        </li>
-                    }
-                })
-                .collect_view()}
-        </ul>
-    }
+    let count = members.len();
+    let list = if members.is_empty() {
+        view! { <EmptyState icon=IconName::Users title="Personne pour l'instant" /> }.into_any()
+    } else {
+        view! {
+            <DenseList label="Membres">
+                {members
+                    .into_iter()
+                    .map(|m| {
+                        let title = plain_title(&m.role_label).to_string();
+                        let meta = m.specialization.map_or_else(|| title.clone(), |s| format!("{title} · {s}"));
+                        let end = view! { <RowValue text=format!("{} XP", format_xp(m.track_xp)) /> }.into_any();
+                        view! { <ListRow title=m.display_name meta end /> }
+                    })
+                    .collect_view()}
+            </DenseList>
+        }
+        .into_any()
+    };
+    view! { <Section title="Membres" meta=count.to_string()>{list}</Section> }
 }
 
 /// The track's own sessions.
 #[component]
-fn TrackAgenda(
-    /// Upcoming events scoped to this track.
-    events: Vec<crate::api::CalendarEvent>,
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn Sessions(
+    /// Upcoming events for the track.
+    events: Vec<CalendarEvent>,
+    /// Whether the viewer schedules them.
+    manages: bool,
 ) -> impl IntoView {
-    view! {
-        <section class="gc-track__panel">
-            <h2>"Séances de la track"</h2>
-            {if events.is_empty() {
-                view! {
-                    <p class="gc-empty">
-                        "Rien de programmé. " <a class="gc-link" href="/calendar">"Voir le calendrier"</a>
-                    </p>
-                }
-                    .into_any()
-            } else {
-                view! {
-                    <ul class="gc-track__agenda">
-                        {events
-                            .into_iter()
-                            .map(|e| {
-                                view! {
-                                    <li>
-                                        <span class="gc-track__when">{e.when_label}</span>
-                                        <span class="gc-track__evt">{e.title}</span>
-                                        <span class="gc-chip">{e.kind_label}</span>
-                                        {e
-                                            .location
-                                            .map(|l| view! { <span class="gc-track__where">{l}</span> })}
-                                    </li>
-                                }
-                            })
-                            .collect_view()}
-                    </ul>
-                }
-                    .into_any()
-            }}
-        </section>
+    let action = manages.then(|| {
+        view! {
+            <ButtonLink kind=ButtonKind::Ghost href="/calendar" icon=IconName::Plus>"Programmer une séance"</ButtonLink>
+        }
+        .into_any()
+    });
+    let list = if events.is_empty() {
+        view! {
+            <EmptyState icon=IconName::CalendarBlank title="Rien de programmé">
+                <ButtonLink kind=ButtonKind::Ghost href="/calendar" trailing_icon=IconName::ArrowRight>"Voir le calendrier"</ButtonLink>
+            </EmptyState>
+        }
+        .into_any()
+    } else {
+        view! {
+            <DenseList label="Séances">
+                {events
+                    .into_iter()
+                    .map(|e| {
+                        let mut meta = format!("{} · {}", e.kind_label, e.when_label);
+                        if let Some(place) = &e.location {
+                            meta.push_str(" · ");
+                            meta.push_str(place);
+                        }
+                        view! { <ListRow title=e.title meta dimmed=e.cancelled /> }
+                    })
+                    .collect_view()}
+            </DenseList>
+        }
+        .into_any()
+    };
+    match action {
+        Some(action) => view! { <Section title="Séances de la track" action>{list}</Section> }.into_any(),
+        None => view! { <Section title="Séances de la track">{list}</Section> }.into_any(),
     }
 }
 
-/// The board's header strip: identity and the three numbers that
-/// describe the track's health.
+/// The board, once loaded.
 #[component]
-fn TrackHeader(
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+fn Board(
     /// The loaded board.
     board: TrackBoard,
 ) -> impl IntoView {
-    let pending = board
-        .projects
-        .iter()
-        .filter(|p| p.verdict == "Pending")
-        .count();
-
+    let pending = board.projects.iter().filter(|p| p.verdict == "Pending").count();
+    let average = board.average_score.map_or_else(|| "—".to_string(), |a| format!("{a:.0} / 100"));
+    let member_count = board.members.len().to_string();
+    let role = board.my_role.as_deref().map(|r| format!("Ton titre ici : {}", plain_title(r)));
     view! {
-        <header class="gc-track__head" style=format!("--gc-track: {};", board.color)>
-            <h1>
-                <span class="gc-track__emoji">{board.emoji}</span>
-                {board.id.clone()}
-            </h1>
-            <div class="gc-track__stats">
-                <div class="gc-stat">
-                    <span class="gc-stat__value">{board.members.len()}</span>
-                    <span class="gc-stat__label">"membres"</span>
-                </div>
-                <div class="gc-stat">
-                    <span class="gc-stat__value">{board.total_xp}</span>
-                    <span class="gc-stat__label">"XP de track"</span>
-                </div>
-                <div class="gc-stat">
-                    <span class="gc-stat__value">
-                        {board
-                            .average_score
-                            .map_or_else(|| "—".to_string(), |a| format!("{a:.0}"))}
-                    </span>
-                    <span class="gc-stat__label">"note moyenne"</span>
-                </div>
-                <div class="gc-stat">
-                    <span class="gc-stat__value">{pending}</span>
-                    <span class="gc-stat__label">"à juger"</span>
-                </div>
-            </div>
-            <p class="gc-track__specs">
-                {board
-                    .specializations
-                    .into_iter()
-                    .map(|s| view! { <span class="gc-chip">{s}</span> })
-                    .collect_view()}
-            </p>
-            {board
-                .my_role
-                .map(|r| {
-                    view! {
-                        <p class="gc-track__mine">"Votre rôle ici : " <strong>{r}</strong></p>
-                    }
+        <Page pattern=Pattern::Detail>
+            <PageHeader title=track_name(&board.id) kicker="Track" lead=board.specializations.join(" · ")>
+                {role.map(|r| view! { <Tag>{r}</Tag> })}
+                {(!board.joined).then(|| view! {
+                    <ButtonLink kind=ButtonKind::Primary href="/tracks" icon=IconName::Plus>"Rejoindre"</ButtonLink>
                 })}
-        </header>
+            </PageHeader>
+            <Facts>
+                <Fact label="Membres" value=member_count />
+                <Fact label="XP de track" value=format_xp(board.total_xp) />
+                <Fact label="Note moyenne" value=average />
+                <Fact label="À juger" value=pending.to_string() />
+            </Facts>
+            <Members members=board.members />
+            <Sessions events=board.events manages=board.can_manage_events />
+            <Projects projects=board.projects can_review=board.can_review />
+        </Page>
     }
 }
 
@@ -209,100 +189,18 @@ pub fn TrackDetailPage() -> impl IntoView {
         move || params.get().get("id").unwrap_or_default(),
         |id| async move { get_track_board(id).await },
     );
-
     view! {
-        <section class="gc-track">
-            <Suspense fallback=move || view! { <p class="gc-empty">"Chargement…"</p> }>
-                {move || match board.get() {
-                    None => view! { <p class="gc-empty">"Chargement…"</p> }.into_any(),
-                    Some(Err(e)) => {
-                        view! { <p class="gc-empty">{format!("Track indisponible : {e}")}</p> }
-                            .into_any()
-                    }
-                    Some(Ok(b)) => {
-                        let can_review = b.can_review;
-                        let members = b.members.clone();
-                        let projects = b.projects.clone();
-                        let events = b.events.clone();
-                        let manages = b.can_manage_events;
-                        view! {
-                            <TrackHeader board=b />
-
-                            <div class="gc-track__cols">
-                                <section class="gc-track__panel">
-                                    <h2>{format!("Membres ({})", members.len())}</h2>
-                                    {if members.is_empty() {
-                                        view! { <p class="gc-empty">"Personne pour l'instant."</p> }
-                                            .into_any()
-                                    } else {
-                                        view! { <MemberList members=members /> }.into_any()
-                                    }}
-                                </section>
-
-                                <TrackAgenda events=events />
-                            </div>
-
-                            <section class="gc-track__panel">
-                                <h2>"Projets jugés par cette track"</h2>
-                                <Show when=move || can_review>
-                                    <p class="gc-admin__note">
-                                        "Vous êtes relecteur ici : les lignes en attente vous
-                                         attendent. La note se met sur la page du projet."
-                                    </p>
-                                </Show>
-                                {if projects.is_empty() {
-                                    view! {
-                                        <p class="gc-empty">
-                                            "Aucun projet ne concerne encore cette track."
-                                        </p>
-                                    }
-                                        .into_any()
-                                } else {
-                                    view! {
-                                        <div class="gc-table-wrap">
-                                            <table class="gc-table">
-                                                <thead>
-                                                    <tr>
-                                                        <th>"Projet"</th>
-                                                        <th>"Statut"</th>
-                                                        <th>"Verdict"</th>
-                                                        <th>"Note"</th>
-                                                        <th>"Relecteur"</th>
-                                                        <th>"Builds"</th>
-                                                        <th></th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {projects
-                                                        .into_iter()
-                                                        .map(|p| {
-                                                            view! {
-                                                                <ProjectRow row=p can_review=can_review />
-                                                            }
-                                                        })
-                                                        .collect_view()}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    }
-                                        .into_any()
-                                }}
-                            </section>
-
-                            <Show when=move || manages>
-                                <p class="gc-track__cta">
-                                    "Vous pilotez cette track : "
-                                    <a class="gc-link" href="/calendar">
-                                        "programmez une séance et générez son code de présence"
-                                    </a>
-                                    "."
-                                </p>
-                            </Show>
-                        }
-                            .into_any()
-                    }
-                }}
-            </Suspense>
-        </section>
+        <Suspense fallback=|| view! { <Page pattern=Pattern::Detail><PageSkeleton /></Page> }>
+            {move || board.get().map(|result| match result {
+                Err(_) => view! {
+                    <Page pattern=Pattern::Detail>
+                        <PageHeader title="Track" />
+                        <ErrorState message="Impossible de charger cette track." on_retry=Callback::new(move |()| board.refetch()) />
+                    </Page>
+                }
+                .into_any(),
+                Ok(board) => view! { <Board board /> }.into_any(),
+            })}
+        </Suspense>
     }
 }

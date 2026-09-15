@@ -1,0 +1,174 @@
+// Design tokens — the single source of truth for the redesigned interface.
+//
+// Every colour, size, radius, shadow and duration the new `ui-` layer uses
+// is declared here, once. Nothing below this file writes a raw value when a
+// token exists.
+//
+// Direction: a neon sci-fi HUD over a themed background image — cyan and
+// magenta glows, glass panels, Orbitron headings — on the same structure.
+
+:root {
+  // --- Grounds and text ------------------------------------------------------
+  --bg: #070812;            // page ground
+  --surface: rgba(14, 17, 38, 0.72);       // cards, panels, bars
+  --text: #e8ecff;          // primary text
+  --text-muted: #aeb6dc;    // secondary text
+  --text-faint: #8a93c0;    // labels, meta
+  --border: rgba(0, 242, 255, 0.2);        // quiet borders
+  --divider: color-mix(in srgb, #00f2ff 26%, transparent);
+
+  // A field sits slightly darker than the surface it is on.
+  --field-bg: rgba(5, 7, 20, 0.7);
+
+  // --- Accent: one, blurple --------------------------------------------------
+  --accent: #00f2ff;        // borders, icons, links, focus
+  --accent-300: #8ff9ff;    // accented text at paragraph size
+  --accent-400: #4df5ff;    // pressed state on dark ground
+  --accent-800: rgba(0, 242, 255, 0.22);    // tinted ground, hover
+  --accent-900: rgba(0, 242, 255, 0.09);    // very quiet tinted ground
+
+  // --- Error: the one exception to a single hue ------------------------------
+  // Same lightness as the ramp, low chroma. Only for 13px error text, error
+  // icons and a field's 1px border — never a fill, never on a button, and
+  // always beside an icon and a message.
+  --error: #ff5c7a;
+
+  // --- Neutral ramp — even perceived steps -----------------------------------
+  --n-50: #f3f5fe;
+  --n-100: #e4e7f5;
+  --n-200: #cfd3e5;
+  --n-300: #b2b6ca;
+  --n-400: #9397ab;
+  --n-500: #75798c;
+  --n-600: #595d6c;
+  --n-700: #3f424d;
+  --n-800: #292b31;
+
+  // --- Type — Inter everywhere; the wordmark alone keeps its face ------------
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-wordmark: 'Orbitron', 'Inter', system-ui, sans-serif;
+  --ls-wordmark: 0.08em;
+  --weight-body: 400;
+  --weight-heading: 600;    // never heavier
+
+  --size-display: 40px;
+  --lh-display: 1.1;
+  --ls-display: 0.01em;
+  --size-h1: 32px;
+  --size-h2: 24px;
+  --size-h3: 18px;
+  --lh-heading: 1.2;
+  --size-body: 15px;
+  --lh-body: 1.6;
+  --size-meta: 13px;
+  --size-label: 12px;
+  --ls-label: 0.14em;
+
+  // --- Spacing — dense 0.7× scale, no in-betweens ----------------------------
+  --space-1: 2.8px;
+  --space-2: 5.6px;
+  --space-3: 8.4px;
+  --space-4: 11.2px;
+  --space-5: 16.8px;
+  --space-6: 22.4px;
+  --space-7: 44.8px;        // section breathing
+  --space-8: 67.2px;        // section breathing
+
+  // --- Radii -----------------------------------------------------------------
+  --radius-sm: 4px;         // fields, tags
+  --radius-md: 8px;         // cards, buttons
+  --radius-lg: 14px;        // modals
+  --radius-mark: 1px;       // streak marks
+  --radius-round: 50%;      // avatars
+
+  // --- Elevation — 1px edge + ambient darkness, never stacked glows ----------
+  --elev-sm: 0 0 0 1px rgba(0, 242, 255, 0.2);
+  --elev-md: 0 0 0 1px rgba(0, 242, 255, 0.3), 0 8px 24px rgba(0, 0, 0, 0.6);
+  --elev-lg: 0 0 0 1px rgba(0, 242, 255, 0.4), 0 18px 48px rgba(0, 0, 0, 0.7);
+  --backdrop: rgba(3, 4, 12, 0.78);
+
+  // --- Page ground: floor, depth, technical grid ------------------------------
+  --depth: radial-gradient(1200px 600px at 12% -10%, var(--accent-900) 0%, transparent 70%);
+  --grid-step: 44.8px;
+  --grid-line: color-mix(in srgb, #00f2ff 7%, transparent);
+
+  // --- Gamified details -------------------------------------------------------
+  --xp-rail: rgba(0, 242, 255, 0.12);
+  --xp-rail-height: 4px;
+  --xp-glow: 0 0 14px rgba(0, 242, 255, 0.6), 0 0 22px rgba(191, 0, 255, 0.35);
+  --streak-on: var(--accent);
+  --streak-off: rgba(0, 242, 255, 0.18);
+  --streak-mark-w: 3px;
+  --streak-mark-h: 10px;
+
+  // --- Icons ------------------------------------------------------------------
+  --icon-sm: 16px;
+  --icon-md: 20px;
+
+  // --- States and motion ------------------------------------------------------
+  --focus-ring: 2px solid var(--accent);
+  --focus-offset: 2px;
+  --disabled-opacity: 0.45;
+  --hover-neutral: rgba(0, 242, 255, 0.08);
+  --selection: rgba(0, 242, 255, 0.32);
+  --dur-fade: 200ms;
+  --dur-breathe: 12s;
+
+  // --- Layout -----------------------------------------------------------------
+  --content-max: 1100px;
+  --reading-max: 68ch;
+  --rule-fade: 48px;        // horizontal rules fade over their last 48px
+  --detail-max: 760px;      // detail pages: one column, on the left
+  --card-min: 260px;        // narrowest card in a grid
+  --form-col-min: 220px;    // narrowest field column in a form
+  --list-lead-w: var(--space-7); // lead column of a dense row: icon, rank, time
+  --figure-max: 320px;      // a QR code on screen
+  --chat-max-h: 60vh;       // conversation before it scrolls
+  --avatar-sm: 28px;
+  --avatar-lg: 56px;
+
+  // --- Shell ------------------------------------------------------------------
+  --rail-w: 224px;
+  --rail-w-compact: var(--space-8);
+  --topbar-h: 56px;
+  --nav-mark: 2px;          // the active item's accent mark
+
+  // --- Neon HUD skin ------------------------------------------------------------
+  --accent-2: #bf00ff;        // second neon, for gradients and achievements
+  --accent-2-300: #eab3ff;
+  --font-display: 'Orbitron', 'Inter', system-ui, sans-serif;
+  --ls-heading: 0.03em;
+  --grad-neon: linear-gradient(90deg, #00f2ff 0%, #7f6bff 50%, #bf00ff 100%);
+  --grad-neon-soft: linear-gradient(90deg, rgba(0, 242, 255, 0.18), rgba(191, 0, 255, 0.18));
+  --grad-text: linear-gradient(90deg, #e8fdff 0%, #8ff9ff 40%, #e9a8ff 100%);
+  --glow-accent: 0 0 0 1px rgba(0, 242, 255, 0.55), 0 0 18px rgba(0, 242, 255, 0.35);
+  --glow-accent-soft: 0 0 12px rgba(0, 242, 255, 0.22);
+  --glow-accent-2: 0 0 0 1px rgba(191, 0, 255, 0.6), 0 0 18px rgba(191, 0, 255, 0.38);
+  --glow-text: 0 0 10px rgba(0, 242, 255, 0.45);
+  --glass: rgba(12, 15, 34, 0.66);
+  --glass-strong: rgba(7, 8, 20, 0.84);
+  --glass-blur: 12px;
+  --corner: 14px;             // HUD corner brackets on panels
+  --scanline: rgba(0, 242, 255, 0.025);
+  --bg-image: url("/images/fond-gamecloud.svg");
+  --veil: linear-gradient(180deg, rgba(5, 6, 16, 0.55) 0%, rgba(5, 6, 16, 0.72) 50%, rgba(5, 6, 16, 0.86) 100%);
+  --qr-paper: #ffffff;        // a QR code only scans dark on white
+  --lift: -2px;
+}
+
+// Paper: ink on white. The page ground and its decor go, the hierarchy stays.
+@media print {
+  :root {
+    --bg: transparent;
+    --surface: transparent;
+    --field-bg: transparent;
+    --text: #161826;
+    --text-muted: #292b31;
+    --text-faint: #3f424d;
+    --border: #b2b6ca;
+    --divider: #b2b6ca;
+    --accent: #423a6a;
+    --accent-300: #2b2741;
+    --xp-glow: none;
+  }
+}

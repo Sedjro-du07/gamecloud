@@ -1,82 +1,153 @@
-//! Projects index — the Hall of Fame.
+//! Projects — a grid of cards.
 //!
-//! Lists released work, filterable by track. Pre-release projects are
-//! deliberately absent: the public index is the club's record, and a
-//! half-finished build is the team's business until it ships.
+//! Released work, filterable by track. Pre-release projects are absent: the
+//! index is the club's record, and a half-finished build is the team's
+//! business until it ships. A card shows the author's 16:9 screenshot
+//! blended into the ground, or the track's icon on the surface when there
+//! is none.
+
+use std::fmt::Write as _;
 
 use leptos::prelude::*;
 
-use crate::{components::project_card::ProjectCard, server_fns::get_projects};
+use crate::{
+    api::ProjectCard,
+    components::ui::{
+        vocab::{rarity_label, status_label, track_choices, track_icon_by_id, track_name},
+        ButtonKind, ButtonLink, Card, CardGrid, CardMedia, EmptyState, ErrorState, Field,
+        FilterBar, GridSkeleton, IconName, Page, PageHeader, Pattern,
+    },
+    server_fns::get_projects,
+};
 
-/// Projects index page.
+/// The line at the bottom of a project card.
+fn project_meta(project: &ProjectCard) -> String {
+    let mut meta = format!("{} · {}", status_label(&project.status), rarity_label(&project.rarity));
+    match project.contributor_count {
+        0 => {}
+        1 => meta.push_str(" · 1 contributeur"),
+        n => {
+            let _ = write!(meta, " · {n} contributeurs");
+        }
+    }
+    if let Some(day) = &project.released_on {
+        meta.push_str(" · publié le ");
+        meta.push_str(day);
+    }
+    meta
+}
+
+/// One project.
+#[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
+pub fn ProjectTile(
+    /// The project.
+    project: ProjectCard,
+) -> impl IntoView {
+    let media = project.thumbnail_url.clone().map_or_else(
+        || CardMedia::Missing(track_icon_by_id(&project.track).unwrap_or(IconName::Cube)),
+        |src| CardMedia::Photo { src, alt: format!("Capture de {}", project.name) },
+    );
+    let meta = project_meta(&project);
+    let href = format!("/projects/{}", project.id);
+    let kicker = track_name(&project.track);
+    match project.short_description {
+        Some(text) => view! {
+            <Card kicker title=project.name href media meta>{text}</Card>
+        }
+        .into_any(),
+        None => view! { <Card kicker title=project.name href media meta /> }.into_any(),
+    }
+}
+
+/// Projects page.
 #[component]
 pub fn ProjectsPage() -> impl IntoView {
     let (track, set_track) = signal(String::new());
     let projects = Resource::new(
         move || track.get(),
-        |track| async move {
-            let filter = if track.is_empty() { None } else { Some(track) };
-            get_projects(filter).await
-        },
+        |track| async move { get_projects((!track.is_empty()).then_some(track)).await },
     );
 
-    let track_options = gamecloud_shared::roles::Track::ALL
-        .iter()
-        .map(|t| (t.as_str().to_string(), format!("{} {}", t.emoji(), t.as_str())))
-        .collect::<Vec<_>>();
+    let filters = view! {
+        <FilterBar label="Filtrer les projets">
+            <Field id="projets-track" label="Track" inline=true>
+                <select id="projets-track" class="ui-control" prop:value=move || track.get()
+                    on:change=move |ev| set_track.set(event_target_value(&ev))>
+                    <option value="">"Toutes"</option>
+                    {track_choices()
+                        .into_iter()
+                        .map(|(id, label)| view! { <option value=id>{label}</option> })
+                        .collect_view()}
+                </select>
+            </Field>
+        </FilterBar>
+    }
+    .into_any();
 
     view! {
-        <section class="gc-projects">
-            <header class="gc-projects__head">
-                <h1>"Hall of Fame"</h1>
-                <a class="gc-btn gc-btn--primary" href="/projects/new">"Nouveau projet"</a>
-                <label class="gc-field gc-field--inline">
-                    <span>"Track"</span>
-                    <select
-                        on:change=move |ev| set_track.set(event_target_value(&ev))
-                        prop:value=move || track.get()
-                    >
-                        <option value="">"Toutes"</option>
-                        {track_options
-                            .clone()
-                            .into_iter()
-                            .map(|(id, label)| view! { <option value=id>{label}</option> })
-                            .collect_view()}
-                    </select>
-                </label>
-            </header>
-
-            <Suspense fallback=move || {
-                view! { <p class="gc-empty">"Chargement des projets…"</p> }
-            }>
-                {move || match projects.get() {
-                    None => view! { <p class="gc-empty">"Chargement des projets…"</p> }.into_any(),
-                    Some(Err(_)) => {
-                        view! { <p class="gc-empty">"Impossible de charger les projets."</p> }
-                            .into_any()
-                    }
-                    Some(Ok(list)) if list.is_empty() => {
-                        view! {
-                            <p class="gc-empty">
-                                "Aucun projet publié pour l'instant. Le premier qui
-                                 passe la revue de track atterrit ici."
-                            </p>
-                        }
-                            .into_any()
-                    }
-                    Some(Ok(list)) => {
-                        view! {
-                            <div class="gc-projects__grid">
-                                {list
-                                    .into_iter()
-                                    .map(|project| view! { <ProjectCard project /> })
-                                    .collect_view()}
-                            </div>
-                        }
-                            .into_any()
-                    }
+        <Page pattern=Pattern::Grid>
+            <PageHeader
+                title="Projets"
+                lead="Les projets publiés par les membres, une fois validés par chaque track concernée."
+                filters
+            >
+                <ButtonLink kind=ButtonKind::Primary href="/projects/new" icon=IconName::Plus>
+                    "Nouveau projet"
+                </ButtonLink>
+            </PageHeader>
+            <Transition fallback=|| view! { <GridSkeleton cards=6 /> }>
+                {move || {
+                    projects
+                        .get()
+                        .map(|result| match result {
+                            Err(_) => view! {
+                                <ErrorState message="Impossible de charger les projets." on_retry=Callback::new(move |()| projects.refetch()) />
+                            }
+                            .into_any(),
+                            Ok(list) if list.is_empty() => view! {
+                                <EmptyState
+                                    icon=IconName::Cube
+                                    title="Aucun projet publié pour l'instant"
+                                    body="Le premier qui passe la revue de ses tracks arrive ici."
+                                />
+                            }
+                            .into_any(),
+                            Ok(list) => view! {
+                                <CardGrid>
+                                    {list.into_iter().map(|project| view! { <ProjectTile project /> }).collect_view()}
+                                </CardGrid>
+                            }
+                            .into_any(),
+                        })
                 }}
-            </Suspense>
-        </section>
+            </Transition>
+        </Page>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_meta_line_counts_people_the_french_way() {
+        let mut project = ProjectCard {
+            id: "p".into(),
+            name: "Aevaryn".into(),
+            short_description: None,
+            track: "Engineering".into(),
+            track_emoji: String::new(),
+            status: "Released".into(),
+            rarity: "Epic".into(),
+            rarity_color: String::new(),
+            thumbnail_url: None,
+            contributor_count: 1,
+            released_on: None,
+        };
+        assert_eq!(project_meta(&project), "Publié · Épique · 1 contributeur");
+        project.contributor_count = 3;
+        project.released_on = Some("12/09/2026".into());
+        assert_eq!(project_meta(&project), "Publié · Épique · 3 contributeurs · publié le 12/09/2026");
     }
 }

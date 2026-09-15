@@ -190,7 +190,6 @@ pub async fn get_me() -> Result<Option<MeView>, ServerFnError> {
         });
 
         return Ok(Some(MeView {
-            id: record.id.to_string(),
             display_name: record.display_name(),
             avatar_url: record.avatar_custom_url.clone().or(record.avatar_url.clone()),
             xp_total: record.xp_total,
@@ -433,7 +432,6 @@ pub async fn get_leaderboard(
             .map(|(i, shown, row)| LeaderboardEntry {
                 position: i + 1,
                 is_me: viewer == Some(row.user_id),
-                user_id: row.user_id.to_string(),
                 display_name: row.display_name,
                 avatar_url: row.avatar_url,
                 xp: row.xp,
@@ -687,7 +685,6 @@ pub async fn get_project(id: String) -> Result<Option<ProjectDetailView>, Server
                 .contributors
                 .into_iter()
                 .map(|c| ContributorItem {
-                    user_id: c.user_id.to_string(),
                     display_name: c.display_name,
                     avatar_url: c.avatar_url,
                     track: c.track,
@@ -1098,7 +1095,7 @@ pub async fn grant_xp(
         let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("membre introuvable"))?;
+            .ok_or_else(|| ServerFnError::new("aucun membre avec ce pseudo Discord"))?;
 
         let outcome = crate::db::queries::xp::grant(
             state.pool(),
@@ -1131,6 +1128,74 @@ pub async fn grant_xp(
     }
 }
 
+/// Whether a value is an identifier rather than something to read: a UUID
+/// or a Discord snowflake.
+#[cfg(feature = "ssr")]
+fn looks_like_id(text: &str) -> bool {
+    uuid::Uuid::parse_str(text).is_ok() || (text.len() >= 15 && text.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// An audit line's detail, readable and without identifiers: the member it
+/// concerns by pseudo, then the recorded facts, skipping every id.
+#[cfg(feature = "ssr")]
+fn audit_detail(target: Option<&str>, metadata: Option<&serde_json::Value>) -> String {
+    use serde_json::Value;
+
+    fn scalar(value: &Value) -> Option<String> {
+        match value {
+            Value::String(text) => Some(text.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            Value::Bool(b) => Some(if *b { "oui" } else { "non" }.to_string()),
+            _ => None,
+        }
+    }
+
+    let mut parts: Vec<String> = target.map(|t| format!("membre : {t}")).into_iter().collect();
+    if let Some(Value::Object(map)) = metadata {
+        for (key, value) in map {
+            if key == "id" || key.ends_with("_id") || key.ends_with("_ids") {
+                continue;
+            }
+            let text = match value {
+                Value::Array(items) => items
+                    .iter()
+                    .filter_map(scalar)
+                    .filter(|t| !looks_like_id(t))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                other => scalar(other).filter(|t| !looks_like_id(t)).unwrap_or_default(),
+            };
+            if !text.is_empty() {
+                parts.push(format!("{} : {text}", key.replace('_', " ")));
+            }
+        }
+    }
+    parts.join(" · ")
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod audit_detail_tests {
+    use super::audit_detail;
+
+    #[test]
+    fn identifiers_never_reach_the_journal() {
+        let metadata = serde_json::json!({
+            "user_id": "20c67afb-f5cb-48c4-99d1-d1a0996694b4",
+            "discord": "865973472223428608",
+            "amount": 50,
+            "reason": "Aide au stand",
+            "tracks": ["Audio", "20c67afb-f5cb-48c4-99d1-d1a0996694b4"],
+        });
+        let detail = audit_detail(Some("fred04"), Some(&metadata));
+        assert!(detail.contains("membre : fred04"));
+        assert!(detail.contains("amount : 50"));
+        assert!(detail.contains("reason : Aide au stand"));
+        assert!(detail.contains("tracks : Audio"));
+        assert!(!detail.contains("20c67afb"));
+        assert!(!detail.contains("865973472223428608"));
+    }
+}
+
 /// Recent audit entries, for the Bureau panel.
 ///
 /// # Errors
@@ -1160,12 +1225,9 @@ pub async fn get_audit() -> Result<Vec<AuditLine>, ServerFnError> {
         return Ok(rows
             .into_iter()
             .map(|a| AuditLine {
-                actor: a.actor_name.unwrap_or_else(|| "la plateforme".into()),
+                actor: a.actor_name.clone().unwrap_or_else(|| "la plateforme".into()),
+                detail: audit_detail(a.target_name.as_deref(), a.metadata.as_ref()),
                 action: a.action,
-                detail: a
-                    .metadata
-                    .map(|m| m.to_string())
-                    .unwrap_or_default(),
                 when: ctx::stamp(a.created_at),
             })
             .collect());
@@ -1526,6 +1588,15 @@ pub async fn get_kumo_chat() -> Result<KumoChatView, ServerFnError> {
         let rows = crate::db::queries::kumo_chat::messages(state.pool(), conversation)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
+        // Answers written on Discord can mention members: they read as pseudos.
+        let mentioned: Vec<String> = rows
+            .iter()
+            .flat_map(|m| gamecloud_shared::mentions::mentioned_users(&m.body))
+            .map(|id| id.to_string())
+            .collect();
+        let pseudos = crate::db::queries::users::pseudos_by_discord_id(state.pool(), &mentioned)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
         return Ok(KumoChatView {
             messages: rows
                 .into_iter()
@@ -1548,7 +1619,7 @@ pub async fn get_kumo_chat() -> Result<KumoChatView, ServerFnError> {
                         String::new()
                     },
                     from_kumo: m.from_kumo,
-                    body: m.body,
+                    body: gamecloud_shared::mentions::humanize(&m.body, |id| pseudos.get(&id.to_string()).cloned()),
                     when: format!("{} UTC", ctx::stamp(m.created_at)),
                 })
                 .collect(),
@@ -1986,7 +2057,7 @@ pub async fn add_contributor(
         let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("membre introuvable"))?;
+            .ok_or_else(|| ServerFnError::new("aucun membre avec ce pseudo Discord"))?;
 
         crate::db::queries::projects::add_contributor(
             state.pool(),
@@ -2057,7 +2128,7 @@ pub async fn appoint_track_role(
         let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("membre introuvable"))?;
+            .ok_or_else(|| ServerFnError::new("aucun membre avec ce pseudo Discord"))?;
 
         crate::db::queries::tracks::set_role(
             state.pool(),

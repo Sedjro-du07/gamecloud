@@ -1,0 +1,135 @@
+// Layout of the `/design` preview page. Tokens only.
+
+.ui-preview {
+  display: grid;
+  gap: var(--space-8);
+  max-width: var(--content-max);
+
+  &__intro {
+    display: grid;
+    gap: var(--space-4);
+    max-width: var(--reading-max);
+  }
+
+  &__section {
+    display: grid;
+    gap: var(--space-5);
+  }
+
+  &__head {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  &__group {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  &__grid {
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  }
+
+  &__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  &__state {
+    display: grid;
+    gap: var(--space-2);
+    justify-items: start;
+  }
+
+  // In a grid, a shown primitive takes its column's width: cards line up,
+  // and blocks sized in percentages (skeletons, radius samples) have a
+  // width to be a percentage of.
+  &__grid > &__state {
+    justify-items: stretch;
+  }
+
+  &__fields {
+    display: grid;
+    gap: var(--space-5);
+    grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  }
+}
+
+.ui-swatches {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
+}
+
+.ui-swatch {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+
+  &__chip {
+    height: var(--space-7);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--elev-sm);
+  }
+
+  &__name {
+    font-size: var(--size-meta);
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  &__value {
+    font-size: var(--size-meta);
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.ui-scale {
+  display: grid;
+  gap: var(--space-3);
+
+  &__row {
+    display: grid;
+    grid-template-columns: minmax(0, 9rem) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  &__bar {
+    height: var(--space-3);
+    border-radius: 1px;
+    background: var(--accent-800);
+  }
+}
+
+.ui-type-row {
+  display: grid;
+  grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-5);
+  padding-block: var(--space-4);
+}
+
+.ui-elev {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.ui-radius {
+  height: var(--space-7);
+  border: 1px solid var(--accent);
+  background: var(--accent-900);
+}
+
+@media (max-width: 640px) {
+  .ui-type-row,
+  .ui-scale__row { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+}

@@ -1,4 +1,4 @@
-//! The resource library.
+//! The resource library — a dense list.
 //!
 //! Members propose links, a validator signs off, and the submitter earns
 //! XP for it. Validation is what separates a library from a dumping
@@ -9,7 +9,13 @@ use leptos::prelude::*;
 
 use crate::{
     api::ResourceItem,
-    components::sign_in_prompt::SignInPrompt,
+    components::ui::{
+        segment, segment_with_icon,
+        vocab::{resource_kind, track_choices, RESOURCE_KINDS},
+        Button, ButtonKind, ButtonLink, Cluster, DenseList, EmptyState, ErrorState, ErrorText,
+        Field, FilterBar, Form, FormActions, FormRow, Icon, IconName, ListRow, Page, PageHeader,
+        Panel, Pattern, RowsSkeleton, Segment, SegmentedControl, Tag, TrackTag,
+    },
     server_fns::{act_on_resource, get_me, get_resources, submit_resource},
 };
 
@@ -27,7 +33,6 @@ fn ResourceRow(
         async move { act_on_resource(id, what).await }
     });
     let (error, set_error) = signal(Option::<String>::None);
-
     Effect::new(move |_| {
         if let Some(result) = act.value().get() {
             match result {
@@ -40,71 +45,79 @@ fn ResourceRow(
         }
     });
 
-    let id = item.id.clone();
-    let vote_id = id.clone();
-    let validate_id = id;
+    let (kind_label, kind_icon) = resource_kind(item.kind.as_deref());
+    let mut meta = kind_label.to_string();
+    if let Some(level) = &item.level {
+        meta.push_str(" · ");
+        meta.push_str(level);
+    }
+    meta.push_str(" · proposée par ");
+    meta.push_str(&item.submitted_by);
+
+    let id = StoredValue::new(item.id.clone());
     let voted = item.has_voted;
+    let busy = Signal::derive(move || act.pending().get());
+    let can_validate = item.may_validate && !item.validated;
+    let waiting = !item.validated;
 
-    view! {
-        <li class=if item.validated { "gc-resource" } else { "gc-resource gc-resource--pending" }>
-            <div class="gc-resource__body">
-                <a class="gc-resource__title" href=item.url.clone() rel="external noopener">
-                    {item.title}
-                </a>
-                <p class="gc-resource__meta">
-                    {item.kind.unwrap_or_else(|| "Lien".into())}
-                    {item.level.map(|l| format!(" · {l}"))}
-                    " · proposé par " {item.submitted_by}
-                    {(!item.tracks.is_empty()).then(|| format!(" · {}", item.tracks.join(", ")))}
-                </p>
-                {move || {
-                    error.get().map(|e| view! { <p class="gc-resource__error">{e}</p> })
-                }}
-            </div>
-
-            <div class="gc-resource__actions">
-                <button
-                    class=if voted { "gc-btn gc-btn--on" } else { "gc-btn" }
-                    disabled=move || act.pending().get()
-                    on:click={
-                        let id = vote_id.clone();
-                        move |_| {
-                            act.dispatch((
-                                id.clone(),
-                                if voted { "unvote".into() } else { "vote".into() },
-                            ));
-                        }
-                    }
-                >
-                    {format!("▲ {}", item.votes)}
-                </button>
-
-                <Show when=move || item.may_validate && !item.validated>
-                    <button
-                        class="gc-btn gc-btn--primary"
-                        disabled=move || act.pending().get()
-                        on:click={
-                            let id = validate_id.clone();
-                            move |_| { act.dispatch((id.clone(), "validate".into())); }
+    let lead = view! { <Icon name=kind_icon /> }.into_any();
+    let end = view! {
+        <Button
+            kind=if voted { ButtonKind::Primary } else { ButtonKind::Secondary }
+            icon=IconName::ArrowFatUp
+            disabled=busy
+            attr:aria-pressed=voted.to_string()
+            attr:title=if voted { "Retirer ton vote" } else { "Voter pour cette ressource" }
+            on:click=move |_| {
+                let what = if voted { "unvote" } else { "vote" };
+                act.dispatch((id.get_value(), what.to_string()));
+            }
+        >
+            {item.votes.to_string()}
+            <span class="ui-sr-only">" votes"</span>
+        </Button>
+        {can_validate
+            .then(|| {
+                view! {
+                    <Button
+                        kind=ButtonKind::Primary
+                        icon=IconName::SealCheck
+                        disabled=busy
+                        on:click=move |_| {
+                            act.dispatch((id.get_value(), "validate".to_string()));
                         }
                     >
                         "Valider"
-                    </button>
-                </Show>
+                    </Button>
+                }
+            })}
+    }
+    .into_any();
 
-                <Show when=move || !item.validated && !item.may_validate>
-                    <span class="gc-chip">"En attente"</span>
-                </Show>
-            </div>
-        </li>
+    let tracks = item.tracks.clone();
+    view! {
+        <ListRow lead title=item.title href=item.url external=true meta end>
+            {(!tracks.is_empty() || waiting)
+                .then(|| {
+                    view! {
+                        <Cluster>
+                            {tracks.into_iter().map(|track| view! { <TrackTag track /> }).collect_view()}
+                            {waiting.then(|| view! { <Tag icon=IconName::Clock>"En attente de validation"</Tag> })}
+                        </Cluster>
+                    }
+                })}
+            {move || error.get().map(|message| view! { <ErrorText message /> })}
+        </ListRow>
     }
 }
 
-/// The submission form.
+/// The proposal form.
 #[component]
 fn SubmitForm(
-    /// Called after a successful submission.
-    on_changed: Callback<()>,
+    /// Called after a successful proposal.
+    on_sent: Callback<()>,
+    /// Called when the member gives up.
+    on_cancel: Callback<()>,
 ) -> impl IntoView {
     let (title, set_title) = signal(String::new());
     let (url, set_url) = signal(String::new());
@@ -116,7 +129,6 @@ fn SubmitForm(
         let (t, u, k, tr) = (t.clone(), u.clone(), k.clone(), tr.clone());
         async move { submit_resource(t, u, k, tr).await }
     });
-
     Effect::new(move |_| {
         if let Some(result) = send.value().get() {
             match result {
@@ -124,77 +136,122 @@ fn SubmitForm(
                     set_title.set(String::new());
                     set_url.set(String::new());
                     set_error.set(None);
-                    on_changed.run(());
+                    on_sent.run(());
                 }
                 Err(e) => set_error.set(Some(e.to_string())),
             }
         }
     });
 
-    let tracks = gamecloud_shared::roles::Track::ALL
-        .iter()
-        .map(|t| (t.as_str().to_string(), format!("{} {}", t.emoji(), t.as_str())))
-        .collect::<Vec<_>>();
-
     view! {
-        <form
-            class="gc-form gc-resources__form"
-            on:submit=move |ev| {
-                ev.prevent_default();
-                send.dispatch((title.get(), url.get(), kind.get(), track.get()));
-            }
-        >
-            {move || {
-                error.get().map(|e| view! { <div class="gc-banner gc-banner--warning">{e}</div> })
-            }}
-
-            <label class="gc-field">
-                <span>"Titre"</span>
+        <Form on:submit=move |ev| {
+            ev.prevent_default();
+            send.dispatch((title.get(), url.get(), kind.get(), track.get()));
+        }>
+            <Field id="ressource-titre" label="Titre">
                 <input
+                    id="ressource-titre"
+                    class="ui-control"
                     type="text"
                     required=true
                     prop:value=move || title.get()
                     on:input=move |ev| set_title.set(event_target_value(&ev))
                 />
-            </label>
-            <label class="gc-field">
-                <span>"Lien"</span>
+            </Field>
+            <Field id="ressource-lien" label="Lien">
                 <input
+                    id="ressource-lien"
+                    class="ui-control"
                     type="url"
                     required=true
                     placeholder="https://…"
                     prop:value=move || url.get()
                     on:input=move |ev| set_url.set(event_target_value(&ev))
                 />
-            </label>
-            <label class="gc-field">
-                <span>"Type"</span>
-                <select on:change=move |ev| set_kind.set(event_target_value(&ev))>
-                    <option value="Tutorial">"Tutoriel"</option>
-                    <option value="Tool">"Outil"</option>
-                    <option value="Asset">"Asset"</option>
-                    <option value="Doc">"Documentation"</option>
-                    <option value="Video">"Vidéo"</option>
+            </Field>
+            <Field id="ressource-type" label="Type">
+                <select id="ressource-type" class="ui-control" on:change=move |ev| set_kind.set(event_target_value(&ev))>
+                    {RESOURCE_KINDS
+                        .iter()
+                        .map(|(value, label, _)| view! { <option value=*value>{*label}</option> })
+                        .collect_view()}
                 </select>
-            </label>
-            <label class="gc-field">
-                <span>"Track concernée (optionnel)"</span>
-                <select on:change=move |ev| set_track.set(event_target_value(&ev))>
-                    <option value="">"— Aucune —"</option>
-                    {tracks
+            </Field>
+            <Field id="ressource-track" label="Track concernée (optionnel)">
+                <select id="ressource-track" class="ui-control" on:change=move |ev| set_track.set(event_target_value(&ev))>
+                    <option value="">"Aucune"</option>
+                    {track_choices()
                         .into_iter()
                         .map(|(id, label)| view! { <option value=id>{label}</option> })
                         .collect_view()}
                 </select>
-            </label>
-            <button
-                class="gc-btn gc-btn--primary"
-                type="submit"
-                disabled=move || send.pending().get()
-            >
-                {move || if send.pending().get() { "Envoi…" } else { "Proposer" }}
-            </button>
-        </form>
+            </Field>
+            {move || error.get().map(|message| view! { <FormRow><ErrorText message /></FormRow> })}
+            <FormActions>
+                <Button
+                    kind=ButtonKind::Primary
+                    button_type="submit"
+                    icon=IconName::Plus
+                    disabled=Signal::derive(move || send.pending().get())
+                >
+                    {move || if send.pending().get() { "Envoi…" } else { "Proposer" }}
+                </Button>
+                <Button kind=ButtonKind::Ghost on:click=move |_| on_cancel.run(())>"Annuler"</Button>
+            </FormActions>
+        </Form>
+    }
+}
+
+/// The kind filter: every kind, then each one.
+fn kind_segments() -> Vec<Segment> {
+    std::iter::once(segment("", "Tout"))
+        .chain(RESOURCE_KINDS.iter().map(|(value, label, icon)| segment_with_icon(value, label, *icon)))
+        .collect()
+}
+
+/// What the viewer may do in the header: propose, verify, or sign in.
+#[component]
+fn HeaderAction(
+    /// Opens the proposal form.
+    set_proposing: WriteSignal<bool>,
+) -> impl IntoView {
+    let me = Resource::new(|| (), |()| async { get_me().await });
+    view! {
+        <Suspense fallback=|| ()>
+            {move || {
+                me.get()
+                    .map(|result| match result.ok().flatten() {
+                        Some(user) if user.email_verified => {
+                            view! {
+                                <Button
+                                    kind=ButtonKind::Primary
+                                    icon=IconName::Plus
+                                    on:click=move |_| set_proposing.update(|open| *open = !*open)
+                                >
+                                    "Proposer une ressource"
+                                </Button>
+                            }
+                                .into_any()
+                        }
+                        Some(_) => {
+                            view! {
+                                <ButtonLink href="/onboarding/email" icon=IconName::Envelope>
+                                    "Vérifier mon adresse pour proposer"
+                                </ButtonLink>
+                            }
+                                .into_any()
+                        }
+                        None => {
+                            view! {
+                                <ButtonLink href="/api/auth/login" external=true icon=IconName::DiscordLogo hide_label=true>
+                                    "Se connecter avec Discord pour proposer une ressource"
+                                </ButtonLink>
+                            }
+                                .into_any()
+                        }
+                    })
+            }}
+        </Suspense>
     }
 }
 
@@ -203,68 +260,87 @@ fn SubmitForm(
 pub fn ResourcesPage() -> impl IntoView {
     let items = Resource::new(|| (), |()| async { get_resources().await });
     let on_changed = Callback::new(move |()| items.refetch());
-    let me = Resource::new(|| (), |()| async { get_me().await });
+    let (kind, set_kind) = signal(String::new());
+    let (proposing, set_proposing) = signal(false);
+    let on_sent = Callback::new(move |()| {
+        set_proposing.set(false);
+        items.refetch();
+    });
+    let on_cancel = Callback::new(move |()| set_proposing.set(false));
+
+    let filters = view! {
+        <FilterBar label="Filtrer les ressources">
+            <SegmentedControl
+                label="Type"
+                options=kind_segments()
+                value=kind
+                on_change=Callback::new(move |v| set_kind.set(v))
+            />
+        </FilterBar>
+    }
+    .into_any();
 
     view! {
-        <section class="gc-resources">
-            <h1>"Ressources"</h1>
-            <p class="gc-resources__intro">
-                "Les liens que l'association recommande. Une ressource validée
-                 rapporte de l'XP à qui l'a proposée."
-            </p>
+        <Page pattern=Pattern::List>
+            <PageHeader
+                title="Ressources"
+                lead="Les liens que l'association recommande. Une ressource validée rapporte de l'XP à qui l'a proposée."
+                filters
+            >
+                <HeaderAction set_proposing />
+            </PageHeader>
 
-            // Proposing a resource is for members: a visitor is asked to
-            // sign in, an unverified account to verify its address.
-            <Suspense fallback=|| ()>
+            <Show when=move || proposing.get()>
+                <Panel>
+                    <h2 class="ui-h3">"Proposer une ressource"</h2>
+                    <SubmitForm on_sent on_cancel />
+                </Panel>
+            </Show>
+
+            <Transition fallback=|| view! { <RowsSkeleton rows=5 /> }>
                 {move || {
-                    me.get()
-                        .map(|result| match result.ok().flatten() {
-                            Some(user) if user.email_verified => {
-                                view! { <SubmitForm on_changed /> }.into_any()
-                            }
-                            Some(_) => {
+                    items
+                        .get()
+                        .map(|result| match result {
+                            Err(_) => {
                                 view! {
-                                    <div class="gc-banner gc-banner--warning">
-                                        "Vérifie ton adresse Epitech pour proposer une ressource."
-                                    </div>
+                                    <ErrorState
+                                        message="Impossible de charger la bibliothèque."
+                                        on_retry=Callback::new(move |()| items.refetch())
+                                    />
                                 }
                                     .into_any()
                             }
-                            None => {
-                                view! { <SignInPrompt what="proposer une ressource" /> }.into_any()
+                            Ok(list) => {
+                                let wanted = kind.get();
+                                let shown: Vec<ResourceItem> = list
+                                    .into_iter()
+                                    .filter(|i| wanted.is_empty() || i.kind.as_deref() == Some(wanted.as_str()))
+                                    .collect();
+                                if shown.is_empty() {
+                                    view! {
+                                        <EmptyState
+                                            icon=IconName::Books
+                                            title="Aucune ressource ici pour l'instant"
+                                            body="Propose le premier lien : il rapporte de l'XP une fois validé."
+                                        />
+                                    }
+                                        .into_any()
+                                } else {
+                                    view! {
+                                        <DenseList label="Ressources">
+                                            {shown
+                                                .into_iter()
+                                                .map(|item| view! { <ResourceRow item on_changed /> })
+                                                .collect_view()}
+                                        </DenseList>
+                                    }
+                                        .into_any()
+                                }
                             }
                         })
                 }}
-            </Suspense>
-
-            <Suspense fallback=move || view! { <p class="gc-empty">"Chargement…"</p> }>
-                {move || match items.get() {
-                    None => view! { <p class="gc-empty">"Chargement…"</p> }.into_any(),
-                    Some(Err(_)) => {
-                        view! { <p class="gc-empty">"Impossible de charger la bibliothèque."</p> }
-                            .into_any()
-                    }
-                    Some(Ok(list)) if list.is_empty() => {
-                        view! {
-                            <p class="gc-empty">
-                                "La bibliothèque est vide. Proposez le premier lien."
-                            </p>
-                        }
-                            .into_any()
-                    }
-                    Some(Ok(list)) => {
-                        view! {
-                            <ul class="gc-resources__list">
-                                {list
-                                    .into_iter()
-                                    .map(|item| view! { <ResourceRow item on_changed /> })
-                                    .collect_view()}
-                            </ul>
-                        }
-                            .into_any()
-                    }
-                }}
-            </Suspense>
-        </section>
+            </Transition>
+        </Page>
     }
 }

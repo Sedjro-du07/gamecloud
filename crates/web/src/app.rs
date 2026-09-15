@@ -8,10 +8,14 @@ use leptos_router::{
 };
 
 use crate::{
-    components::hud_shell::HudShell,
+    components::{
+        app_shell::AppShell,
+        ui::{ButtonLink, EmptyState, IconName, Page, PageHeader, Pattern},
+    },
     pages::{
         admin::AdminPage,
         calendar::CalendarPage,
+        design::DesignPage,
         home::HomePage,
         kumo::KumoPage,
         new_project::NewProjectPage,
@@ -57,6 +61,19 @@ pub fn Shell(
     }
 }
 
+/// An address that leads nowhere.
+#[component]
+fn NotFound() -> impl IntoView {
+    view! {
+        <Page pattern=Pattern::Detail>
+            <PageHeader title="Page introuvable" />
+            <EmptyState icon=IconName::Compass title="Cette adresse ne mène nulle part">
+                <ButtonLink href="/" icon=IconName::House>"Retour à l'accueil"</ButtonLink>
+            </EmptyState>
+        </Page>
+    }
+}
+
 /// Application root. Provides meta context and declares the route table.
 #[component]
 pub fn App() -> impl IntoView {
@@ -64,13 +81,12 @@ pub fn App() -> impl IntoView {
 
     view! {
         <Stylesheet id="leptos" href="/pkg/gamecloud.css" />
-        // The display, body and mono faces the stylesheet names. Without
-        // them every heading fell back to the system font.
+        // Inter for text, Orbitron for the wordmark and headings.
         <Link rel="preconnect" href="https://fonts.googleapis.com" />
         <Link rel="preconnect" href="https://fonts.gstatic.com" />
         <Link
             rel="stylesheet"
-            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Orbitron:wght@600;700;800&display=swap"
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Orbitron:wght@500;600;700&display=swap"
         />
         // Without this the browser asks for /favicon.ico on every page
         // and gets a 404 each time — harmless, but it fills the console
@@ -81,8 +97,8 @@ pub fn App() -> impl IntoView {
               content="GameCloud OS — l'OS gamifié de l'association game-dev d'Epitech Bénin." />
 
         <Router>
-            <HudShell>
-                <Routes fallback=|| view! { <p class="gc-empty">"404"</p> }>
+            <AppShell>
+                <Routes fallback=|| view! { <NotFound /> }>
                     <Route path=StaticSegment("") view=HomePage />
                     <Route path=StaticSegment("profile") view=ProfilePage />
                     <Route path=StaticSegment("projects") view=ProjectsPage />
@@ -102,6 +118,8 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("shares") view=SharesPage />
                     <Route path=StaticSegment("tests") view=TestsPage />
                     <Route path=StaticSegment("kumo") view=KumoPage />
+                    // Preview of the redesign's tokens and primitives; not in the menu.
+                    <Route path=StaticSegment("design") view=DesignPage />
                     <Route path=StaticSegment("reviews") view=ReviewsPage />
                     <Route path=StaticSegment("admin") view=AdminPage />
                     <Route path=StaticSegment("scan") view=ScanPage />
@@ -119,7 +137,7 @@ pub fn App() -> impl IntoView {
                     <Route path=(StaticSegment("onboarding"), StaticSegment("tracks"))
                            view=TrackPickerPage />
                 </Routes>
-            </HudShell>
+            </AppShell>
         </Router>
     }
 }

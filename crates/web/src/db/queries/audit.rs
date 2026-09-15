@@ -22,8 +22,10 @@ pub struct AuditEntry {
     pub id: Uuid,
     /// Member who acted, or `None` when the platform acted on its own.
     pub actor_id: Option<Uuid>,
-    /// Display name of the actor, resolved for the UI.
+    /// Pseudo of the actor, resolved for the UI.
     pub actor_name: Option<String>,
+    /// Pseudo of the member affected, when the target is a member.
+    pub target_name: Option<String>,
     /// Dotted action name, e.g. `admin.grant_xp`.
     pub action: String,
     /// Kind of entity affected.
@@ -103,6 +105,7 @@ pub async fn recent(pool: &PgPool, limit: i64) -> WebResult<Vec<AuditEntry>> {
         SELECT a.id,
                a.actor_id,
                member_display_name(u.current_title, u.discord_global_name, u.discord_username, u.discord_id) AS actor_name,
+               member_display_name(t.current_title, t.discord_global_name, t.discord_username, t.discord_id) AS target_name,
                a.action,
                a.target_type,
                a.target_id,
@@ -110,6 +113,7 @@ pub async fn recent(pool: &PgPool, limit: i64) -> WebResult<Vec<AuditEntry>> {
                a.created_at
           FROM audit_logs a
           LEFT JOIN users u ON u.id = a.actor_id
+          LEFT JOIN users t ON t.id = a.target_id
          ORDER BY a.created_at DESC
          LIMIT $1
         "#,

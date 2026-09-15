@@ -1,0 +1,337 @@
+// Neon HUD skin: the futuristic layer over the primitives. Tokens only.
+//
+// Loaded last. It re-skins what the primitives lay out — ground, type,
+// buttons, panels, lists, shell — and adds nothing a screen could use on
+// its own.
+
+// --- Ground: the themed image under a veil, the grid, faint scanlines -------
+
+.ui-ground {
+  background: var(--bg);
+
+  &::before {
+    background: var(--veil), var(--bg-image);
+    background-size: cover, cover;
+    background-position: center, center;
+    background-repeat: no-repeat;
+    animation: none;
+    opacity: 1;
+  }
+
+  &::after {
+    background-image:
+      repeating-linear-gradient(0deg, var(--scanline) 0 1px, transparent 1px 3px),
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: auto, var(--grid-step) var(--grid-step), var(--grid-step) var(--grid-step);
+    mask-image: linear-gradient(180deg, var(--text) 0%, transparent 85%);
+  }
+}
+
+// --- Type -------------------------------------------------------------------------
+
+.ui-display,
+.ui-h1,
+.ui-h2,
+.ui-h3,
+.ui-card__title,
+.ui-facts dd,
+.ui-stepper__label {
+  font-family: var(--font-display);
+  letter-spacing: var(--ls-heading);
+}
+
+.ui-display,
+.ui-h1,
+.ui-wordmark {
+  background: var(--grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(var(--glow-text));
+}
+
+.ui-h2 { text-shadow: var(--glow-text); }
+
+.ui-label,
+.ui-card__kicker { color: var(--accent-300); }
+
+.ui-facts dd {
+  background: var(--grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+// --- Buttons ------------------------------------------------------------------------
+
+.ui-btn {
+  border-radius: var(--radius-sm);
+  border-color: var(--border);
+  background: var(--glass);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: var(--size-meta);
+  transition: box-shadow var(--dur-fade), border-color var(--dur-fade), background-color var(--dur-fade), color var(--dur-fade);
+
+  &:hover,
+  &.is-hover {
+    border-color: var(--accent);
+    background: var(--accent-900);
+    color: var(--accent-300);
+    box-shadow: var(--glow-accent);
+  }
+
+  &:disabled { box-shadow: none; }
+
+  &--primary {
+    border-color: var(--accent);
+    background: var(--grad-neon-soft);
+    color: var(--text);
+    box-shadow: var(--glow-accent-soft);
+
+    &:hover,
+    &.is-hover {
+      background: var(--grad-neon-soft);
+      border-color: var(--accent-400);
+      color: var(--text);
+      box-shadow: var(--glow-accent), var(--glow-accent-2);
+    }
+  }
+
+  &--ghost {
+    background: transparent;
+    color: var(--accent-300);
+
+    &:hover,
+    &.is-hover { box-shadow: none; }
+  }
+}
+
+// --- Glass panels with HUD corners --------------------------------------------------
+
+.ui-card,
+.ui-panel,
+.ui-notice,
+.ui-message,
+.ui-visual--none {
+  position: relative;
+  background: var(--glass);
+  border-color: var(--border);
+  backdrop-filter: blur(var(--glass-blur));
+  box-shadow: var(--elev-md);
+}
+
+.ui-card,
+.ui-panel {
+  &::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    z-index: 1;
+    pointer-events: none;
+    border-radius: inherit;
+    background:
+      linear-gradient(var(--accent), var(--accent)) top left / var(--corner) 2px no-repeat,
+      linear-gradient(var(--accent), var(--accent)) top left / 2px var(--corner) no-repeat,
+      linear-gradient(var(--accent-2), var(--accent-2)) bottom right / var(--corner) 2px no-repeat,
+      linear-gradient(var(--accent-2), var(--accent-2)) bottom right / 2px var(--corner) no-repeat;
+  }
+}
+
+.ui-card {
+  &--link {
+    transition: transform var(--dur-fade), box-shadow var(--dur-fade), border-color var(--dur-fade);
+
+    &:hover,
+    &.is-hover {
+      transform: translateY(var(--lift));
+      border-color: var(--accent);
+      background: var(--glass);
+      box-shadow: var(--glow-accent), var(--elev-md);
+    }
+  }
+
+  &--achieved {
+    border-color: var(--accent-2);
+    box-shadow: var(--glow-accent-2);
+  }
+
+  &__status { color: var(--accent-2-300); }
+
+  &__none { background: var(--grad-neon-soft); color: var(--accent-300); }
+
+  &--loading { backdrop-filter: none; box-shadow: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-card--link:hover { transform: none; }
+}
+
+.ui-notice { box-shadow: var(--glow-accent-soft); }
+.ui-notice--error { border-color: var(--error); box-shadow: none; }
+
+.ui-message--own {
+  border-color: var(--accent-2);
+  background: var(--glass-strong);
+}
+
+.ui-visual { border-color: var(--border); box-shadow: var(--elev-md); }
+
+// A QR code keeps its paper, or it will not scan.
+.ui-figure__frame { background: var(--qr-paper); }
+
+// --- Tags, fields, avatar -----------------------------------------------------------------
+
+.ui-tag {
+  border-color: var(--border);
+  background: var(--accent-900);
+  color: var(--accent-300);
+
+  &--accent {
+    border-color: var(--accent-2);
+    background: var(--grad-neon-soft);
+    color: var(--text);
+    box-shadow: var(--glow-accent-2);
+  }
+}
+
+.ui-control {
+  background: var(--field-bg);
+  border-color: var(--border);
+
+  &:focus-visible,
+  &.is-focus { box-shadow: var(--glow-accent); }
+}
+
+.ui-avatar {
+  border-color: var(--accent);
+  background: var(--grad-neon-soft);
+  color: var(--text);
+  box-shadow: var(--glow-accent-soft);
+}
+
+// --- Gamification ---------------------------------------------------------------------------
+
+.ui-xp__fill { background: var(--grad-neon); }
+
+.ui-streak__mark--on {
+  background: var(--grad-neon);
+  box-shadow: var(--glow-accent-soft);
+}
+
+// Loading: a light sweeping across the skeleton.
+.ui-skeleton {
+  background: linear-gradient(90deg, var(--accent-900) 0%, var(--accent-800) 50%, var(--accent-900) 100%);
+  background-size: 200% 100%;
+  animation: ui-sweep 1.6s linear infinite;
+}
+
+@keyframes ui-sweep {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-skeleton { animation: none; }
+}
+
+.ui-state > .ui-icon {
+  color: var(--accent);
+  filter: drop-shadow(var(--glow-text));
+}
+
+// --- Page, sections, lists --------------------------------------------------------------------
+
+.ui-section__head {
+  padding-bottom: var(--space-3);
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 30%, transparent 70%) bottom / 100% 1px no-repeat;
+}
+
+.ui-segmented {
+  background: var(--glass);
+  border-color: var(--border);
+  backdrop-filter: blur(var(--glass-blur));
+
+  &__option[aria-pressed='true'] {
+    background: var(--accent-900);
+    color: var(--accent-300);
+
+    &::after {
+      background: var(--grad-neon);
+      box-shadow: var(--glow-accent-soft);
+    }
+  }
+}
+
+.ui-list {
+  &__row {
+    background: linear-gradient(90deg, transparent, var(--divider) var(--rule-fade), var(--divider) calc(100% - var(--rule-fade)), transparent) bottom / 100% 1px no-repeat;
+    transition: background-color var(--dur-fade);
+
+    &:hover { background-color: var(--accent-900); }
+  }
+
+  &__lead > .ui-icon { color: var(--accent); }
+  &__group { color: var(--accent-300); }
+  &__value { color: var(--accent-300); }
+}
+
+.ui-steps > li > .ui-icon,
+.ui-ladder__rung--reached > .ui-icon { filter: drop-shadow(var(--glow-text)); }
+
+// --- Shell ------------------------------------------------------------------------------------------
+
+.ui-topbar {
+  background: var(--glass-strong);
+  backdrop-filter: blur(var(--glass-blur));
+
+  &::after { background: var(--grad-neon); opacity: 0.7; }
+}
+
+.ui-shell__rail {
+  background: linear-gradient(180deg, var(--glass-strong), transparent);
+}
+
+.ui-nav__link {
+  > .ui-icon { color: var(--accent); }
+
+  &:hover { background: var(--accent-900); }
+
+  &[aria-current='page'] {
+    background: linear-gradient(90deg, var(--accent-800), transparent);
+    color: var(--text);
+
+    &::before {
+      background: var(--grad-neon);
+      box-shadow: var(--glow-accent-soft);
+    }
+  }
+}
+
+.ui-tabbar {
+  background: var(--glass-strong);
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+.ui-tabbar__item[aria-current='page'] {
+  color: var(--accent-300);
+
+  &::before { background: var(--grad-neon); box-shadow: var(--glow-accent-soft); }
+}
+
+.ui-sheet__panel {
+  background: var(--glass-strong);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border);
+}
+
+@media print {
+  .ui-display, .ui-h1, .ui-wordmark, .ui-facts dd {
+    background: none;
+    color: var(--text);
+    filter: none;
+  }
+  .ui-card, .ui-panel { backdrop-filter: none; box-shadow: none; }
+  .ui-card::before, .ui-panel::before { display: none; }
+}

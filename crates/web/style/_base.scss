@@ -1,0 +1,65 @@
+// Base: the document itself. Tokens only.
+//
+// Element styles are wrapped in `:where()` so they weigh nothing: any `ui-`
+// class wins over them without a fight.
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--size-body);
+  line-height: var(--lh-body);
+}
+
+:where(button, input, select, textarea) { font: inherit; }
+
+:where(h1, h2, h3, h4, p, figure, dl, dd) { margin: 0; }
+
+:where(h1, h2, h3, h4) { overflow-wrap: anywhere; }
+
+// A link in running text: accent line under readable accent text.
+:where(a) {
+  color: var(--accent-300);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+:where(a:hover) { color: var(--text); }
+
+:where(a:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-radius: var(--radius-sm);
+}
+
+@media print {
+  .ui-ground::before,
+  .ui-ground::after,
+  .ui-topbar,
+  .ui-shell__rail,
+  .ui-tabbar,
+  .ui-sheet,
+  .ui-skip,
+  .ui-shell__footer,
+  .ui-notice,
+  .ui-page__actions,
+  .ui-filters,
+  .ui-print-hide { display: none !important; }
+
+  .ui-shell { display: block; }
+  .ui-shell__main { max-width: none; padding: 0; }
+
+  // Only what was earned goes on paper.
+  .ui-list__row--dimmed { display: none; }
+  .ui-list__row,
+  .ui-card { break-inside: avoid; }
+  .ui-xp__rail { outline: 1px solid var(--border); }
+}

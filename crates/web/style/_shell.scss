@@ -1,0 +1,304 @@
+// The shell: top bar, menu, and on phones a bottom bar with a full menu.
+// Tokens only.
+
+.ui-shell {
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--size-body);
+  line-height: var(--lh-body);
+
+  ::selection { background: var(--selection); color: var(--text); }
+}
+
+.ui-skip:focus {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + var(--space-3));
+  left: var(--space-3);
+  z-index: 60;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: var(--space-3) var(--space-5);
+  clip-path: none;
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-md);
+  box-shadow: var(--elev-md);
+}
+
+// --- Top bar -----------------------------------------------------------------
+
+.ui-topbar {
+  grid-column: 1 / -1;
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-5);
+  min-height: var(--topbar-h);
+  padding: var(--space-3) var(--space-6);
+  background: var(--bg);
+
+  // The rule under the bar fades out at both ends.
+  &::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--divider) var(--rule-fade), var(--divider) calc(100% - var(--rule-fade)), transparent);
+  }
+
+  &__brand {
+    font-size: var(--size-h3);
+    line-height: var(--lh-heading);
+    text-decoration: none;
+
+    &:hover { color: var(--text); }
+
+    &:focus-visible {
+      outline: var(--focus-ring);
+      outline-offset: var(--focus-offset);
+      border-radius: var(--radius-sm);
+    }
+  }
+
+  &__account {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3) var(--space-4);
+    min-width: 0;
+  }
+
+  &__name {
+    font-size: var(--size-meta);
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+
+  &__loading { width: calc(var(--space-8) * 2); }
+}
+
+// --- Menu --------------------------------------------------------------------
+
+.ui-shell__rail {
+  position: sticky;
+  top: calc(env(safe-area-inset-top, 0px) + var(--topbar-h));
+  align-self: start;
+  max-height: calc(100vh - var(--topbar-h));
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-4) var(--space-7);
+}
+
+.ui-nav {
+  display: grid;
+  gap: var(--space-6);
+
+  &__group {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  &__label { padding-inline: var(--space-4); }
+
+  &__list {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  &__link {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-size: var(--size-body);
+    line-height: var(--lh-heading);
+    text-decoration: none;
+    transition: color var(--dur-fade), background-color var(--dur-fade);
+
+    &:hover {
+      color: var(--text);
+      background: var(--hover-neutral);
+    }
+
+    &:focus-visible {
+      outline: var(--focus-ring);
+      outline-offset: var(--focus-offset);
+    }
+
+    // Active: plain text colour and a solid accent mark, no tinted ground.
+    &[aria-current='page'] {
+      color: var(--text);
+
+      &::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: var(--space-2);
+        bottom: var(--space-2);
+        width: var(--nav-mark);
+        background: var(--accent);
+      }
+    }
+  }
+}
+
+// --- Page --------------------------------------------------------------------
+
+.ui-shell__main {
+  display: grid;
+  align-content: start;
+  gap: var(--space-7);
+  min-width: 0;
+  max-width: var(--content-max);
+  padding: var(--space-7) var(--space-6) var(--space-8);
+}
+
+.ui-shell__footer { padding-top: var(--space-7); }
+
+// --- Phone bottom bar and full menu --------------------------------------------
+
+.ui-tabbar { display: none; }
+
+.ui-tabbar__item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-3) var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-family: var(--font-ui);
+  font-size: var(--size-label);
+  line-height: var(--lh-heading);
+  text-align: center;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+
+  &:hover { color: var(--text); }
+
+  &:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-offset);
+  }
+
+  &[aria-current='page'],
+  &[aria-expanded='true'] { color: var(--text); }
+
+  // Active: the same solid accent mark, on top where the thumb is not.
+  &[aria-current='page']::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 25%;
+    right: 25%;
+    height: var(--nav-mark);
+    background: var(--accent);
+  }
+}
+
+.ui-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  align-items: end;
+
+  &__backdrop {
+    position: absolute;
+    inset: 0;
+    background: var(--backdrop);
+  }
+
+  &__panel {
+    position: relative;
+    display: grid;
+    gap: var(--space-5);
+    max-height: calc(100vh - var(--space-8));
+    overflow-y: auto;
+    margin: var(--space-4) var(--space-4) calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+    padding: var(--space-5);
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--elev-lg);
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+}
+
+// --- Widths ------------------------------------------------------------------
+
+// Tablets: the menu keeps its place and order, icons only.
+@media (max-width: 1080px) and (min-width: 721px) {
+  .ui-shell { grid-template-columns: var(--rail-w-compact) minmax(0, 1fr); }
+  .ui-shell__rail { padding-inline: var(--space-2); }
+  .ui-shell__rail .ui-nav__label,
+  .ui-shell__rail .ui-nav__text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .ui-shell__rail .ui-nav__link { justify-content: center; }
+}
+
+// Phones: no side menu; a solid bottom bar the content never shows through.
+@media (max-width: 720px) {
+  .ui-shell { grid-template-columns: minmax(0, 1fr); }
+  .ui-shell__rail { display: none; }
+  .ui-topbar { padding-inline: var(--space-5); }
+  .ui-topbar__name,
+  .ui-topbar__account > .ui-tag { display: none; }
+
+  .ui-shell__main {
+    padding: var(--space-6) var(--space-5) calc(var(--space-8) * 1.5 + env(safe-area-inset-bottom, 0px));
+  }
+
+  .ui-tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    padding: var(--space-2) var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+    background: var(--surface);
+
+    &::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--divider) var(--rule-fade), var(--divider) calc(100% - var(--rule-fade)), transparent);
+    }
+  }
+}

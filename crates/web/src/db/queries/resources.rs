@@ -188,7 +188,7 @@ pub async fn submit(
     .await?;
 
     let display: String =
-        sqlx::query_scalar("SELECT COALESCE(current_title, discord_id) FROM users WHERE id = $1")
+        sqlx::query_scalar("SELECT member_display_name(current_title, discord_global_name, discord_username, discord_id) FROM users WHERE id = $1")
             .bind(author)
             .fetch_one(&mut *tx)
             .await?;

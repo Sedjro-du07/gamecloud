@@ -18,7 +18,13 @@
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
 
-use crate::server_fns::scan_qr;
+use crate::{
+    components::ui::{
+        Button, ButtonKind, Field, Form, FormActions, IconName, Notice, NoticeKind, Page,
+        PageHeader, Pattern,
+    },
+    server_fns::scan_qr,
+};
 
 /// QR scan page.
 #[component]
@@ -66,64 +72,57 @@ pub fn ScanPage() -> impl IntoView {
     });
 
     view! {
-        <section class="gc-scan">
-            <h1>"Présence"</h1>
-            <p>
-                "Vise le QR affiché à l'écran avec l'appareil photo de ton
-                 téléphone : le lien s'ouvre et la présence est enregistrée
-                 toute seule. Sinon, colle le code ci-dessous."
-            </p>
+        <Page pattern=Pattern::Detail>
+            <PageHeader
+                title="Présences"
+                lead="Vise le QR affiché à l'écran avec l'appareil photo de ton téléphone : le lien s'ouvre et ta présence est enregistrée toute seule. Sinon, colle le code ici."
+            />
 
             {move || {
                 result
                     .get()
                     .map(|outcome| match outcome {
-                        Ok(message) => {
-                            view! { <div class="gc-banner gc-banner--ok">{message}</div> }
-                                .into_any()
-                        }
-                        Err(message) => {
-                            view! { <div class="gc-banner gc-banner--warning">{message}</div> }
-                                .into_any()
-                        }
+                        Ok(message) => view! { <Notice kind=NoticeKind::Success>{message}</Notice> }.into_any(),
+                        Err(message) => view! { <Notice kind=NoticeKind::Error>{message}</Notice> }.into_any(),
                     })
             }}
 
-            <form
-                class="gc-form"
-                on:submit=move |ev| {
-                    ev.prevent_default();
-                    let value = extract_token(&token.get());
-                    if !value.is_empty() {
-                        submit.dispatch(value);
-                    }
+            <Form on:submit=move |ev| {
+                ev.prevent_default();
+                let value = extract_token(&token.get());
+                if !value.is_empty() {
+                    submit.dispatch(value);
                 }
-            >
-                <label class="gc-field">
-                    <span>"Code"</span>
+            }>
+                <Field
+                    id="presence-code"
+                    label="Code"
+                    hint="Le lien complet fonctionne aussi. Chaque membre présent scanne le même code, une fois par personne, tant qu'il est valable."
+                    wide=true
+                >
                     <input
+                        id="presence-code"
+                        class="ui-control"
                         type="text"
                         autocomplete="off"
                         placeholder="eyJhbGciOi…"
+                        aria-describedby="presence-code-hint"
                         prop:value=move || token.get()
                         on:input=move |ev| set_token.set(event_target_value(&ev))
                     />
-                </label>
-                <button
-                    class="gc-btn gc-btn--primary"
-                    type="submit"
-                    disabled=move || submit.pending().get() || token.get().trim().is_empty()
-                >
-                    {move || if submit.pending().get() { "Validation…" } else { "Valider ma présence" }}
-                </button>
-            </form>
-
-            <p class="gc-scan__hint">
-                "Chaque membre présent peut scanner le même code — il reste
-                 valable jusqu'à son expiration. En revanche, une seule fois
-                 par personne."
-            </p>
-        </section>
+                </Field>
+                <FormActions>
+                    <Button
+                        kind=ButtonKind::Primary
+                        button_type="submit"
+                        icon=IconName::QrCode
+                        disabled=Signal::derive(move || submit.pending().get() || token.get().trim().is_empty())
+                    >
+                        {move || if submit.pending().get() { "Validation…" } else { "Valider ma présence" }}
+                    </Button>
+                </FormActions>
+            </Form>
+        </Page>
     }
 }
 
