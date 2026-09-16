@@ -28,10 +28,8 @@ function audio() {
     if (!Ctor) return null;
     ctx = new Ctor();
     master = ctx.createGain();
-    master.gain.value = 0.35;
-    const limiter = ctx.createDynamicsCompressor();
-    master.connect(limiter);
-    limiter.connect(ctx.destination);
+    master.gain.value = 0.8;
+    master.connect(ctx.destination);
   }
   if (ctx.state === 'suspended') ctx.resume().catch(() => {});
   return ctx;
@@ -77,39 +75,39 @@ function sweep(start, dur, { gain = 0.08, from = 800, to = 3000 } = {}) {
 
 const CUES = {
   // A control clicked: short, dry, high.
-  tick: (t) => tone(1400, t, 0.04, { type: 'square', gain: 0.03, to: 900 }),
+  tick: (t) => tone(1400, t, 0.08, { type: 'square', gain: 0.3, to: 900 }),
   // Moving to another screen.
-  nav: (t) => tone(520, t, 0.08, { type: 'triangle', gain: 0.07, to: 820 }),
+  nav: (t) => tone(520, t, 0.11, { type: 'triangle', gain: 0.3, to: 820 }),
   // The main action of a screen.
   confirm: (t) => {
-    tone(660, t, 0.08, { type: 'triangle', gain: 0.09 });
-    tone(990, t + 0.06, 0.12, { type: 'triangle', gain: 0.08 });
+    tone(660, t, 0.1, { type: 'triangle', gain: 0.3 });
+    tone(990, t + 0.07, 0.14, { type: 'triangle', gain: 0.26 });
   },
   // Something opens: a menu, a panel.
-  open: (t) => sweep(t, 0.18, { gain: 0.06, from: 600, to: 2600 }),
+  open: (t) => sweep(t, 0.2, { gain: 0.3, from: 600, to: 2600 }),
   // It worked.
   success: (t) => [523.25, 659.25, 783.99, 1046.5].forEach((f, i) =>
-    tone(f, t + i * 0.07, 0.22, { type: 'triangle', gain: 0.09 })),
+    tone(f, t + i * 0.07, 0.22, { type: 'triangle', gain: 0.26 })),
   // XP earned: a charge, then sparkles.
   xp: (t) => {
-    tone(440, t, 0.35, { type: 'sawtooth', gain: 0.035, to: 1760 });
-    [1318.5, 1760, 2349.3].forEach((f, i) => tone(f, t + 0.25 + i * 0.06, 0.18, { type: 'sine', gain: 0.07 }));
+    tone(440, t, 0.35, { type: 'sawtooth', gain: 0.14, to: 1760 });
+    [1318.5, 1760, 2349.3].forEach((f, i) => tone(f, t + 0.25 + i * 0.06, 0.18, { type: 'sine', gain: 0.24 }));
   },
   // A new title, a track joined: a small fanfare.
   levelup: (t) => {
-    [392, 523.25, 659.25, 783.99].forEach((f, i) => tone(f, t + i * 0.09, 0.3, { type: 'square', gain: 0.035 }));
-    tone(1046.5, t + 0.36, 0.6, { type: 'triangle', gain: 0.1 });
-    sweep(t + 0.3, 0.4, { gain: 0.04, from: 2000, to: 8000 });
+    [392, 523.25, 659.25, 783.99].forEach((f, i) => tone(f, t + i * 0.09, 0.3, { type: 'square', gain: 0.14 }));
+    tone(1046.5, t + 0.36, 0.6, { type: 'triangle', gain: 0.28 });
+    sweep(t + 0.3, 0.4, { gain: 0.1, from: 2000, to: 8000 });
   },
   // It did not work: low and falling, never harsh.
   error: (t) => {
-    tone(220, t, 0.18, { type: 'sawtooth', gain: 0.05, to: 140 });
-    tone(180, t + 0.12, 0.2, { type: 'sawtooth', gain: 0.04, to: 110 });
+    tone(220, t, 0.2, { type: 'sawtooth', gain: 0.26, to: 140 });
+    tone(180, t + 0.13, 0.22, { type: 'sawtooth', gain: 0.2, to: 110 });
   },
   // Kumo answered.
   message: (t) => {
-    tone(880, t, 0.12, { type: 'sine', gain: 0.1 });
-    tone(1318.5, t + 0.1, 0.18, { type: 'sine', gain: 0.08 });
+    tone(880, t, 0.14, { type: 'sine', gain: 0.3 });
+    tone(1318.5, t + 0.11, 0.2, { type: 'sine', gain: 0.25 });
   },
 };
 
