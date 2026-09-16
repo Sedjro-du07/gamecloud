@@ -14,9 +14,9 @@ use crate::{
     components::ui::{
         vocab::{plain_title, status_label, track_name, verdict},
         ButtonKind, ButtonLink, DenseList, EmptyState, ErrorState, Fact, Facts, Icon, IconName,
-        ListRow, Page, PageHeader, PageSkeleton, Pattern, RowValue, Section, Tag,
+        ListRow, MembersOnlyState, Page, PageHeader, PageSkeleton, Pattern, RowValue, Section, Tag,
     },
-    server_fns::get_track_board,
+    server_fns::{get_me, get_track_board},
 };
 
 /// The projects this track judged, awaiting ones first.
@@ -184,6 +184,7 @@ fn Board(
 /// Track board page.
 #[component]
 pub fn TrackDetailPage() -> impl IntoView {
+    let me = Resource::new(|| (), |()| async { get_me().await });
     let params = use_params_map();
     let board = Resource::new(
         move || params.get().get("id").unwrap_or_default(),
@@ -191,7 +192,22 @@ pub fn TrackDetailPage() -> impl IntoView {
     );
     view! {
         <Suspense fallback=|| view! { <Page pattern=Pattern::Detail><PageSkeleton /></Page> }>
-            {move || board.get().map(|result| match result {
+            {move || {
+                let member = me
+                    .get()
+                    .and_then(Result::ok)
+                    .flatten()
+                    .is_some_and(|u| u.email_verified);
+                if !member {
+                    return view! {
+                        <Page pattern=Pattern::Detail>
+                            <PageHeader title="Track" />
+                            <MembersOnlyState what="voir le tableau d'une track" />
+                        </Page>
+                    }
+                    .into_any();
+                }
+                board.get().map(|result| match result {
                 Err(_) => view! {
                     <Page pattern=Pattern::Detail>
                         <PageHeader title="Track" />
@@ -200,7 +216,9 @@ pub fn TrackDetailPage() -> impl IntoView {
                 }
                 .into_any(),
                 Ok(board) => view! { <Board board /> }.into_any(),
-            })}
+                })
+                .into_any()
+            }}
         </Suspense>
     }
 }

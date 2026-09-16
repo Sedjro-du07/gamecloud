@@ -11,6 +11,7 @@ use leptos::prelude::*;
 use super::{
     button::{Button, ButtonKind},
     icon::{Icon, IconName, IconSize},
+    sound::{play, Sound},
 };
 
 /// The three page patterns.
@@ -215,7 +216,7 @@ pub fn Disclosure(
 ) -> impl IntoView {
     view! {
         <details class="ui-disclosure">
-            <summary class="ui-disclosure__summary">
+            <summary class="ui-disclosure__summary" on:click=move |_| play(Sound::Open)>
                 <span class="ui-disclosure__caret"><Icon name=IconName::CaretRight /></span>
                 {summary}
             </summary>

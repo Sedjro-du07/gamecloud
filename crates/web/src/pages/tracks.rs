@@ -12,7 +12,8 @@ use crate::{
     components::ui::{
         vocab::{track_icon_by_id, track_name},
         Button, ButtonKind, ButtonLink, Card, CardGrid, Cluster, ErrorState, Field, Gap,
-        GridSkeleton, IconName, Notice, NoticeKind, Page, PageHeader, Pattern, SignInState, Stack,
+        GridSkeleton, IconName, MembersOnlyState, Notice, NoticeKind, Page, PageHeader, Pattern,
+        Sound, Stack,
     },
     server_fns::{get_me, get_track_options, join_track},
 };
@@ -141,7 +142,7 @@ fn TrackGrid() -> impl IntoView {
 
     view! {
         {move || feedback.get().map(|result| match result {
-            Ok(m) => view! { <Notice kind=NoticeKind::Success>{m}</Notice> }.into_any(),
+            Ok(m) => view! { <Notice kind=NoticeKind::Success sound=Sound::LevelUp>{m}</Notice> }.into_any(),
             Err(m) => view! { <Notice kind=NoticeKind::Error>{m}</Notice> }.into_any(),
         })}
         <Suspense fallback=|| view! { <GridSkeleton cards=8 /> }>
@@ -175,8 +176,9 @@ pub fn TrackPickerPage() -> impl IntoView {
             </PageHeader>
             <Suspense fallback=|| view! { <GridSkeleton cards=8 /> }>
                 {move || me.get().map(|result| match result {
-                    Ok(Some(_)) => view! { <TrackGrid /> }.into_any(),
-                    Ok(None) => view! { <SignInState what="choisir tes tracks" /> }.into_any(),
+                    // The catalogue is association business: members only.
+                    Ok(Some(user)) if user.email_verified => view! { <TrackGrid /> }.into_any(),
+                    Ok(_) => view! { <MembersOnlyState what="choisir tes tracks" /> }.into_any(),
                     Err(_) => view! {
                         <ErrorState message="Impossible de charger les tracks." on_retry=Callback::new(move |()| me.refetch()) />
                     }

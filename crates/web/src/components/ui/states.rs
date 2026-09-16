@@ -10,6 +10,7 @@ use super::{
     card::CardSkeleton,
     icon::{Icon, IconName, IconSize},
     layout::CardGrid,
+    sound::{play, Sound},
 };
 
 /// Nothing to show yet, and what happens next.
@@ -44,6 +45,7 @@ pub fn ErrorText(
     #[prop(into)]
     message: String,
 ) -> impl IntoView {
+    Effect::new(move |_| play(Sound::Error));
     view! {
         <p class="ui-error" role="alert">
             <Icon name=IconName::WarningCircle />
@@ -91,6 +93,41 @@ pub fn SignInState(
                 </ButtonLink>
                 <ButtonLink kind=ButtonKind::Ghost href="/kumo" icon=IconName::ChatCircle>
                     "Contacter Kumo"
+                </ButtonLink>
+            </div>
+        </div>
+    }
+}
+
+/// A page reserved for the association, seen by somebody who is not a
+/// member yet: the two ways in, and where to write if neither fits.
+#[component]
+pub fn MembersOnlyState(
+    /// What membership gives access to, e.g. "voir les projets".
+    what: &'static str,
+) -> impl IntoView {
+    view! {
+        <div class="ui-state">
+            <Icon name=IconName::LockSimple size=IconSize::Medium />
+            <p class="ui-state__title">"Réservé aux membres de l'association"</p>
+            <p class="ui-meta">
+                {format!("Il faut être membre pour {what}. Déjà sur le serveur Discord de l'association ? Connecte-toi, puis vérifie ton adresse Epitech. Sinon, le test d'entrée ouvre la porte.")}
+            </p>
+            <div class="ui-cluster">
+                <ButtonLink
+                    kind=ButtonKind::Primary
+                    href="/api/auth/login"
+                    external=true
+                    icon=IconName::DiscordLogo
+                    hide_label=true
+                >
+                    "Se connecter avec Discord"
+                </ButtonLink>
+                <ButtonLink href="/onboarding/email" icon=IconName::Envelope>
+                    "Vérifier mon adresse"
+                </ButtonLink>
+                <ButtonLink kind=ButtonKind::Ghost href="/tests" icon=IconName::GraduationCap>
+                    "Passer le test d'entrée"
                 </ButtonLink>
             </div>
         </div>

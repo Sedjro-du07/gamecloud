@@ -536,8 +536,10 @@ pub async fn get_track_options() -> Result<Vec<TrackOption>, ServerFnError> {
     {
         use gamecloud_shared::roles::{specializations_for, Track};
 
+        // The catalogue says who is in which track and what each one does:
+        // association business, like the boards themselves.
         let joined: Vec<String> = match ctx::state() {
-            Some(state) => match ctx::current_user_id(&state).await {
+            Some(state) => match member_viewer(&state).await {
                 Some(user_id) => crate::db::queries::tracks::list_for_user(state.pool(), user_id)
                     .await
                     .map_err(|e| ServerFnError::new(e.to_string()))?
@@ -548,6 +550,12 @@ pub async fn get_track_options() -> Result<Vec<TrackOption>, ServerFnError> {
             },
             None => Vec::new(),
         };
+
+        if let Some(state) = ctx::state() {
+            if member_viewer(&state).await.is_none() {
+                return Ok(Vec::new());
+            }
+        }
 
         return Ok(Track::ALL
             .iter()
@@ -619,9 +627,12 @@ pub async fn get_projects(track: Option<String>) -> Result<Vec<ProjectCard>, Ser
             return Ok(Vec::new());
         };
         let filter = track.filter(|t| !t.is_empty());
-        // Signed out is not an error: a visitor simply sees the
-        // published record and nothing in progress.
-        let viewer = ctx::current_user_id(&state).await;
+        // The Hall of Fame is the association's record, not a showcase:
+        // only members see it.
+        let Some(member) = member_viewer(&state).await else {
+            return Ok(Vec::new());
+        };
+        let viewer = Some(member);
         let tracks = match viewer {
             Some(id) => {
                 let authority = crate::db::queries::users::load_authority(state.pool(), id)
@@ -672,6 +683,11 @@ pub async fn get_project(id: String) -> Result<Option<ProjectDetailView>, Server
             Err(crate::error::WebError::NotFound) => return Ok(None),
             Err(e) => return Err(ServerFnError::new(e.to_string())),
         };
+        // Unpublished work is for the people concerned; to anyone else
+        // the project does not exist.
+        if member_viewer(&state).await.is_none() || !viewer_may_see(&state, &detail).await {
+            return Ok(None);
+        }
 
         let rights = project_rights(&state, &detail).await;
 
@@ -710,6 +726,36 @@ pub async fn get_project(id: String) -> Result<Option<ProjectDetailView>, Server
         let _ = id;
         Ok(None)
     }
+}
+
+/// The viewer, only when they belong to the association: signed in and
+/// with their Epitech address verified. Internal pages — projects,
+/// resources, shares, track boards — answer nothing to anybody else, so
+/// that a stranger who guesses a URL learns nothing.
+#[cfg(feature = "ssr")]
+async fn member_viewer(state: &crate::state::AppState) -> Option<uuid::Uuid> {
+    let id = ctx::current_user_id(state).await?;
+    let record = crate::db::queries::users::find_by_id(state.pool(), id)
+        .await
+        .ok()
+        .flatten()?;
+    record.email_verified.then_some(id)
+}
+
+/// Whether the current viewer may see this project at all.
+#[cfg(feature = "ssr")]
+async fn viewer_may_see(
+    state: &crate::state::AppState,
+    detail: &crate::db::queries::projects::ProjectDetail,
+) -> bool {
+    let viewer = match ctx::current_user_id(state).await {
+        Some(id) => crate::db::queries::users::load_authority(state.pool(), id)
+            .await
+            .ok()
+            .map(|authority| (id, authority)),
+        None => None,
+    };
+    crate::db::queries::projects::may_view(detail, viewer.as_ref().map(|(id, a)| (*id, a)))
 }
 
 /// What the signed-in member may do on this project.
@@ -758,7 +804,8 @@ async fn project_rights(
         can_upload: on_team || leads_it,
         can_submit: status.is_some_and(|s| {
             s.allowed_next().contains(&ProjectStatus::InReview)
-        }) && authority.can(Action::SubmitProjectForReview),
+        }) && authority.can(Action::SubmitProjectForReview)
+            && crate::db::queries::projects::may_manage(detail, user_id, &authority),
         can_release: status == Some(ProjectStatus::Approved)
             && primary.is_some_and(|t| authority.can(Action::PublishProjectAsReleased(t))),
         reviewable_tracks,
@@ -964,6 +1011,12 @@ pub async fn submit_project(project_id: String) -> Result<Vec<String>, ServerFnE
             .map_err(|e| ServerFnError::new(e.to_string()))?;
         if !authority.can(Action::SubmitProjectForReview) {
             return Err(ServerFnError::new("rang insuffisant pour soumettre"));
+        }
+        let detail = crate::db::queries::projects::detail(state.pool(), id)
+            .await
+            .map_err(|_| ServerFnError::new("projet introuvable"))?;
+        if !crate::db::queries::projects::may_manage(&detail, user_id, &authority) {
+            return Err(ServerFnError::new("seule l'équipe du projet peut le soumettre"));
         }
 
         return crate::db::queries::projects::submit_for_review(
@@ -1254,7 +1307,8 @@ pub async fn get_resources() -> Result<Vec<ResourceItem>, ServerFnError> {
         let Some(state) = ctx::state() else {
             return Ok(Vec::new());
         };
-        let Some(user_id) = ctx::current_user_id(&state).await else {
+        // The library is what the association recommends to its own.
+        let Some(user_id) = member_viewer(&state).await else {
             return Ok(Vec::new());
         };
 
@@ -1423,6 +1477,10 @@ pub async fn get_shares() -> Result<SharesView, ServerFnError> {
         };
         let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
 
+        // Members only: what members put on the shelf stays between them.
+        if member_viewer(&state).await.is_none() {
+            return Ok(SharesView::default());
+        }
         let viewer = ctx::current_user_id(&state).await;
         let (can_upload, moderator) = match viewer {
             Some(id) => {
@@ -2054,6 +2112,15 @@ pub async fn add_contributor(
         let id = project_id
             .parse::<uuid::Uuid>()
             .map_err(|_| ServerFnError::new("unknown project"))?;
+        let detail = crate::db::queries::projects::detail(state.pool(), id)
+            .await
+            .map_err(|_| ServerFnError::new("projet introuvable"))?;
+        if !crate::db::queries::projects::may_manage(&detail, user_id, &authority) {
+            return Err(ServerFnError::new("seule l'équipe du projet peut créditer quelqu'un"));
+        }
+        if !crate::db::queries::projects::is_editable(&detail) {
+            return Err(ServerFnError::new("l'équipe est figée pendant la revue"));
+        }
         let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?
@@ -2177,6 +2244,12 @@ pub async fn get_project_files(project_id: String) -> Result<Vec<FileItem>, Serv
         let Ok(id) = project_id.parse::<uuid::Uuid>() else {
             return Ok(Vec::new());
         };
+        let Ok(detail) = crate::db::queries::projects::detail(state.pool(), id).await else {
+            return Ok(Vec::new());
+        };
+        if member_viewer(&state).await.is_none() || !viewer_may_see(&state, &detail).await {
+            return Ok(Vec::new());
+        }
         let rows = crate::db::queries::files::list(state.pool(), id)
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))?;
@@ -2857,6 +2930,9 @@ pub async fn get_track_board(track: String) -> Result<TrackBoard, ServerFnError>
 
         let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
         let parsed = Track::parse(&track).ok_or_else(|| ServerFnError::new("track inconnue"))?;
+        if member_viewer(&state).await.is_none() {
+            return Err(ServerFnError::new("réservé aux membres de l'association"));
+        }
 
         let (authority, user_id) = match ctx::current_user_id(&state).await {
             Some(id) => (

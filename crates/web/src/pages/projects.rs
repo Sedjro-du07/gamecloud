@@ -15,9 +15,9 @@ use crate::{
     components::ui::{
         vocab::{rarity_label, status_label, track_choices, track_icon_by_id, track_name},
         ButtonKind, ButtonLink, Card, CardGrid, CardMedia, EmptyState, ErrorState, Field,
-        FilterBar, GridSkeleton, IconName, Page, PageHeader, Pattern,
+        FilterBar, GridSkeleton, IconName, MembersOnlyState, Page, PageHeader, Pattern,
     },
-    server_fns::get_projects,
+    server_fns::{get_me, get_projects},
 };
 
 /// The line at the bottom of a project card.
@@ -63,6 +63,7 @@ pub fn ProjectTile(
 /// Projects page.
 #[component]
 pub fn ProjectsPage() -> impl IntoView {
+    let me = Resource::new(|| (), |()| async { get_me().await });
     let (track, set_track) = signal(String::new());
     let projects = Resource::new(
         move || track.get(),
@@ -96,6 +97,26 @@ pub fn ProjectsPage() -> impl IntoView {
                     "Nouveau projet"
                 </ButtonLink>
             </PageHeader>
+            <Suspense fallback=|| view! { <GridSkeleton cards=6 /> }>
+                {move || {
+                    me.get()
+                        .map(|result| match result.ok().flatten() {
+                            Some(user) if user.email_verified => view! { <ProjectList projects /> }.into_any(),
+                            _ => view! { <MembersOnlyState what="voir les projets de l'association" /> }.into_any(),
+                        })
+                }}
+            </Suspense>
+        </Page>
+    }
+}
+
+/// The projects themselves, once the viewer is known to be a member.
+#[component]
+fn ProjectList(
+    /// The projects for the chosen track.
+    projects: Resource<Result<Vec<ProjectCard>, ServerFnError>>,
+) -> impl IntoView {
+    view! {
             <Transition fallback=|| view! { <GridSkeleton cards=6 /> }>
                 {move || {
                     projects
@@ -122,7 +143,6 @@ pub fn ProjectsPage() -> impl IntoView {
                         })
                 }}
             </Transition>
-        </Page>
     }
 }
 

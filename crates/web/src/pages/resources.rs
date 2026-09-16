@@ -13,8 +13,8 @@ use crate::{
         segment, segment_with_icon,
         vocab::{resource_kind, track_choices, RESOURCE_KINDS},
         Button, ButtonKind, ButtonLink, Cluster, DenseList, EmptyState, ErrorState, ErrorText,
-        Field, FilterBar, Form, FormActions, FormRow, Icon, IconName, ListRow, Page, PageHeader,
-        Panel, Pattern, RowsSkeleton, Segment, SegmentedControl, Tag, TrackTag,
+        Field, FilterBar, Form, FormActions, FormRow, Icon, IconName, ListRow, MembersOnlyState,
+        Page, PageHeader, Panel, Pattern, RowsSkeleton, Segment, SegmentedControl, Tag, TrackTag,
     },
     server_fns::{act_on_resource, get_me, get_resources, submit_resource},
 };
@@ -258,6 +258,7 @@ fn HeaderAction(
 /// Resource library page.
 #[component]
 pub fn ResourcesPage() -> impl IntoView {
+    let me = Resource::new(|| (), |()| async { get_me().await });
     let items = Resource::new(|| (), |()| async { get_resources().await });
     let on_changed = Callback::new(move |()| items.refetch());
     let (kind, set_kind) = signal(String::new());
@@ -297,6 +298,30 @@ pub fn ResourcesPage() -> impl IntoView {
                 </Panel>
             </Show>
 
+            <Suspense fallback=|| view! { <RowsSkeleton rows=5 /> }>
+                {move || {
+                    me.get()
+                        .map(|result| match result.ok().flatten() {
+                            Some(user) if user.email_verified => view! { <ResourceList items kind on_changed /> }.into_any(),
+                            _ => view! { <MembersOnlyState what="voir la bibliothèque de l'association" /> }.into_any(),
+                        })
+                }}
+            </Suspense>
+        </Page>
+    }
+}
+
+/// The library itself, once the viewer is known to be a member.
+#[component]
+fn ResourceList(
+    /// Everything the library holds.
+    items: Resource<Result<Vec<ResourceItem>, ServerFnError>>,
+    /// Kind currently shown.
+    kind: ReadSignal<String>,
+    /// Refresh after an action.
+    on_changed: Callback<()>,
+) -> impl IntoView {
+    view! {
             <Transition fallback=|| view! { <RowsSkeleton rows=5 /> }>
                 {move || {
                     items
@@ -341,6 +366,5 @@ pub fn ResourcesPage() -> impl IntoView {
                         })
                 }}
             </Transition>
-        </Page>
     }
 }

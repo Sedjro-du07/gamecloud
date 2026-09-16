@@ -60,9 +60,14 @@ struct ListQuery {
 
 async fn list(
     State(state): State<AppState>,
-    user: Option<CurrentUser>,
+    user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> WebResult<Json<Vec<projects::ProjectSummary>>> {
+    // The record of the association's work is for the association.
+    if !users::is_member(state.pool(), user.id).await? {
+        return Err(WebError::Forbidden);
+    }
+    let user = Some(user);
     // `?internal=true` asks to see work in progress. What comes back is
     // still decided per track by the permission matrix — asking for it
     // grants nothing on its own.
@@ -92,9 +97,36 @@ async fn list(
 
 async fn detail(
     State(state): State<AppState>,
+    user: Option<CurrentUser>,
     Path(id): Path<Uuid>,
 ) -> WebResult<Json<projects::ProjectDetail>> {
-    Ok(Json(projects::detail(state.pool(), id).await?))
+    let detail = projects::detail(state.pool(), id).await?;
+    ensure_visible(&state, user.as_ref(), &detail).await?;
+    Ok(Json(detail))
+}
+
+/// Unpublished work is for the people concerned; to anyone else the
+/// project does not exist.
+async fn ensure_visible(
+    state: &AppState,
+    user: Option<&CurrentUser>,
+    detail: &projects::ProjectDetail,
+) -> WebResult<()> {
+    match user {
+        Some(user) if users::is_member(state.pool(), user.id).await? => {}
+        _ => return Err(WebError::NotFound),
+    }
+    let authority = match user {
+        Some(user) => Some(users::load_authority(state.pool(), user.id).await?),
+        None => None,
+    };
+    let viewer = user.zip(authority.as_ref()).map(|(u, a)| (u.id, a));
+
+    if projects::may_view(detail, viewer) {
+        Ok(())
+    } else {
+        Err(WebError::NotFound)
+    }
 }
 
 #[derive(Serialize)]
@@ -154,6 +186,11 @@ async fn add_contributor(
     if !authority.can(Action::CreateProject) {
         return Err(WebError::Forbidden);
     }
+    // Only the team credits people, and only while the project can change.
+    let detail = projects::detail(state.pool(), id).await?;
+    if !projects::may_manage(&detail, user.id, &authority) || !projects::is_editable(&detail) {
+        return Err(WebError::Forbidden);
+    }
     projects::add_contributor(
         state.pool(),
         state.channels(),
@@ -179,6 +216,11 @@ async fn submit(
 ) -> WebResult<Json<SubmitResponse>> {
     let authority = users::load_authority(state.pool(), user.id).await?;
     if !authority.can(Action::SubmitProjectForReview) {
+        return Err(WebError::Forbidden);
+    }
+    // A rank is not enough: only the project's team sends it to review.
+    let detail = projects::detail(state.pool(), id).await?;
+    if !projects::may_manage(&detail, user.id, &authority) {
         return Err(WebError::Forbidden);
     }
     let tracks = projects::submit_for_review(
@@ -441,8 +483,11 @@ async fn upload_file(
 /// List a project's builds.
 async fn list_files(
     State(state): State<AppState>,
+    user: Option<CurrentUser>,
     Path(id): Path<Uuid>,
 ) -> WebResult<Json<Vec<crate::db::queries::files::ProjectFile>>> {
+    let detail = projects::detail(state.pool(), id).await?;
+    ensure_visible(&state, user.as_ref(), &detail).await?;
     Ok(Json(crate::db::queries::files::list(state.pool(), id).await?))
 }
 

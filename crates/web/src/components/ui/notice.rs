@@ -5,7 +5,10 @@
 
 use leptos::prelude::*;
 
-use super::icon::{Icon, IconName, IconSize};
+use super::{
+    icon::{Icon, IconName, IconSize},
+    sound::{play, Sound},
+};
 
 /// What kind of notice.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -25,9 +28,23 @@ pub fn Notice(
     /// Info (default), success or error.
     #[prop(optional)]
     kind: NoticeKind,
+    /// The sound it makes when it appears, instead of the kind's own:
+    /// XP earned, a track joined.
+    #[prop(optional)]
+    sound: Option<Sound>,
     /// The message, and an action if there is one.
     children: Children,
 ) -> impl IntoView {
+    let cue = sound.or(match kind {
+        NoticeKind::Info => None,
+        NoticeKind::Success => Some(Sound::Success),
+        NoticeKind::Error => Some(Sound::Error),
+    });
+    Effect::new(move |_| {
+        if let Some(cue) = cue {
+            play(cue);
+        }
+    });
     let (class, icon, role) = match kind {
         NoticeKind::Info => ("ui-notice", IconName::Info, "status"),
         NoticeKind::Success => ("ui-notice", IconName::CheckCircle, "status"),

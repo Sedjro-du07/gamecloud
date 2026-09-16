@@ -11,7 +11,8 @@ use leptos_router::{components::A, hooks::use_location};
 use crate::{
     api::MeView,
     components::ui::{
-        vocab::plain_title, ButtonKind, ButtonLink, Icon, IconName, IconSize, Tag, TagKind,
+        play, vocab::plain_title, ButtonKind, ButtonLink, Icon, IconName, IconSize, Sound,
+        SoundToggle, Tag, TagKind,
     },
     server_fns::get_me,
 };
@@ -69,11 +70,11 @@ fn sections(me: Option<&MeView>) -> Vec<Section> {
     if me.is_some() {
         association.push(CALENDAR);
     }
-    association.extend([PROJECTS, SHARES]);
+    // Projects, shares, the leaderboard and the library are the
+    // association's own: a visitor is not shown the door to them.
     if me.is_some_and(|u| u.email_verified) {
-        association.push(LEADERBOARD);
+        association.extend([PROJECTS, SHARES, LEADERBOARD, RESOURCES]);
     }
-    association.push(RESOURCES);
     if me.map_or(true, |u| u.can_see_tests) {
         association.push(TESTS);
     }
@@ -129,7 +130,7 @@ fn NavItem(
     let class = if tab { "ui-tabbar__item" } else { "ui-nav__link" };
     let size = if tab { IconSize::Medium } else { IconSize::Small };
     view! {
-        <A href=item.href exact=item.href == "/" attr:class=class>
+        <A href=item.href exact=item.href == "/" attr:class=class on:click=move |_| play(Sound::Nav)>
             <Icon name=item.icon size />
             <span class="ui-nav__text">{item.label}</span>
         </A>
@@ -250,6 +251,7 @@ fn TopBar(
             // current page. The router still handles the click.
             <a href="/" class="ui-topbar__brand ui-wordmark">"GameCloud OS"</a>
             <div class="ui-topbar__account">
+                <SoundToggle />
                 <Suspense fallback=|| view! { <span class="ui-skeleton ui-topbar__loading"></span> }>
                     {move || {
                         me.get()
@@ -305,7 +307,10 @@ fn TabBar(
                 type="button"
                 aria-haspopup="dialog"
                 aria-expanded=move || menu_open.get().to_string()
-                on:click=move |_| set_menu_open.set(true)
+                on:click=move |_| {
+                    play(Sound::Open);
+                    set_menu_open.set(true);
+                }
             >
                 <Icon name=IconName::List size=IconSize::Medium />
                 <span class="ui-nav__text">"Menu"</span>
@@ -450,14 +455,29 @@ mod tests {
     }
 
     #[test]
-    fn a_visitor_sees_the_association_tests_and_kumo() {
+    fn a_visitor_sees_the_tests_and_kumo_and_nothing_internal() {
         let menu = sections(None);
         assert_eq!(labels(&menu), ["Association", "Contact"]);
         let links = hrefs(&menu);
         assert!(links.contains(&"/tests"));
         assert!(links.contains(&"/kumo"));
-        assert!(!links.contains(&"/calendar"));
-        assert!(!links.contains(&"/leaderboard"));
+        for internal in ["/calendar", "/leaderboard", "/projects", "/shares", "/resources"] {
+            assert!(!links.contains(&internal), "{internal} shown to a visitor");
+        }
+    }
+
+    #[test]
+    fn an_account_without_a_verified_address_sees_nothing_internal() {
+        // Signed in but not a member yet: a candidate waiting on a test.
+        let candidate = MeView {
+            can_see_tests: true,
+            ..MeView::default()
+        };
+        let links = hrefs(&sections(Some(&candidate)));
+        for internal in ["/projects", "/shares", "/resources", "/leaderboard"] {
+            assert!(!links.contains(&internal), "{internal} shown to a candidate");
+        }
+        assert!(links.contains(&"/tests"));
     }
 
     #[test]
@@ -467,6 +487,8 @@ mod tests {
         let links = hrefs(&menu);
         assert!(links.contains(&"/calendar"));
         assert!(links.contains(&"/leaderboard"));
+        assert!(links.contains(&"/projects"));
+        assert!(links.contains(&"/resources"));
         assert!(!links.contains(&"/tests"));
     }
 
@@ -494,6 +516,7 @@ mod tests {
         let links = hrefs(&sections(Some(&unverified)));
         assert!(!links.contains(&"/leaderboard"));
         assert!(links.contains(&"/tests"));
+        assert!(links.contains(&"/kumo"));
     }
 
     #[test]

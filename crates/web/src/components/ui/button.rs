@@ -7,6 +7,7 @@ use leptos::prelude::*;
 
 use super::{
     icon::{Icon, IconName},
+    sound::{play, Sound},
     DemoState,
 };
 
@@ -23,6 +24,14 @@ pub enum ButtonKind {
 }
 
 impl ButtonKind {
+    /// The sound a click makes: the main action is heard as such.
+    const fn sound(self) -> Sound {
+        match self {
+            Self::Primary => Sound::Confirm,
+            Self::Secondary | Self::Ghost => Sound::Tick,
+        }
+    }
+
     const fn class(self) -> &'static str {
         match self {
             Self::Primary => "ui-btn ui-btn--primary",
@@ -64,6 +73,7 @@ pub fn Button(
             class=format!("{}{}", kind.class(), state.class())
             type=button_type
             disabled=move || disabled.get()
+            on:click=move |_| play(kind.sound())
         >
             {icon.map(|name| view! { <Icon name /> })}
             <span class=hide_label.then_some("ui-sr-only")>{children()}</span>
@@ -105,6 +115,7 @@ pub fn ButtonLink(
             href=href
             rel=if new_tab { Some("external noopener") } else { external.then_some("external") }
             target=new_tab.then_some("_blank")
+            on:click=move |_| play(kind.sound())
         >
             {icon.map(|name| view! { <Icon name /> })}
             <span class=hide_label.then_some("ui-sr-only")>{children()}</span>

@@ -1,0 +1,46 @@
+# GameCloud OS on Fly.io: one image, two processes.
+#
+# `web` serves the platform on https://<app>.fly.dev and keeps uploaded
+# shares and entrance-test work on a volume. `bot` is the Discord bot; it
+# has no public port. Secrets (DATABASE_URL, JWT_SECRET, Discord tokens…)
+# are set with `fly secrets`, never in this file.
+
+app = "gamecloud-os"
+primary_region = "cdg"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  web = "/app/bin/gamecloud-web"
+  bot = "/app/bin/gamecloud-bot"
+
+[env]
+  APP_ENV = "production"
+  TRUST_FORWARDED_FOR = "true"
+
+[[mounts]]
+  source = "gamecloud_data"
+  destination = "/data"
+  processes = ["web"]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["web"]
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "15s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+  processes = ["web", "bot"]

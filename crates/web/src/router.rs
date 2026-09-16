@@ -6,7 +6,12 @@ use leptos::prelude::provide_context;
 use leptos_axum::{generate_route_list, LeptosRoutes};
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
-use crate::{app::App, middleware::rate_limit, routes, state::AppState};
+use crate::{
+    app::App,
+    middleware::{rate_limit, security_headers},
+    routes,
+    state::AppState,
+};
 
 impl axum::extract::FromRef<AppState> for LeptosOptions {
     fn from_ref(state: &AppState) -> Self {
@@ -122,6 +127,12 @@ pub fn build(state: AppState) -> Router {
         .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(CompressionLayer::new())
         .layer(cors(&state))
+        // Outermost, so every response carries them, errors and rate-limit
+        // refusals included.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            security_headers::layer,
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

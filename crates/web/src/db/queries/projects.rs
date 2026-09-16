@@ -88,7 +88,8 @@ pub struct ValidationView {
 /// A credited contributor.
 #[derive(Debug, Clone, sqlx::FromRow, Serialize)]
 pub struct ContributorView {
-    /// Member id.
+    /// Member id. Used for access checks, never sent out.
+    #[serde(skip_serializing)]
     pub user_id: Uuid,
     /// Display name.
     pub display_name: String,
@@ -130,6 +131,64 @@ pub struct ProjectDetail {
     pub contributors: Vec<ContributorView>,
     /// Per-track verdicts.
     pub validations: Vec<ValidationView>,
+}
+
+// ---------------------------------------------------------------------------
+// Access
+// ---------------------------------------------------------------------------
+
+/// Whether a viewer may see a project.
+///
+/// Published work is open to everyone. Anything else — a draft, a build in
+/// review, a refused project — is for the people concerned: those credited
+/// on it, the tracks judging it, and the Bureau. Everybody else is told the
+/// project does not exist.
+#[must_use]
+pub fn may_view(
+    detail: &ProjectDetail,
+    viewer: Option<(Uuid, &gamecloud_shared::roles::Authority)>,
+) -> bool {
+    use gamecloud_shared::roles::Action;
+
+    if ProjectStatus::parse(&detail.summary.status).is_some_and(ProjectStatus::is_public) {
+        return true;
+    }
+    let Some((user_id, authority)) = viewer else {
+        return false;
+    };
+    detail.contributors.iter().any(|c| c.user_id == user_id)
+        || authority.can(Action::AccessAdminPanel)
+        || detail
+            .validations
+            .iter()
+            .map(|v| v.track.as_str())
+            .chain(std::iter::once(detail.summary.primary_track.as_str()))
+            .filter_map(Track::parse)
+            .any(|t| authority.can(Action::ViewTrackInternalProjects(t)))
+}
+
+/// Whether a member may change a project's team or send it to review:
+/// somebody credited on it, a lead of its primary track, or the Bureau.
+/// A rank alone is not enough — it is somebody else's work.
+#[must_use]
+pub fn may_manage(
+    detail: &ProjectDetail,
+    user_id: Uuid,
+    authority: &gamecloud_shared::roles::Authority,
+) -> bool {
+    use gamecloud_shared::roles::{Action, TrackRole};
+
+    detail.contributors.iter().any(|c| c.user_id == user_id)
+        || Track::parse(&detail.summary.primary_track)
+            .is_some_and(|t| authority.has_track_role(t, TrackRole::CoLead))
+        || authority.can(Action::AccessAdminPanel)
+}
+
+/// Whether a project can still change: its team is fixed once in review.
+#[must_use]
+pub fn is_editable(detail: &ProjectDetail) -> bool {
+    ProjectStatus::parse(&detail.summary.status)
+        .is_some_and(|s| s.allowed_next().contains(&ProjectStatus::InReview))
 }
 
 // ---------------------------------------------------------------------------

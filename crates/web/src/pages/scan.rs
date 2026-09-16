@@ -21,7 +21,7 @@ use leptos_router::hooks::use_query_map;
 use crate::{
     components::ui::{
         Button, ButtonKind, Field, Form, FormActions, IconName, Notice, NoticeKind, Page,
-        PageHeader, Pattern,
+        PageHeader, Pattern, Sound,
     },
     server_fns::scan_qr,
 };
@@ -82,7 +82,7 @@ pub fn ScanPage() -> impl IntoView {
                 result
                     .get()
                     .map(|outcome| match outcome {
-                        Ok(message) => view! { <Notice kind=NoticeKind::Success>{message}</Notice> }.into_any(),
+                        Ok(message) => view! { <Notice kind=NoticeKind::Success sound=Sound::Xp>{message}</Notice> }.into_any(),
                         Err(message) => view! { <Notice kind=NoticeKind::Error>{message}</Notice> }.into_any(),
                     })
             }}

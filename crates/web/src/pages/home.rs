@@ -294,18 +294,14 @@ fn Welcome() -> impl IntoView {
                 <TitleLadder />
             </Section>
 
-            <Section title="Les tracks">
+            // Named, not linked: what happens inside a track — its members,
+            // its XP, the projects it judges — is for members.
+            <Section title="Les tracks" lead="Les huit disciplines de l'association. Ce qui s'y passe se découvre une fois membre.">
                 <CardGrid>
                     {Track::ALL
                         .iter()
                         .map(|track| {
-                            view! {
-                                <Card
-                                    title=track_label(*track)
-                                    icon=track_icon(*track)
-                                    href=format!("/tracks/{}", track.as_str())
-                                />
-                            }
+                            view! { <Card title=track_label(*track) icon=track_icon(*track) /> }
                         })
                         .collect_view()}
                 </CardGrid>

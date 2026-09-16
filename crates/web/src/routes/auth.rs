@@ -503,13 +503,13 @@ async fn logout(
 // Me
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
-struct MeBody {
-    user: UserRecord,
-}
-
-async fn me(user: CurrentUser) -> WebResult<Json<MeBody>> {
-    Ok(Json(MeBody { user: user.record }))
+/// The signed-in member, without identifiers: the same profile the rest of
+/// the API returns.
+async fn me(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> WebResult<Json<super::users::ProfileResponse>> {
+    Ok(Json(super::users::build_profile(&state, user.id).await?))
 }
 
 // ---------------------------------------------------------------------------

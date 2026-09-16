@@ -5,7 +5,10 @@
 
 use leptos::prelude::*;
 
-use super::icon::{Icon, IconName};
+use super::{
+    icon::{Icon, IconName},
+    sound::{play, Sound},
+};
 
 /// One option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +57,10 @@ pub fn SegmentedControl(
                             type="button"
                             class="ui-segmented__option"
                             aria-pressed=move || (value.get() == picked).to_string()
-                            on:click=move |_| on_change.run(picked.to_string())
+                            on:click=move |_| {
+                                play(Sound::Tick);
+                                on_change.run(picked.to_string());
+                            }
                         >
                             {option.icon.map(|name| view! { <Icon name /> })}
                             {option.label}

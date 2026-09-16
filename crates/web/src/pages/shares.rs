@@ -18,10 +18,10 @@ use crate::{
         segment, segment_with_icon,
         vocab::{share_kind_icon, SHARE_KINDS},
         Button, ButtonKind, ButtonLink, Card, CardGrid, EmptyState, ErrorState, ErrorText, Field,
-        FilterBar, Form, FormActions, FormRow, GridSkeleton, IconName, Notice, NoticeKind, Page,
-        PageHeader, Panel, Pattern, Segment, SegmentedControl,
+        FilterBar, Form, FormActions, FormRow, GridSkeleton, IconName, MembersOnlyState, Notice,
+        NoticeKind, Page, PageHeader, Panel, Pattern, Segment, SegmentedControl,
     },
-    server_fns::{delete_share, get_shares},
+    server_fns::{delete_share, get_me, get_shares},
 };
 
 /// "1 téléchargement", "12 téléchargements".
@@ -211,6 +211,7 @@ fn kind_segments() -> Vec<Segment> {
 /// Member shares page.
 #[component]
 pub fn SharesPage() -> impl IntoView {
+    let me = Resource::new(|| (), |()| async { get_me().await });
     let shares = Resource::new(|| (), |()| async { get_shares().await });
     let on_changed = Callback::new(move |()| shares.refetch());
     let query = use_query_map();
@@ -264,6 +265,30 @@ pub fn SharesPage() -> impl IntoView {
                 </Panel>
             </Show>
 
+            <Suspense fallback=|| view! { <GridSkeleton cards=6 /> }>
+                {move || {
+                    me.get()
+                        .map(|result| match result.ok().flatten() {
+                            Some(user) if user.email_verified => view! { <ShareList shares filter on_changed /> }.into_any(),
+                            _ => view! { <MembersOnlyState what="voir ce que les membres partagent" /> }.into_any(),
+                        })
+                }}
+            </Suspense>
+        </Page>
+    }
+}
+
+/// The shelf itself, once the viewer is known to be a member.
+#[component]
+fn ShareList(
+    /// Everything on the shelf.
+    shares: Resource<Result<crate::api::SharesView, ServerFnError>>,
+    /// Kind currently shown.
+    filter: ReadSignal<String>,
+    /// Refresh after a removal.
+    on_changed: Callback<()>,
+) -> impl IntoView {
+    view! {
             <Transition fallback=|| view! { <GridSkeleton cards=6 /> }>
                 {move || {
                     shares.get().map(|result| match result {
@@ -292,7 +317,6 @@ pub fn SharesPage() -> impl IntoView {
                     })
                 }}
             </Transition>
-        </Page>
     }
 }
 

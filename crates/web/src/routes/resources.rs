@@ -43,6 +43,9 @@ async fn list(
     user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> WebResult<Json<Vec<resources::ResourceView>>> {
+    if !users::is_member(state.pool(), user.id).await? {
+        return Err(WebError::Forbidden);
+    }
     let include_unvalidated = if q.pending.unwrap_or(false) {
         users::load_authority(state.pool(), user.id)
             .await?

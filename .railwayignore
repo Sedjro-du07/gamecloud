@@ -1,0 +1,9 @@
+target
+.git
+.env
+.env.local
+data
+node_modules
+end2end
+docs/discord-channels-backup.md
+*.swp

@@ -3,7 +3,7 @@
 //! Screens are composed from these and nothing else: the three page
 //! patterns (dense list, card grid, detail page) and their header, filter
 //! bar and sections; button, card, field, tag, icon; notice, avatar,
-//! conversation, form, figure; the XP bar, streak marks and title ladder;
+//! conversation, form, figure, sound; the XP bar, streak marks and title ladder;
 //! and the loading, empty, error and signed-out states. Their look lives in
 //! `style/_primitives.scss`, built only from the tokens in
 //! `style/_tokens.scss`. Every one is shown on `/design`.
@@ -21,6 +21,7 @@ pub mod layout;
 pub mod list;
 pub mod notice;
 pub mod segmented;
+pub mod sound;
 pub mod states;
 pub mod tag;
 pub mod vocab;
@@ -42,8 +43,10 @@ pub use layout::{
 pub use list::{DenseList, ListGroup, ListRow, RowText, RowValue};
 pub use notice::{Notice, NoticeKind};
 pub use segmented::{segment, segment_with_icon, Segment, SegmentedControl};
+pub use sound::{play, Sound, SoundToggle};
 pub use states::{
-    EmptyState, ErrorState, ErrorText, GridSkeleton, PageSkeleton, RowsSkeleton, SignInState,
+    EmptyState, ErrorState, ErrorText, GridSkeleton, MembersOnlyState, PageSkeleton, RowsSkeleton,
+    SignInState,
 };
 pub use tag::{Tag, TagKind, TrackTag};
 pub use xp::{StreakMarks, XpProgress};

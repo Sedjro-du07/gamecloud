@@ -16,6 +16,7 @@ use crate::components::ui::{
     XpProgress,
 };
 use gamecloud_shared::roles::GlobalRank;
+use crate::components::ui::{play, Sound};
 
 /// Token name, value as declared, role.
 type Swatch = (&'static str, &'static str, &'static str);
@@ -413,6 +414,28 @@ fn StatesSection() -> impl IntoView {
     }
 }
 
+/// Every sound cue, to hear them.
+#[component]
+fn SoundsSection() -> impl IntoView {
+    view! {
+        <section class="ui-preview__section">
+            <SectionHead label="Primitive" title="Sons"
+                note="Synthétisés dans le navigateur, aucun fichier. Joués par les primitives, donc les mêmes sur tous les écrans ; muets avant la première interaction, et coupables depuis la barre du haut." />
+            <div class="ui-preview__row">
+                {Sound::ALL
+                    .into_iter()
+                    .map(|sound| view! {
+                        <button type="button" class="ui-btn" on:click=move |_| play(sound)>
+                            <Icon name=IconName::SpeakerHigh />
+                            {sound.label()}
+                        </button>
+                    })
+                    .collect_view()}
+            </div>
+        </section>
+    }
+}
+
 /// Tokens: colours, type, spacing, radii, elevation.
 #[component]
 fn TokensSection() -> impl IntoView {
@@ -506,6 +529,7 @@ pub fn DesignPage() -> impl IntoView {
                 <GridSection />
                 <DetailSection />
                 <StatesSection />
+                <SoundsSection />
             </div>
         </div>
     }

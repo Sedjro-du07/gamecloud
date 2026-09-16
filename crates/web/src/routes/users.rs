@@ -48,15 +48,11 @@ pub fn router() -> Router<AppState> {
 /// The caller's full profile, as the HUD and character sheet need it.
 #[derive(Debug, Serialize)]
 pub struct ProfileResponse {
-    /// Member id.
-    pub id: Uuid,
-    /// Display name.
+    /// Discord username.
     pub display_name: String,
-    /// Discord id.
-    pub discord_id: String,
     /// Linked GitHub login.
     pub github_username: Option<String>,
-    /// Verified Epitech address.
+    /// Verified Epitech address; only in the member's own profile.
     pub email: Option<String>,
     /// Whether the address is verified.
     pub email_verified: bool,
@@ -82,7 +78,7 @@ pub struct ProfileResponse {
     pub leaderboard_position: Option<i64>,
 }
 
-async fn build_profile(state: &AppState, user_id: Uuid) -> WebResult<ProfileResponse> {
+pub(crate) async fn build_profile(state: &AppState, user_id: Uuid) -> WebResult<ProfileResponse> {
     let record = users::find_by_id(state.pool(), user_id)
         .await?
         .ok_or(WebError::NotFound)?;
@@ -90,9 +86,7 @@ async fn build_profile(state: &AppState, user_id: Uuid) -> WebResult<ProfileResp
     let position = leaderboard::position_of(state.pool(), user_id).await?;
 
     Ok(ProfileResponse {
-        id: record.id,
         display_name: record.display_name(),
-        discord_id: record.discord_id,
         github_username: record.github_username,
         email: record.email,
         email_verified: record.email_verified,
@@ -115,10 +109,15 @@ async fn me(State(state): State<AppState>, user: CurrentUser) -> WebResult<Json<
 
 async fn public_profile(
     State(state): State<AppState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<Uuid>,
 ) -> WebResult<Json<ProfileResponse>> {
-    Ok(Json(build_profile(&state, id).await?))
+    let mut profile = build_profile(&state, id).await?;
+    // Another member's address is theirs to share, not the platform's.
+    if id != user.id {
+        profile.email = None;
+    }
+    Ok(Json(profile))
 }
 
 async fn update_me(

@@ -357,6 +357,20 @@ pub async fn find_by_reference(pool: &PgPool, reference: &str) -> WebResult<Opti
     Ok(found)
 }
 
+/// Whether this account belongs to the association: an Epitech address
+/// verified on the platform. Internal endpoints ask this before answering.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn is_member(pool: &PgPool, user_id: Uuid) -> WebResult<bool> {
+    let verified: Option<bool> =
+        sqlx::query_scalar("SELECT email_verified FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(verified.unwrap_or(false))
+}
+
 /// Pseudos of the members with these Discord ids, keyed by id, to write
 /// mentions out without showing a number.
 ///

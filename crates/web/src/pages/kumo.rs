@@ -17,8 +17,8 @@ use leptos::prelude::*;
 use crate::{
     api::{ChatMessage, KumoChatView},
     components::ui::{
-        Button, ButtonKind, ChatLog, EmptyState, ErrorState, ErrorText, Field, Form, FormActions,
-        FormRow, IconName, Message, MessageSide, Page, PageHeader, Pattern, RowsSkeleton,
+        play, Button, ButtonKind, ChatLog, EmptyState, ErrorState, ErrorText, Field, Form, FormActions,
+        FormRow, IconName, Message, MessageSide, Page, PageHeader, Pattern, RowsSkeleton, Sound,
     },
     server_fns::{get_kumo_chat, send_kumo_message},
 };
@@ -58,6 +58,18 @@ fn Conversation(
     /// The conversation, refreshed by the page.
     chat: Resource<Result<KumoChatView, ServerFnError>>,
 ) -> impl IntoView {
+    // A new answer from Kumo is heard, not only seen. The conversation is
+    // looked at again every few seconds, so only growth counts.
+    Effect::new(move |seen: Option<usize>| {
+        let Some(Ok(view)) = chat.get() else {
+            return seen.unwrap_or(0);
+        };
+        let count = view.messages.len();
+        if seen.is_some_and(|before| count > before) && view.messages.last().is_some_and(|m| m.from_kumo) {
+            play(Sound::Message);
+        }
+        count
+    });
     view! {
         <Transition fallback=|| view! { <RowsSkeleton rows=3 /> }>
             {move || chat.get().map(|result| match result {
