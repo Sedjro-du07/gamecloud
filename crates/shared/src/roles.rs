@@ -8,9 +8,13 @@
 //! 2. **Track membership** — for each of the 8 tracks the user has joined,
 //!    a sub-role from `Observer` to `Lead`. See [`TrackRole`] and
 //!    [`Track`].
-//! 3. **Global rank** — derived from total XP (with a special
-//!    `email_verified` gate between `Pending` and `Visitor`). See
-//!    [`GlobalRank`].
+//! 3. **Global rank** — derived from total XP alone, with `Initiate` as
+//!    the floor. See [`GlobalRank`]. There used to be an
+//!    `email_verified` gate below it, pinning members at `Pending`
+//!    until they produced an `@epitech.eu` address; being on the
+//!    Discord server is the membership check the association actually
+//!    applies, so the gate was removed and `Pending` / `Visitor` are no
+//!    longer assigned to anyone.
 //!
 //! Permissions are computed by [`Authority::can`] which takes an
 //! [`Authority`] (the actor's full role envelope) and an [`Action`].
@@ -153,6 +157,19 @@ impl TrackRole {
             TrackRole::Contributor
         } else {
             TrackRole::Observer
+        }
+    }
+
+    /// The role in French, as a member reads it on their profile.
+    #[must_use]
+    pub const fn title_fr(self) -> &'static str {
+        match self {
+            TrackRole::Observer => "Observateur·ice",
+            TrackRole::Contributor => "Contributeur·ice",
+            TrackRole::Reviewer => "Relecteur·ice",
+            TrackRole::Mentor => "Mentor",
+            TrackRole::CoLead => "Co-responsable",
+            TrackRole::Lead => "Responsable",
         }
     }
 
@@ -299,6 +316,40 @@ impl BureauRole {
         BureauRole::PrManager,
         BureauRole::Provisional,
     ];
+
+    /// Position in protocol order — the order [`BureauRole::ALL`] lists
+    /// the offices in, President first. Offices are stored sorted by it,
+    /// so the first one held is always the principal one.
+    #[must_use]
+    pub fn protocol_rank(self) -> usize {
+        BureauRole::ALL.iter().position(|b| *b == self).unwrap_or(usize::MAX)
+    }
+
+    /// What the office *is*, in plain French — the gamified title says
+    /// who you are in the guild, this says what you are responsible for.
+    /// Shown next to the title wherever somebody is being appointed.
+    #[must_use]
+    pub const fn plain(self) -> &'static str {
+        match self {
+            BureauRole::President => "Président·e",
+            BureauRole::VicePresident => "Vice-président·e",
+            BureauRole::Secretary => "Secrétaire",
+            BureauRole::Treasurer => "Trésorier·e",
+            BureauRole::VpTech => "Vice-président·e technique",
+            BureauRole::VpCommunity => "Vice-président·e communauté",
+            BureauRole::EventManager => "Responsable des événements",
+            BureauRole::AssistantEventManager => "Adjoint·e aux événements",
+            BureauRole::Archiviste => "Archiviste",
+            BureauRole::AssistantArchiviste => "Archiviste adjoint·e",
+            BureauRole::CommunityManager => "Community manager",
+            BureauRole::SocialMediaManager => "Réseaux sociaux",
+            BureauRole::Moderator => "Modérateur·ice",
+            BureauRole::AssistantModerator => "Modérateur·ice adjoint·e",
+            BureauRole::RecruitmentOfficer => "Recrutement",
+            BureauRole::PrManager => "Relations publiques",
+            BureauRole::Provisional => "Membre du Bureau, sans office",
+        }
+    }
 
     /// Stable string identifier, as stored in `users.bureau_role`.
     #[must_use]
@@ -741,8 +792,11 @@ pub struct TrackMembership {
 pub struct Authority {
     /// Global rank.
     pub rank: GlobalRank,
-    /// Bureau role, if any.
-    pub bureau: Option<BureauRole>,
+    /// Bureau offices held, in protocol order. A member may hold several
+    /// — the same person keeping the minutes and the accounts is common
+    /// in a small association — and every right any of them grants
+    /// applies.
+    pub offices: Vec<BureauRole>,
     /// Per-track memberships.
     pub tracks: Vec<TrackMembership>,
 }
@@ -753,7 +807,7 @@ impl Authority {
     pub fn anonymous() -> Self {
         Self {
             rank: GlobalRank::Pending,
-            bureau: None,
+            offices: Vec::new(),
             tracks: Vec::new(),
         }
     }
@@ -773,10 +827,23 @@ impl Authority {
         self.tracks.iter().any(|m| m.role == TrackRole::Lead)
     }
 
-    /// Whether the user has any executive bureau role.
+    /// Whether any office held satisfies `test`.
+    #[must_use]
+    pub fn holds(&self, test: impl Fn(BureauRole) -> bool) -> bool {
+        self.offices.iter().copied().any(test)
+    }
+
+    /// The first office held that satisfies `test`, in protocol order —
+    /// used to say *which* office grants a right.
+    #[must_use]
+    pub fn office_where(&self, test: impl Fn(BureauRole) -> bool) -> Option<BureauRole> {
+        self.offices.iter().copied().find(|b| test(*b))
+    }
+
+    /// Whether the user holds any executive bureau office.
     #[must_use]
     pub fn is_executive(&self) -> bool {
-        self.bureau.is_some_and(BureauRole::is_executive)
+        self.holds(BureauRole::is_executive)
     }
 
     /// Top-level permission check.
@@ -786,26 +853,30 @@ impl Authority {
     // and merging arms loses that property.
     #[allow(clippy::match_same_arms)]
     pub fn can(&self, action: Action) -> bool {
-        // Pending users can do effectively nothing.
-        if self.rank == GlobalRank::Pending {
-            return matches!(action, Action::SubmitEpitechEmail);
-        }
-
+        // There used to be a `Pending` dead end here: a member without a
+        // verified `@epitech.eu` address could do nothing at all but
+        // submit one. Getting into the Discord server is the membership
+        // check the association actually applies, so the gate is gone
+        // and the mail is optional. `Pending` and `Visitor` are no
+        // longer assigned to anyone; the variants survive only for
+        // historic rows and the Discord role ladder.
         match action {
             Action::ViewPublicProjects => self.rank >= GlobalRank::Visitor,
             Action::ViewTrackInternalProjects(t) => self.has_track_role(t, TrackRole::Observer),
-            Action::SubmitEpitechEmail => self.rank == GlobalRank::Pending,
-            Action::CompleteOnboarding => self.rank == GlobalRank::Visitor,
+            // Both of these were gates. They are now simply available:
+            // recording an address is optional, and picking a track is
+            // something a member may do at any point, not a step they
+            // must clear once.
+            Action::SubmitEpitechEmail | Action::CompleteOnboarding => true,
             Action::CreateProject => self.rank >= GlobalRank::JuniorDev,
             Action::SubmitProjectForReview => self.rank >= GlobalRank::JuniorDev,
             Action::ReviewProjectForTrack(t) => self.has_track_role(t, TrackRole::Reviewer),
             Action::PublishProjectAsReleased(t) => self.has_track_role(t, TrackRole::Lead),
             Action::AppointTrackCoLead(t) => self.has_track_role(t, TrackRole::Lead),
             Action::AppointTrackLead(_) => self.is_executive(),
-            Action::AssignBureauRole => matches!(
-                self.bureau,
-                Some(BureauRole::President | BureauRole::VicePresident)
-            ),
+            Action::AssignBureauRole => self.holds(|b| {
+                matches!(b, BureauRole::President | BureauRole::VicePresident)
+            }),
             Action::GenerateQrToken => self.is_event_manager() || self.is_executive(),
             // A track Lead owns their track's sessions; anything that
             // concerns the whole association stays with the people whose
@@ -822,28 +893,156 @@ impl Authority {
                 // members ask the President to book a room would be
                 // ceremony, not control — and nobody outside it can see
                 // these events anyway.
-                EventScope::Bureau => self.bureau.is_some_and(BureauRole::holds_office),
+                EventScope::Bureau => self.holds(BureauRole::holds_office),
             },
             Action::GrantManualXp => self.is_executive(),
-            Action::ValidateResource => matches!(
-                self.bureau,
-                Some(BureauRole::Archiviste | BureauRole::AssistantArchiviste)
-            ) || self.is_any_track_lead(),
-            Action::ModerateContent => matches!(
-                self.bureau,
-                Some(BureauRole::Moderator | BureauRole::AssistantModerator)
-            ) || self.is_executive(),
-            Action::AccessAdminPanel => self.bureau.is_some_and(BureauRole::holds_office),
+            Action::ValidateResource => {
+                self.holds(|b| {
+                    matches!(b, BureauRole::Archiviste | BureauRole::AssistantArchiviste)
+                }) || self.is_any_track_lead()
+            }
+            Action::ModerateContent => {
+                self.holds(|b| {
+                    matches!(b, BureauRole::Moderator | BureauRole::AssistantModerator)
+                }) || self.is_executive()
+            }
+            Action::AccessAdminPanel => self.holds(BureauRole::holds_office),
             Action::ViewAuditLogs => self.is_executive(),
         }
     }
 
     /// Helper used by [`Self::can`] for QR generation.
     fn is_event_manager(&self) -> bool {
-        matches!(
-            self.bureau,
-            Some(BureauRole::EventManager | BureauRole::AssistantEventManager)
-        )
+        self.holds(|b| matches!(b, BureauRole::EventManager | BureauRole::AssistantEventManager))
+    }
+}
+
+/// One thing a member may do, said the way they would say it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Right {
+    /// What they may do.
+    pub what: String,
+    /// Why they may — the rank, office or track role that grants it.
+    pub because: String,
+}
+
+impl Authority {
+    /// Everything this member may do beyond reading, and why.
+    ///
+    /// Built by asking [`Authority::can`] rather than restating the rules,
+    /// so the list a member reads on their profile cannot disagree with
+    /// what the platform will actually let them do. An appointment made
+    /// a minute ago shows up here on their next page load, because the
+    /// authority is rebuilt from the database on every request.
+    #[must_use]
+    pub fn rights(&self) -> Vec<Right> {
+        let mut out = Vec::new();
+        let mut push = |what: String, because: String| out.push(Right { what, because });
+
+        if self.can(Action::CreateProject) {
+            push(
+                "Créer un projet et le soumettre à la relecture".into(),
+                format!("ton rang, {}", self.rank.title()),
+            );
+        }
+
+        for t in Track::ALL {
+            let Some(m) = self.tracks.iter().find(|m| m.track == t) else {
+                continue;
+            };
+            let role = m.role.title_fr();
+            if self.can(Action::PublishProjectAsReleased(t)) {
+                push(
+                    format!("Publier les projets de la track {}", t.as_str()),
+                    format!("{role} de la track"),
+                );
+            }
+            if self.can(Action::AppointTrackCoLead(t)) {
+                push(
+                    format!("Nommer les co-responsables de la track {}", t.as_str()),
+                    format!("{role} de la track"),
+                );
+            }
+            if self.can(Action::ReviewProjectForTrack(t)) {
+                push(
+                    format!("Relire et noter les projets pour la track {}", t.as_str()),
+                    format!("{role} de la track"),
+                );
+            }
+            if self.has_track_role(t, TrackRole::Lead)
+                && self.can(Action::ManageEvents(EventScope::Track(t)))
+            {
+                push(
+                    format!("Programmer les séances de la track {}", t.as_str()),
+                    format!("{role} de la track"),
+                );
+            }
+        }
+
+        // Each office-granted right names the office that grants it — the
+        // first, in protocol order, that does. With several offices a
+        // blanket "ton office" would be wrong half the time: a Secretary
+        // who is also Event Manager generates QR codes as Event Manager.
+        let named = |b: BureauRole| format!("{} ({})", b.title(), b.plain());
+        let by = |test: &dyn Fn(BureauRole) -> bool| {
+            self.office_where(test).map_or_else(|| "ton office".to_string(), named)
+        };
+        let exec = |b: BureauRole| b.is_executive();
+        let events = |b: BureauRole| {
+            b.is_executive()
+                || matches!(b, BureauRole::EventManager | BureauRole::AssistantEventManager)
+        };
+
+        if self.can(Action::AccessAdminPanel) {
+            push("Ouvrir le panneau du Bureau".into(), by(&BureauRole::holds_office));
+        }
+        if self.can(Action::ManageEvents(EventScope::Bureau)) {
+            push("Convoquer une réunion du Bureau".into(), by(&BureauRole::holds_office));
+        }
+        if self.can(Action::ManageEvents(EventScope::Association)) {
+            push("Programmer les événements de toute l'association".into(), by(&events));
+        }
+        if self.can(Action::GenerateQrToken) {
+            push("Générer les codes QR de présence".into(), by(&events));
+        }
+        if self.can(Action::GrantManualXp) {
+            push("Attribuer ou retirer de l'XP, et ouvrir des quêtes".into(), by(&exec));
+        }
+        if self.can(Action::AssignBureauRole) {
+            push(
+                "Nommer aux offices du Bureau".into(),
+                by(&|b| matches!(b, BureauRole::President | BureauRole::VicePresident)),
+            );
+        }
+        if self.is_executive() {
+            push("Nommer les responsables de track".into(), by(&exec));
+        }
+        if self.can(Action::ValidateResource) {
+            // Two different things grant this: the archivist offices, or
+            // leading any track. Naming whichever one actually applies —
+            // a track Lead who also sits on the Bureau without an office
+            // must not be told their seat is what lets them.
+            let archivist = self.office_where(|b| {
+                matches!(b, BureauRole::Archiviste | BureauRole::AssistantArchiviste)
+            });
+            push(
+                "Valider les ressources proposées".into(),
+                archivist.map_or_else(|| "responsable d'une track".to_string(), named),
+            );
+        }
+        if self.can(Action::ModerateContent) {
+            push(
+                "Modérer les contenus".into(),
+                by(&|b| {
+                    b.is_executive()
+                        || matches!(b, BureauRole::Moderator | BureauRole::AssistantModerator)
+                }),
+            );
+        }
+        if self.can(Action::ViewAuditLogs) {
+            push("Consulter le journal d'audit".into(), by(&exec));
+        }
+        out
     }
 }
 
@@ -1034,19 +1233,195 @@ mod tests {
     }
 
     #[test]
-    fn pending_user_only_submits_email() {
+    fn a_treasurer_is_told_what_the_office_opens() {
+        let treasurer = Authority {
+            rank: GlobalRank::Initiate,
+            offices: vec![BureauRole::Treasurer],
+            tracks: vec![],
+        };
+        let rights = treasurer.rights();
+        let has = |w: &str| rights.iter().any(|r| r.what.contains(w));
+        assert!(has("panneau du Bureau"));
+        assert!(has("réunion du Bureau"));
+        assert!(has("Attribuer ou retirer de l'XP"));
+        // The Treasurer is executive but not President or VP: offices
+        // are not theirs to hand out.
+        assert!(!has("Nommer aux offices"));
+        // And every right names the office that grants it.
+        assert!(rights.iter().all(|r| !r.because.is_empty()));
+        assert!(rights.iter().any(|r| r.because.contains("Trésorier")));
+    }
+
+    #[test]
+    fn a_track_lead_is_told_about_their_track_and_nothing_else() {
+        let lead = Authority {
+            rank: GlobalRank::Initiate,
+            offices: vec![],
+            tracks: vec![TrackMembership {
+                track: Track::VisualArt,
+                role: TrackRole::Lead,
+            }],
+        };
+        let rights = lead.rights();
+        let has = |w: &str| rights.iter().any(|r| r.what.contains(w));
+        assert!(has("Publier les projets de la track VisualArt"));
+        assert!(has("Nommer les co-responsables de la track VisualArt"));
+        assert!(has("Relire et noter les projets pour la track VisualArt"));
+        assert!(has("Programmer les séances de la track VisualArt"));
+        assert!(!has("track Audio"));
+        assert!(!has("panneau du Bureau"));
+    }
+
+    #[test]
+    fn a_second_office_adds_its_rights_to_the_first() {
+        // An Event Manager may mint QR codes but not moderate; a
+        // Moderator may moderate but not mint codes. Holding both must
+        // give both — the old single `bureau` field kept only one.
+        let both = Authority {
+            rank: GlobalRank::Initiate,
+            offices: vec![BureauRole::EventManager, BureauRole::Moderator],
+            tracks: vec![],
+        };
+        assert!(both.can(Action::GenerateQrToken));
+        assert!(both.can(Action::ModerateContent));
+
+        let only_events = Authority {
+            offices: vec![BureauRole::EventManager],
+            ..both.clone()
+        };
+        assert!(!only_events.can(Action::ModerateContent));
+    }
+
+    #[test]
+    fn with_several_offices_each_right_names_the_one_that_grants_it() {
+        let both = Authority {
+            rank: GlobalRank::Initiate,
+            offices: vec![BureauRole::Archiviste, BureauRole::Moderator],
+            tracks: vec![],
+        };
+        let because = |what: &str| {
+            both.rights()
+                .into_iter()
+                .find(|r| r.what.contains(what))
+                .map(|r| r.because)
+                .unwrap_or_default()
+        };
+        assert!(because("ressources").contains("Archiviste"));
+        assert!(because("Modérer").contains("Modérateur"));
+    }
+
+    #[test]
+    fn protocol_order_puts_the_president_first() {
+        assert_eq!(BureauRole::President.protocol_rank(), 0);
+        assert!(BureauRole::Secretary.protocol_rank() < BureauRole::Treasurer.protocol_rank());
+        assert!(BureauRole::Treasurer.protocol_rank() < BureauRole::Provisional.protocol_rank());
+    }
+
+    #[test]
+    fn each_right_names_what_actually_grants_it() {
+        // A track Lead sitting on the Bureau without an office validates
+        // resources as a Lead — the seat has nothing to do with it.
+        let lead_on_bureau = Authority {
+            rank: GlobalRank::Initiate,
+            offices: vec![BureauRole::Provisional],
+            tracks: vec![TrackMembership {
+                track: Track::VisualArt,
+                role: TrackRole::Lead,
+            }],
+        };
+        let validate = lead_on_bureau
+            .rights()
+            .into_iter()
+            .find(|r| r.what.contains("ressources"))
+            .expect("a Lead validates resources");
+        assert_eq!(validate.because, "responsable d'une track");
+
+        let archivist = Authority {
+            rank: GlobalRank::Initiate,
+            offices: vec![BureauRole::Archiviste],
+            tracks: vec![],
+        };
+        let validate = archivist
+            .rights()
+            .into_iter()
+            .find(|r| r.what.contains("ressources"))
+            .expect("the archivist validates resources");
+        assert!(validate.because.contains("Archiviste"));
+    }
+
+    #[test]
+    fn the_rights_list_never_claims_what_can_refuses() {
+        // Everybody on the list must be allowed, by construction. This
+        // pins it: if somebody edits `rights` to add a line without the
+        // matching `can` check, a plain member would start being told
+        // they can open the Bureau panel.
+        let plain = Authority {
+            rank: GlobalRank::Initiate,
+            offices: vec![],
+            tracks: vec![],
+        };
+        assert!(plain.rights().is_empty(), "{:?}", plain.rights());
+    }
+
+    #[test]
+    fn every_office_has_a_plain_name() {
+        for b in BureauRole::ALL {
+            assert!(!b.plain().is_empty(), "{b:?}");
+        }
+    }
+
+    #[test]
+    fn an_anonymous_visitor_still_holds_nothing() {
+        // The rank gate is gone, but that only stopped the mailbox
+        // deciding who counts — it did not make everybody an officer.
+        // Anonymous means no rank, no track and no office, so the
+        // rights that depend on those are all still refused.
         let authority = Authority::anonymous();
-        assert!(authority.can(Action::SubmitEpitechEmail));
         assert!(!authority.can(Action::ViewPublicProjects));
         assert!(!authority.can(Action::CreateProject));
         assert!(!authority.can(Action::AccessAdminPanel));
+        assert!(!authority.can(Action::GrantManualXp));
+    }
+
+    #[test]
+    fn a_member_is_no_longer_held_back_by_an_unverified_mailbox() {
+        // The regression this guards: `can` used to return `false` for
+        // everything except `SubmitEpitechEmail` whenever the rank was
+        // `Pending`, and `Pending` was where every unverified member
+        // was pinned. A member's rights now follow their XP, their
+        // tracks and their office — never their email.
+        let member = Authority {
+            rank: GlobalRank::Legend,
+            offices: vec![],
+            tracks: vec![],
+        };
+        assert!(member.can(Action::ViewPublicProjects));
+        assert!(member.can(Action::CreateProject));
+        assert!(member.can(Action::SubmitProjectForReview));
+    }
+
+    #[test]
+    fn recording_an_address_and_picking_a_track_are_always_open() {
+        // Both were one-shot gates tied to `Pending` / `Visitor`. They
+        // are now ordinary things a member may do whenever they like.
+        for authority in [
+            Authority::anonymous(),
+            Authority {
+                rank: GlobalRank::Initiate,
+                offices: vec![],
+                tracks: vec![],
+            },
+        ] {
+            assert!(authority.can(Action::SubmitEpitechEmail));
+            assert!(authority.can(Action::CompleteOnboarding));
+        }
     }
 
     #[test]
     fn track_lead_can_publish_only_their_track() {
         let authority = Authority {
             rank: GlobalRank::Legend,
-            bureau: None,
+            offices: vec![],
             tracks: vec![TrackMembership {
                 track: Track::Engineering,
                 role: TrackRole::Lead,
@@ -1060,14 +1435,14 @@ mod tests {
     fn executive_can_grant_manual_xp() {
         let auth = Authority {
             rank: GlobalRank::Legend,
-            bureau: Some(BureauRole::President),
+            offices: vec![BureauRole::President],
             tracks: vec![],
         };
         assert!(auth.can(Action::GrantManualXp));
 
         let mod_auth = Authority {
             rank: GlobalRank::Legend,
-            bureau: Some(BureauRole::Moderator),
+            offices: vec![BureauRole::Moderator],
             tracks: vec![],
         };
         assert!(!mod_auth.can(Action::GrantManualXp));

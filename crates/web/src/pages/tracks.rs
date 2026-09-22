@@ -177,7 +177,7 @@ pub fn TrackPickerPage() -> impl IntoView {
             <Suspense fallback=|| view! { <GridSkeleton cards=8 /> }>
                 {move || me.get().map(|result| match result {
                     // The catalogue is association business: members only.
-                    Ok(Some(user)) if user.email_verified => view! { <TrackGrid /> }.into_any(),
+                    Ok(Some(user)) if user.is_member => view! { <TrackGrid /> }.into_any(),
                     Ok(_) => view! { <MembersOnlyState what="choisir tes tracks" /> }.into_any(),
                     Err(_) => view! {
                         <ErrorState message="Impossible de charger les tracks." on_retry=Callback::new(move |()| me.refetch()) />

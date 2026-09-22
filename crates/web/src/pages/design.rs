@@ -203,9 +203,9 @@ fn FieldsSection() -> impl IntoView {
                     <input id="demo-error" class="ui-control" type="url" value="itch.io/jam"
                         aria-invalid="true" aria-describedby="demo-error-error" />
                 </Field>
-                <Field id="demo-disabled" label="Adresse Epitech" disabled=true>
-                    <input id="demo-disabled" class="ui-control" type="email" disabled=true
-                        placeholder="prenom.nom@epitech.eu" />
+                <Field id="demo-disabled" label="Pseudo Discord" disabled=true>
+                    <input id="demo-disabled" class="ui-control" type="text" disabled=true
+                        placeholder="franckalain07" />
                 </Field>
                 <Field id="demo-select" label="Track">
                     <select id="demo-select" class="ui-control">

@@ -72,7 +72,8 @@ async fn members_only(http: &Http, guild: GuildId, channel: ChannelId) {
     wanted.extend(
         GlobalRank::ALL
             .iter()
-            // The not-yet-verified title is not a member.
+            // `Pending` is no longer assigned to anyone; kept out so a
+            // stale role left on the server opens nothing.
             .filter(|rank| **rank != GlobalRank::Pending)
             .filter_map(|rank| titles.get(rank.title()))
             .map(|role| PermissionOverwrite {
@@ -135,7 +136,7 @@ async fn leaderboard(state: &BotState) -> CreateEmbed {
         "SELECT member_display_name(current_title, discord_global_name, \
                                     discord_username, discord_id), xp_total, global_rank, \
                 bureau_role \
-           FROM users WHERE email_verified AND xp_total > 0 \
+           FROM users WHERE NOT candidate AND xp_total > 0 \
           ORDER BY xp_total DESC LIMIT 10",
     )
     .fetch_all(state.pool())

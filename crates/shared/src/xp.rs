@@ -341,9 +341,13 @@ impl QuestCondition {
 /// XP threshold required to *enter* a given rank, in increasing order.
 /// Matched by [`crate::roles::GlobalRank::from_xp`].
 pub const RANK_THRESHOLDS: &[(i64, &str)] = &[
+    // `Pending` and `Visitor` sat below the ladder behind an email
+    // gate that no longer exists. They are kept here so the table still
+    // lines up with the `GlobalRank` enum and the Discord role ladder,
+    // but nothing assigns them: `Initiate` is where every member starts.
     (0, "Pending"),
-    (0, "Visitor"),       // gated on email_verified, not XP
-    (0, "Initiate"),      // gated on onboarding completion
+    (0, "Visitor"),
+    (0, "Initiate"),
     (150, "Apprentice"),
     (400, "JuniorDev"),
     (1_000, "SeniorDev"),

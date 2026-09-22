@@ -1,26 +1,16 @@
 //! Authentication routes.
 //!
+//! Sign-in is Discord OAuth and nothing else: being on the association's
+//! server is the membership check, so there is no email step.
+//!
 //! - `GET  /api/auth/login`         — start Discord OAuth, set state cookie, redirect.
 //! - `GET  /api/auth/callback`      — Discord OAuth callback, issue tokens.
-//! - `POST /api/auth/email`         — submit `@epitech.eu` email, send OTP. Accepts both JSON and form-urlencoded.
-//! - `POST /api/auth/verify`        — submit OTP code, finalize verification. Accepts both JSON and form-urlencoded.
 //! - `POST /api/auth/refresh`       — rotate access + refresh tokens.
 //! - `POST /api/auth/logout`        — revoke current refresh token.
 //! - `GET  /api/auth/me`            — return the current user record.
-//!
-//! ## Form vs JSON content negotiation
-//!
-//! `submit_email` and `verify_otp` both accept either a JSON body or a
-//! `application/x-www-form-urlencoded` body. This lets browser
-//! `<form>` POSTs work end-to-end without JavaScript, while JSON-based
-//! API clients keep working too. On a successful form submit we
-//! `303 See Other` redirect to the next step in the flow; on a
-//! successful JSON submit we return a tiny JSON ack.
 
 use axum::{
-    body::Bytes,
-    extract::{Query, Request, State},
-    http::header,
+    extract::{Query, State},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Json, Router,
@@ -30,7 +20,7 @@ use axum_extra::extract::{
     CookieJar,
 };
 use chrono::{Duration, Utc};
-use gamecloud_shared::{models::UserRecord, DomainError};
+use gamecloud_shared::models::UserRecord;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -38,7 +28,7 @@ use crate::{
     db::queries::{auth as auth_q, users},
     error::{WebError, WebResult},
     middleware::auth::{CurrentUser, ACCESS_COOKIE, REFRESH_COOKIE},
-    services::{email_validator, jwt, otp, password, tokens},
+    services::{jwt, tokens},
     state::AppState,
 };
 
@@ -47,8 +37,6 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/login", get(login_redirect))
         .route("/callback", get(callback))
-        .route("/email", post(submit_email))
-        .route("/verify", post(verify_otp))
         .route("/refresh", post(refresh))
         // Allow both GET and POST: GET is convenient for plain `<a>`
         // links in the navigation; POST is the canonical CSRF-safe
@@ -88,20 +76,20 @@ struct DiscordUser {
     avatar: Option<String>,
 }
 
-/// Where to send the user after a successful OAuth callback. If the
-/// account is already verified, jump straight to the profile; a candidate
-/// — not on the server, not admitted — goes to the entrance tests; if it
-/// has submitted an email but not verified, jump to /onboarding/verify;
-/// otherwise (`Pending`), show /onboarding/email.
-fn post_login_target(record: &UserRecord, candidate: bool) -> &'static str {
-    if record.email_verified {
-        "/profile"
-    } else if candidate {
+/// Where to send the member after a successful OAuth callback.
+///
+/// A candidate — not on the server, not admitted — goes to the entrance
+/// tests. Everybody else lands on their profile.
+///
+/// This used to route on the email flow: unverified accounts were sent
+/// to `/onboarding/email` and could go nowhere else. Since nothing
+/// depends on a verified address any more, a member who has just signed
+/// in should see the platform, not a form.
+fn post_login_target(_record: &UserRecord, candidate: bool) -> &'static str {
+    if candidate {
         "/tests"
-    } else if record.email.is_some() {
-        "/onboarding/verify"
     } else {
-        "/onboarding/email"
+        "/profile"
     }
 }
 
@@ -235,7 +223,7 @@ async fn settle_admission(state: &AppState, user: &UserRecord) -> WebResult<bool
     use crate::db::queries::entrance;
 
     let admission = entrance::admission(state.pool(), user.id).await?;
-    if user.email_verified || user.bureau_role.is_some() || admission.admitted_at.is_some() {
+    if user.bureau_role.is_some() || admission.admitted_at.is_some() {
         if admission.candidate {
             entrance::set_candidate(state.pool(), user.id, false).await?;
         }
@@ -250,188 +238,6 @@ async fn settle_admission(state: &AppState, user: &UserRecord) -> WebResult<bool
         }
         None => Ok(admission.candidate),
     }
-}
-
-/// Refuse a candidate's attempt to sign up.
-///
-/// A browser form goes back to the entrance tests with the reason; an API
-/// call gets the error.
-fn refuse_candidate(is_form: bool) -> WebResult<Response> {
-    if is_form {
-        let query = serde_urlencoded::to_string([(
-            "erreur",
-            "passe d'abord un test d'entrée : l'inscription s'ouvre une fois admis",
-        )])
-        .unwrap_or_default();
-        Ok(Redirect::to(&format!("/tests?{query}")).into_response())
-    } else {
-        Err(WebError::Domain(DomainError::Forbidden(
-            "entrance test not passed yet",
-        )))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Email submission — accepts JSON or form-urlencoded
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct SubmitEmailBody {
-    email: String,
-}
-
-/// Whether a request claims to be a browser form submission.
-fn is_form_request(request: &Request) -> bool {
-    request
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|ct| ct.starts_with("application/x-www-form-urlencoded"))
-}
-
-/// Best-effort decoder accepting both JSON and form-urlencoded bodies.
-fn decode_body<T: serde::de::DeserializeOwned>(
-    is_form: bool,
-    bytes: &[u8],
-) -> Result<T, WebError> {
-    if is_form {
-        serde_urlencoded::from_bytes(bytes)
-            .map_err(|e| WebError::Validation(format!("invalid form: {e}")))
-    } else {
-        serde_json::from_slice(bytes)
-            .map_err(|e| WebError::Validation(format!("invalid json: {e}")))
-    }
-}
-
-/// How long a member must wait before requesting another code.
-const OTP_RESEND_COOLDOWN_SECONDS: i64 = 60;
-
-/// How many codes a member may request before the flow locks.
-const OTP_MAX_RESENDS: i32 = 5;
-
-/// Total failed guesses tolerated across every code issued to a member.
-///
-/// The pre-audit code checked `attempts` on the *current* code, and
-/// `upsert_otp` reset that to zero on every resend — so five guesses,
-/// request a new code, five more, forever. Enforcing against the
-/// cumulative counter is what actually closes the brute force.
-const OTP_MAX_CUMULATIVE_ATTEMPTS: i32 = 10;
-
-async fn submit_email(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    request: Request,
-) -> WebResult<Response> {
-    // A verified member cannot re-run this flow to swap their identity.
-    // `Action::SubmitEpitechEmail` is defined as `rank == Pending`, but
-    // the handler never consulted it, so any signed-in member could
-    // re-verify against a different address at will.
-    if user.record.email_verified {
-        return Err(WebError::Domain(DomainError::EmailAlreadyVerified));
-    }
-
-    let is_form = is_form_request(&request);
-    if crate::db::queries::entrance::admission(state.pool(), user.id)
-        .await?
-        .candidate
-    {
-        return refuse_candidate(is_form);
-    }
-    let bytes = read_body(request).await?;
-    let body: SubmitEmailBody = decode_body(is_form, &bytes)?;
-
-    let canonical = email_validator::validate(&body.email)?;
-
-    // Refuse an address somebody else already verified, before sending
-    // a code to it — otherwise this endpoint doubles as a way to mail
-    // arbitrary Epitech addresses.
-    if auth_q::email_is_taken(state.pool(), &canonical, user.id).await? {
-        return Err(WebError::Domain(DomainError::EmailAlreadyTaken));
-    }
-
-    if let Some(existing) = auth_q::fetch_otp(state.pool(), user.id).await? {
-        if existing.cumulative_attempts >= OTP_MAX_CUMULATIVE_ATTEMPTS {
-            return Err(WebError::RateLimited);
-        }
-        if existing.resend_count >= OTP_MAX_RESENDS {
-            return Err(WebError::RateLimited);
-        }
-        let elapsed = (Utc::now() - existing.last_sent_at).num_seconds();
-        if elapsed < OTP_RESEND_COOLDOWN_SECONDS {
-            return Err(WebError::Domain(DomainError::OtpCooldown));
-        }
-    }
-
-    let code = otp::generate();
-    let hash = password::hash(&code)?;
-    let expires = Utc::now() + Duration::minutes(15);
-
-    auth_q::upsert_otp(state.pool(), user.id, &canonical, &hash, expires).await?;
-    state.mailer().send_otp(&canonical, &code).await?;
-
-    if is_form {
-        Ok(Redirect::to("/onboarding/verify").into_response())
-    } else {
-        Ok(Json(EmptyAck { ok: true }).into_response())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// OTP verification — accepts JSON or form-urlencoded
-// ---------------------------------------------------------------------------
-
-#[derive(Deserialize)]
-struct VerifyOtpBody {
-    code: String,
-}
-
-async fn verify_otp(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    request: Request,
-) -> WebResult<Response> {
-    let is_form = is_form_request(&request);
-    if crate::db::queries::entrance::admission(state.pool(), user.id)
-        .await?
-        .candidate
-    {
-        return refuse_candidate(is_form);
-    }
-    let bytes = read_body(request).await?;
-    let body: VerifyOtpBody = decode_body(is_form, &bytes)?;
-
-    let otp_row = auth_q::fetch_otp(state.pool(), user.id)
-        .await?
-        .ok_or(WebError::Unauthorized)?;
-
-    if otp_row.expires_at <= Utc::now() {
-        return Err(WebError::Unauthorized);
-    }
-    // Enforced against the cumulative counter, which survives resends.
-    if otp_row.cumulative_attempts >= OTP_MAX_CUMULATIVE_ATTEMPTS {
-        return Err(WebError::RateLimited);
-    }
-    if !password::verify(&otp_row.code_hash, &body.code)? {
-        auth_q::increment_otp_attempts(state.pool(), user.id).await?;
-        return Err(WebError::Unauthorized);
-    }
-
-    auth_q::finalize_email_verification(state.pool(), user.id, &otp_row.email).await?;
-
-    if is_form {
-        Ok(Redirect::to("/profile").into_response())
-    } else {
-        Ok(Json(EmptyAck { ok: true }).into_response())
-    }
-}
-
-async fn read_body(request: Request) -> WebResult<Bytes> {
-    use http_body_util::BodyExt;
-    let body = request.into_body();
-    body.collect()
-        .await
-        .map(http_body_util::Collected::to_bytes)
-        .map_err(|e| WebError::Validation(format!("read body: {e}")))
 }
 
 // ---------------------------------------------------------------------------

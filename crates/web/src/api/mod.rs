@@ -66,16 +66,19 @@ pub struct MeView {
     pub rank_color: String,
     /// Bureau role identifier, if any.
     pub bureau_role: Option<String>,
-    /// Bureau role display title, if any.
+    /// Principal office's display title, if any.
     pub bureau_title: Option<String>,
+    /// Every office held, display titles in protocol order. A member may
+    /// hold several; the profile shows them all.
+    pub office_titles: Vec<String>,
     /// Consecutive active days.
     pub streak_days: i32,
     /// Multiplier the current streak is worth, e.g. `1.25`.
     pub streak_multiplier: f64,
-    /// Verified Epitech address.
-    pub email: Option<String>,
-    /// Whether the address is verified.
-    pub email_verified: bool,
+    /// Whether this account belongs to the association — on the Discord
+    /// server, holding an office, or admitted by the Bureau. This is
+    /// what opens the association's own pages.
+    pub is_member: bool,
     /// Linked GitHub login.
     pub github_username: Option<String>,
     /// Place on the all-time board.
@@ -674,6 +677,29 @@ pub struct CalendarRights {
     pub bureau: bool,
     /// Whether the viewer may schedule anything at all.
     pub any: bool,
+}
+
+/// One person on the association's Discord server, as the Bureau's
+/// appointment screen lists them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DirectoryEntry {
+    /// Snowflake — what an appointment is addressed to, since a handle
+    /// can change and a display name need not be unique.
+    pub discord_id: String,
+    /// Discord handle.
+    pub username: String,
+    /// Name to show.
+    pub display_name: String,
+    /// Principal office, e.g. `Secretary` — the first in protocol order.
+    pub bureau_role: Option<String>,
+    /// Every office held, gamified title and plain name, for the table.
+    pub bureau_label: Option<String>,
+    /// Tracks this person leads or co-leads, e.g. `Responsable · VisualArt`.
+    pub track_roles: Vec<String>,
+    /// Whether they have opened the platform yet. An appointment reaches
+    /// somebody who has not — it waits for them on their first login and
+    /// is on Discord straight away — but the Bureau should know.
+    pub signed_in: bool,
 }
 
 /// An event as the scheduling form submits it.

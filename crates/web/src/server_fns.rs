@@ -24,7 +24,7 @@ use leptos::prelude::*;
 
 // Types that appear in the function signatures, so both targets need them.
 use crate::api::{
-    AuditLine, CalendarEvent, CalendarRights, EventAttendee, EventDraft, FileItem, LeaderboardView, MeView, ProjectCard,
+    AuditLine, CalendarEvent, CalendarRights, DirectoryEntry, EventAttendee, EventDraft, FileItem, LeaderboardView, MeView, ProjectCard,
     ProjectDetailView, QrTicket, KumoChatView, QuestItem, ResourceItem, ReviewItem, SharesView, SheetView, SubmissionItem, TestsView, TrackBoard,
     TrackOption,
 };
@@ -108,11 +108,49 @@ mod ctx {
         let Some(id) = id else {
             return false;
         };
-        crate::db::queries::users::find_by_id(state.pool(), id)
+        // Membership is being on the Discord server, not a verified
+        // mailbox; `users::is_member` is the one place that decides it.
+        crate::db::queries::users::is_member(state.pool(), id)
             .await
-            .ok()
-            .flatten()
-            .is_some_and(|u| u.email_verified)
+            .unwrap_or(false)
+    }
+
+    /// The platform account of the member a Bureau form names.
+    ///
+    /// Accepts a Discord handle (with or without `@`), a display name or
+    /// a snowflake. Somebody on the server who has never opened the
+    /// platform gets their account created here, so the Bureau can
+    /// appoint anybody in the association rather than only the minority
+    /// who happen to have signed in already.
+    pub async fn resolve_member(state: &AppState, reference: &str) -> Result<Uuid, String> {
+        let wanted = reference.trim().trim_start_matches('@').trim();
+        if wanted.is_empty() {
+            return Err("indique un membre".into());
+        }
+        let pool = state.pool();
+        if let Ok(Some(u)) = crate::db::queries::users::find_by_discord_id(pool, wanted).await {
+            return Ok(u.id);
+        }
+        if let Ok(Some(id)) = crate::db::queries::users::find_by_reference(pool, wanted).await {
+            return Ok(id);
+        }
+
+        let members = crate::services::discord::list_guild_members(state.config())
+            .await
+            .ok_or("Discord ne répond pas : réessaie dans un instant")?;
+        let lower = wanted.to_lowercase();
+        let found = members.iter().find(|m| m.id == wanted)
+            .or_else(|| members.iter().find(|m| m.username.to_lowercase() == lower))
+            .or_else(|| {
+                members.iter().find(|m| {
+                    m.global_name.as_deref().is_some_and(|g| g.to_lowercase() == lower)
+                })
+            })
+            .ok_or_else(|| format!("personne ne s'appelle « {wanted} » sur le serveur Discord"))?;
+
+        crate::db::queries::users::ensure_for_guild_member(pool, found)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Format a date only.
@@ -205,22 +243,24 @@ pub async fn get_me() -> Result<Option<MeView>, ServerFnError> {
                 .and_then(BureauRole::parse)
                 .map(|r| r.title().to_string()),
             bureau_role: record.bureau_role.clone(),
+            office_titles: authority.offices.iter().map(|b| b.title().to_string()).collect(),
             streak_days: record.streak_days,
             streak_multiplier: streak_multiplier(record.streak_days),
-            email: record.email.clone(),
-            email_verified: record.email_verified,
+            is_member: crate::db::queries::users::is_member(state.pool(), record.id)
+                .await
+                .unwrap_or(false),
             github_username: record.github_username.clone(),
             leaderboard_position: position,
             // A verified member who has not picked a track is still a
             // Visitor; that is the step the onboarding banner nags about.
-            needs_onboarding: record.email_verified && authority.tracks.is_empty(),
+            needs_onboarding: authority.tracks.is_empty(),
             can_access_admin: authority.can(Action::AccessAdminPanel),
             can_generate_qr: authority.can(Action::GenerateQrToken),
             can_review: authority
                 .tracks
                 .iter()
                 .any(|m| m.role >= gamecloud_shared::roles::TrackRole::Reviewer),
-            can_see_tests: authority.can(Action::AccessAdminPanel) || !record.email_verified,
+            can_see_tests: authority.can(Action::AccessAdminPanel) || admission.candidate,
             is_candidate: admission.candidate,
         }));
     }
@@ -334,18 +374,17 @@ pub async fn get_sheet() -> Result<Option<SheetView>, ServerFnError> {
 
 /// The member title a leaderboard row shows.
 ///
-/// A verified member shows the rank the platform holds. An account that
-/// has not verified its email yet — a Bureau member created ahead of their
-/// first login — is gated on the platform but has earned its title by
-/// progression, so it shows what its XP is worth, as it does on Discord.
+/// The rank a leaderboard row shows: the one the platform holds.
+///
+/// There used to be a special case for accounts without a verified
+/// email, whose stored rank was frozen at `Pending` and so had to be
+/// recomputed from XP for display — from whatever XP the row carried,
+/// which on the season board was the *season* total, so it understated
+/// them. The stored rank now always follows lifetime XP (migration
+/// 0025), so it is simply the answer.
 #[cfg(feature = "ssr")]
 fn shown_rank(row: &crate::db::queries::leaderboard::LeaderboardRow) -> gamecloud_shared::roles::GlobalRank {
-    use gamecloud_shared::roles::GlobalRank;
-    if row.email_verified {
-        GlobalRank::parse(&row.global_rank)
-    } else {
-        GlobalRank::from_xp(row.total_xp).max(GlobalRank::Initiate)
-    }
+    gamecloud_shared::roles::GlobalRank::parse(&row.global_rank)
 }
 
 /// A leaderboard for the given scope (`all`, `season` or `track`).
@@ -735,11 +774,11 @@ pub async fn get_project(id: String) -> Result<Option<ProjectDetailView>, Server
 #[cfg(feature = "ssr")]
 async fn member_viewer(state: &crate::state::AppState) -> Option<uuid::Uuid> {
     let id = ctx::current_user_id(state).await?;
-    let record = crate::db::queries::users::find_by_id(state.pool(), id)
+    // `is_member` already reads the row, and an unknown id is not a member.
+    crate::db::queries::users::is_member(state.pool(), id)
         .await
-        .ok()
-        .flatten()?;
-    record.email_verified.then_some(id)
+        .unwrap_or(false)
+        .then_some(id)
 }
 
 /// Whether the current viewer may see this project at all.
@@ -1145,10 +1184,9 @@ pub async fn grant_xp(
 
         // Accept a platform id or a Discord id, because the Bureau reads
         // names in Discord and ids on the platform.
-        let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
+        let target = ctx::resolve_member(&state, &member)
             .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("aucun membre avec ce nom d'utilisateur Discord"))?;
+            .map_err(ServerFnError::new)?;
 
         let outcome = crate::db::queries::xp::grant(
             state.pool(),
@@ -1366,7 +1404,7 @@ pub async fn submit_resource(
         // Same rule as the REST route: proposing is for members.
         if !ctx::is_registered(&state, Some(user_id)).await {
             return Err(ServerFnError::new(
-                "vérifie ton adresse Epitech pour proposer une ressource",
+                "proposer une ressource est réservé aux membres de l'association",
             ));
         }
 
@@ -1484,10 +1522,9 @@ pub async fn get_shares() -> Result<SharesView, ServerFnError> {
         let viewer = ctx::current_user_id(&state).await;
         let (can_upload, moderator) = match viewer {
             Some(id) => {
-                let verified = crate::db::queries::users::find_by_id(state.pool(), id)
+                let verified = crate::db::queries::users::is_member(state.pool(), id)
                     .await
-                    .map_err(fail)?
-                    .is_some_and(|u| u.email_verified);
+                    .map_err(fail)?;
                 let authority = crate::db::queries::users::load_authority(state.pool(), id)
                     .await
                     .map_err(fail)?;
@@ -1829,17 +1866,21 @@ pub async fn get_tests() -> Result<TestsView, ServerFnError> {
         let Some(user_id) = ctx::current_user_id(&state).await else {
             return Ok(signin);
         };
-        let Some(record) = crate::db::queries::users::find_by_id(state.pool(), user_id)
+        if crate::db::queries::users::find_by_id(state.pool(), user_id)
             .await
             .map_err(fail)?
-        else {
+            .is_none()
+        {
             return Ok(signin);
-        };
+        }
         let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
             .await
             .map_err(fail)?;
         let bureau = authority.can(Action::AccessAdminPanel);
-        if !bureau && record.email_verified {
+        let member = crate::db::queries::users::is_member(state.pool(), user_id)
+            .await
+            .map_err(fail)?;
+        if !bureau && member {
             return Ok(TestsView {
                 access: "member".into(),
                 ..TestsView::default()
@@ -2121,10 +2162,9 @@ pub async fn add_contributor(
         if !crate::db::queries::projects::is_editable(&detail) {
             return Err(ServerFnError::new("l'équipe est figée pendant la revue"));
         }
-        let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
+        let target = ctx::resolve_member(&state, &member)
             .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("aucun membre avec ce nom d'utilisateur Discord"))?;
+            .map_err(ServerFnError::new)?;
 
         crate::db::queries::projects::add_contributor(
             state.pool(),
@@ -2192,10 +2232,9 @@ pub async fn appoint_track_role(
             ));
         }
 
-        let target = crate::db::queries::users::find_by_reference(state.pool(), member.trim())
+        let target = ctx::resolve_member(&state, &member)
             .await
-            .map_err(|e| ServerFnError::new(e.to_string()))?
-            .ok_or_else(|| ServerFnError::new("aucun membre avec ce nom d'utilisateur Discord"))?;
+            .map_err(ServerFnError::new)?;
 
         crate::db::queries::tracks::set_role(
             state.pool(),
@@ -3004,4 +3043,266 @@ pub async fn get_track_board(track: String) -> Result<TrackBoard, ServerFnError>
         let _ = track;
         Err(ServerFnError::new("ssr only"))
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// Offices and rights
+// ---------------------------------------------------------------------------
+
+/// A platform account as the directory reads it: snowflake, handle,
+/// display name, stored office, and whether they have ever signed in.
+#[cfg(feature = "ssr")]
+type DirectoryRow = (String, Option<String>, String, Vec<String>, bool);
+
+/// Everybody on the Discord server, with their office and track roles.
+///
+/// The appointment screen's source. Discord is asked directly, so the
+/// people who have never opened the platform are listed alongside those
+/// who have; when Discord does not answer, the accounts the platform
+/// already holds are shown rather than nothing.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller cannot reach the Bureau panel.
+#[server(GetDirectory, "/_fn")]
+pub async fn get_directory() -> Result<Vec<DirectoryEntry>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use gamecloud_shared::roles::{Action, BureauRole, Track, TrackRole};
+        use std::collections::HashMap;
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::AccessAdminPanel) {
+            return Err(ServerFnError::new("réservé au Bureau"));
+        }
+
+        let accounts: Vec<DirectoryRow> = sqlx::query_as(
+            "SELECT discord_id, discord_username, \
+                    member_display_name(current_title, discord_global_name, discord_username, discord_id), \
+                    offices, (avatar_url IS NOT NULL OR last_activity_at IS NOT NULL) \
+               FROM users",
+        )
+        .fetch_all(state.pool())
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let led: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT u.discord_id, m.track, m.track_role FROM track_memberships m \
+               JOIN users u ON u.id = m.user_id \
+              WHERE m.left_at IS NULL AND m.track_role IN ('Lead', 'CoLead')",
+        )
+        .fetch_all(state.pool())
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        let mut roles: HashMap<String, Vec<String>> = HashMap::new();
+        for (id, track, role) in led {
+            let role = if role == "Lead" { TrackRole::Lead } else { TrackRole::CoLead };
+            let track = Track::parse(&track).map_or(track.clone(), |t| t.as_str().to_string());
+            roles.entry(id).or_default().push(format!("{} · {track}", role.title_fr()));
+        }
+        let known: HashMap<String, DirectoryRow> =
+            accounts.into_iter().map(|r| (r.0.clone(), r)).collect();
+
+        // Every office, in the protocol order they are stored in.
+        let label = |stored: &[String]| {
+            let all: Vec<String> = stored
+                .iter()
+                .filter_map(|o| BureauRole::parse(o))
+                .map(|b| format!("{} — {}", b.title(), b.plain()))
+                .collect();
+            (!all.is_empty()).then(|| all.join(" · "))
+        };
+
+        let mut out: Vec<DirectoryEntry> =
+            match crate::services::discord::list_guild_members(state.config()).await {
+                Some(members) => members
+                    .into_iter()
+                    .map(|m| {
+                        let acc = known.get(&m.id);
+                        DirectoryEntry {
+                            display_name: acc.map_or_else(
+                                || m.global_name.clone().unwrap_or_else(|| m.username.clone()),
+                                |a| a.2.clone(),
+                            ),
+                            bureau_role: acc.and_then(|a| a.3.first().cloned()),
+                            bureau_label: acc.and_then(|a| label(&a.3)),
+                            track_roles: roles.get(&m.id).cloned().unwrap_or_default(),
+                            signed_in: acc.is_some_and(|a| a.4),
+                            username: m.username,
+                            discord_id: m.id,
+                        }
+                    })
+                    .collect(),
+                None => known
+                    .values()
+                    .map(|a| DirectoryEntry {
+                        discord_id: a.0.clone(),
+                        username: a.1.clone().unwrap_or_else(|| a.0.clone()),
+                        display_name: a.2.clone(),
+                        bureau_role: a.3.first().cloned(),
+                        bureau_label: label(&a.3),
+                        track_roles: roles.get(&a.0).cloned().unwrap_or_default(),
+                        signed_in: a.4,
+                    })
+                    .collect(),
+            };
+        // Office holders first, in the order the Bureau is listed, then
+        // everybody else by name.
+        let rank = |e: &DirectoryEntry| {
+            e.bureau_role
+                .as_deref()
+                .and_then(BureauRole::parse)
+                .and_then(|b| BureauRole::ALL.iter().position(|x| *x == b))
+                .unwrap_or(usize::MAX)
+        };
+        out.sort_by(|a, b| {
+            rank(a)
+                .cmp(&rank(b))
+                .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
+        });
+        return Ok(out);
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(Vec::new())
+}
+
+/// Give somebody a Bureau office, or take one away.
+///
+/// Offices accumulate: `add` gives this one on top of any others, and
+/// removing takes away only this one. The member is told privately,
+/// their Discord roles follow through the bot, and their rights follow
+/// on their next page load — the authority is rebuilt from the database
+/// on every request, so there is nothing else to refresh.
+///
+/// # Errors
+/// Returns a `ServerFnError` on a missing right, an unknown office or an
+/// unknown member.
+#[server(AppointBureau, "/_fn")]
+pub async fn appoint_bureau(
+    member: String,
+    role: String,
+    add: bool,
+) -> Result<String, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::db::queries::users::{change_offices, OfficeChange};
+        use gamecloud_shared::roles::{Action, BureauRole};
+
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("not signed in"))?;
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if !authority.can(Action::AssignBureauRole) {
+            return Err(ServerFnError::new(
+                "seuls le ou la président·e et le ou la vice-président·e nomment aux offices",
+            ));
+        }
+
+        let office = BureauRole::parse(role.trim())
+            .ok_or_else(|| ServerFnError::new("office inconnu"))?;
+        let target = ctx::resolve_member(&state, &member)
+            .await
+            .map_err(ServerFnError::new)?;
+
+        let before = crate::db::queries::users::offices_of(state.pool(), target)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if add == before.contains(&office) {
+            return Ok(if add {
+                format!("Déjà {} — rien à changer.", office.plain())
+            } else {
+                format!("N'occupe pas l'office {} — rien à retirer.", office.plain())
+            });
+        }
+
+        let change = if add { OfficeChange::Add(office) } else { OfficeChange::Remove(office) };
+        let now = change_offices(state.pool(), target, change)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let now_labels: Vec<String> = now.iter().map(|b| b.plain().to_string()).collect();
+
+        let mut tx = state
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        crate::services::notifications::enqueue(
+            &mut tx,
+            state.channels(),
+            &crate::services::notifications::Announcement::bureau_appointment(
+                target,
+                (office.title(), office.plain()),
+                add,
+                &now_labels,
+            ),
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+        tx.commit().await.map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        crate::db::queries::audit::record(
+            state.pool(),
+            Some(user_id),
+            if add { "admin.add_office" } else { "admin.remove_office" },
+            Some("user"),
+            Some(target),
+            serde_json::json!({
+                "office": office.as_str(),
+                "now": now.iter().map(|b| b.as_str()).collect::<Vec<_>>(),
+            }),
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+
+        let holds = if now_labels.is_empty() {
+            "aucun office".to_string()
+        } else {
+            now_labels.join(" · ")
+        };
+        return Ok(if add {
+            format!("{} ajouté. Offices désormais : {holds}.", office.plain())
+        } else {
+            format!("{} retiré. Offices désormais : {holds}.", office.plain())
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (member, role, add);
+        Ok(String::new())
+    }
+}
+
+/// What the signed-in member may do, and why.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the database is unreachable.
+#[server(GetMyRights, "/_fn")]
+pub async fn get_my_rights() -> Result<Vec<gamecloud_shared::roles::Right>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let Some(state) = ctx::state() else {
+            return Ok(Vec::new());
+        };
+        let Some(user_id) = ctx::current_user_id(&state).await else {
+            return Ok(Vec::new());
+        };
+        let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(authority.rights());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(Vec::new())
 }

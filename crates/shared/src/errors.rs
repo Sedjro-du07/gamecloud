@@ -12,14 +12,10 @@ pub type DomainResult<T> = Result<T, DomainError>;
 /// Top-level domain error type.
 #[derive(Debug, Error)]
 pub enum DomainError {
-    /// The provided email address does not match the `@epitech.eu` policy.
-    #[error("invalid Epitech email: {0}")]
-    InvalidEpitechEmail(String),
-
-    /// An action requires a verified email but the user has not completed
-    /// OTP verification.
-    #[error("email verification required")]
-    EmailNotVerified,
+    /// The action is for members of the association — accounts on its
+    /// Discord server, holding an office, or admitted by the Bureau.
+    #[error("réservé aux membres de l'association")]
+    NotAMember,
 
     /// The actor lacks the permissions for the requested action.
     #[error("permission denied: {0}")]
@@ -55,10 +51,6 @@ pub enum DomainError {
         to: &'static str,
     },
 
-    /// The Epitech address is already verified by a different account.
-    #[error("this Epitech address is already linked to another account")]
-    EmailAlreadyTaken,
-
     /// The member already claimed this QR token.
     #[error("you have already scanned this code")]
     QrAlreadyClaimed,
@@ -66,14 +58,6 @@ pub enum DomainError {
     /// The QR token hit its attendance ceiling.
     #[error("this code has reached its scan limit")]
     QrCapacityReached,
-
-    /// A member tried to re-submit an email after already verifying one.
-    #[error("email address is already verified and cannot be changed here")]
-    EmailAlreadyVerified,
-
-    /// An OTP was requested again before the resend cooldown elapsed.
-    #[error("please wait before requesting another code")]
-    OtpCooldown,
 
     /// A quest was acted on outside its open window.
     #[error("this quest is not currently active")]

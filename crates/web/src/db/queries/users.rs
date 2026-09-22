@@ -15,7 +15,7 @@ use crate::error::{WebError, WebResult};
 /// Propagates database errors.
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> WebResult<Option<UserRecord>> {
     let row = sqlx::query_as::<_, UserRecord>(
-        "SELECT id, discord_id, discord_username, discord_global_name, github_username, email, email_verified, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, sessions_valid_from, last_activity_at, created_at FROM users WHERE id = $1",
+        "SELECT id, discord_id, discord_username, discord_global_name, github_username, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, sessions_valid_from, last_activity_at, created_at FROM users WHERE id = $1",
     )
         .bind(id)
         .fetch_optional(pool)
@@ -29,7 +29,7 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> WebResult<Option<UserRecord>
 /// Propagates database errors.
 pub async fn find_by_discord_id(pool: &PgPool, discord_id: &str) -> WebResult<Option<UserRecord>> {
     let row = sqlx::query_as::<_, UserRecord>(
-        "SELECT id, discord_id, discord_username, discord_global_name, github_username, email, email_verified, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, sessions_valid_from, last_activity_at, created_at FROM users WHERE discord_id = $1",
+        "SELECT id, discord_id, discord_username, discord_global_name, github_username, avatar_url, avatar_custom_url, xp_total, level, global_rank, bureau_role, current_title, streak_days, sessions_valid_from, last_activity_at, created_at FROM users WHERE discord_id = $1",
     )
         .bind(discord_id)
         .fetch_optional(pool)
@@ -48,14 +48,18 @@ pub async fn upsert_from_discord(
 ) -> WebResult<UserRecord> {
     let row = sqlx::query_as::<_, UserRecord>(
         r#"
-        INSERT INTO users (discord_id, discord_username, discord_global_name, avatar_url)
-        VALUES ($1, $2, $3, $4)
+        -- 'Initiate' rather than the old 'Pending': arriving through
+        -- Discord OAuth is the membership check, so a new account starts
+        -- on the ladder instead of below it waiting for an email.
+        INSERT INTO users (discord_id, discord_username, discord_global_name, avatar_url,
+                           global_rank)
+        VALUES ($1, $2, $3, $4, 'Initiate')
         ON CONFLICT (discord_id) DO UPDATE
             SET avatar_url          = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
                 discord_username    = COALESCE(EXCLUDED.discord_username, users.discord_username),
                 discord_global_name = COALESCE(EXCLUDED.discord_global_name, users.discord_global_name)
         RETURNING id, discord_id, discord_username, discord_global_name,
-                  github_username, email, email_verified, avatar_url,
+                  github_username, avatar_url,
                   avatar_custom_url, xp_total, level, global_rank, bureau_role,
                   current_title, streak_days, sessions_valid_from, last_activity_at, created_at
         "#,
@@ -154,9 +158,26 @@ pub async fn load_authority(pool: &PgPool, user_id: Uuid) -> WebResult<Authority
 
     Ok(Authority {
         rank: parse_rank(&user.global_rank),
-        bureau: user.bureau_role.as_deref().and_then(parse_bureau),
+        offices: offices_of(pool, user_id).await?,
         tracks,
     })
+}
+
+/// Every office a member holds, in protocol order.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn offices_of(pool: &PgPool, user_id: Uuid) -> WebResult<Vec<BureauRole>> {
+    let raw: Option<Vec<String>> =
+        sqlx::query_scalar("SELECT offices FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(raw
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|o| parse_bureau(o))
+        .collect())
 }
 
 // Rank and bureau-role parsing now live on the shared enums, so the
@@ -245,7 +266,7 @@ pub async fn update_profile(
                github_username   = COALESCE($4, github_username)
          WHERE id = $1
         RETURNING id, discord_id, discord_username, discord_global_name,
-                  github_username, email, email_verified, avatar_url,
+                  github_username, avatar_url,
                   avatar_custom_url, xp_total, level, global_rank, bureau_role,
                   current_title, streak_days, sessions_valid_from, last_activity_at, created_at
         "#,
@@ -276,27 +297,95 @@ fn is_valid_github_login(login: &str) -> bool {
     login.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-/// Assign or clear a bureau role.
+/// What an office appointment does to the list a member holds.
+#[derive(Debug, Clone, Copy)]
+pub enum OfficeChange {
+    /// Hold this office as well as any others.
+    Add(BureauRole),
+    /// Stop holding this office; the others stay.
+    Remove(BureauRole),
+    /// Hold exactly this office, or none — the old single-office
+    /// behaviour, kept for the REST route that sends one value.
+    Replace(Option<BureauRole>),
+}
+
+/// The offices a member ends up with after `change`.
+///
+/// Pure, so the rules are testable without a database:
+/// - the list is kept in protocol order, so the first office is the
+///   principal one and `bureau_role` (generated from it) is meaningful;
+/// - `Provisional` means "on the Bureau without an office", so it is
+///   dropped the moment a real office is added — and never kept alongside
+///   one.
+#[must_use]
+pub fn apply_office_change(current: &[BureauRole], change: OfficeChange) -> Vec<BureauRole> {
+    let mut next: Vec<BureauRole> = match change {
+        OfficeChange::Add(o) => current.iter().copied().chain(std::iter::once(o)).collect(),
+        OfficeChange::Remove(o) => current.iter().copied().filter(|b| *b != o).collect(),
+        OfficeChange::Replace(o) => o.into_iter().collect(),
+    };
+    if next.iter().any(|b| b.holds_office()) {
+        next.retain(|b| b.holds_office());
+    }
+    next.sort_by_key(|b| b.protocol_rank());
+    next.dedup();
+    next
+}
+
+/// Change the offices a member holds.
+///
+/// Returns the list they now hold.
 ///
 /// # Errors
-/// `Validation` for an unknown role; otherwise database errors.
+/// `NotFound` when the id matches nobody — an appointment that quietly
+/// lands on no row is how a nomination goes missing while the interface
+/// reports success; otherwise database errors.
+pub async fn change_offices(
+    pool: &PgPool,
+    user_id: Uuid,
+    change: OfficeChange,
+) -> WebResult<Vec<BureauRole>> {
+    let mut tx = pool.begin().await?;
+    let current: Option<Vec<String>> =
+        sqlx::query_scalar("SELECT offices FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(current) = current else {
+        return Err(WebError::NotFound);
+    };
+    let current: Vec<BureauRole> = current.iter().filter_map(|o| parse_bureau(o)).collect();
+    let next = apply_office_change(&current, change);
+    let stored: Vec<&str> = next.iter().map(|b| b.as_str()).collect();
+
+    sqlx::query("UPDATE users SET offices = $2 WHERE id = $1")
+        .bind(user_id)
+        .bind(&stored)
+        .execute(&mut *tx)
+        .await?;
+    // The office roles on Discord follow the platform, immediately.
+    crate::services::notifications::request_role_sync(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(next)
+}
+
+/// Assign or clear a single bureau role, replacing any others.
+///
+/// # Errors
+/// `Validation` for an unknown role, `NotFound` for an unknown member.
 pub async fn set_bureau_role(
     pool: &PgPool,
     user_id: Uuid,
     role: Option<&str>,
 ) -> WebResult<()> {
-    if let Some(r) = role {
-        if BureauRole::parse(r).is_none() {
-            return Err(WebError::Validation(format!("unknown bureau role '{r}'")));
-        }
-    }
-    sqlx::query("UPDATE users SET bureau_role = $2 WHERE id = $1")
-        .bind(user_id)
-        .bind(role)
-        .execute(pool)
-        .await?;
-    // The office role on Discord follows the platform, immediately.
-    crate::services::notifications::request_role_sync(pool).await?;
+    let office = match role {
+        Some(r) => Some(
+            BureauRole::parse(r)
+                .ok_or_else(|| WebError::Validation(format!("unknown bureau role '{r}'")))?,
+        ),
+        None => None,
+    };
+    change_offices(pool, user_id, OfficeChange::Replace(office)).await?;
     Ok(())
 }
 
@@ -357,18 +446,61 @@ pub async fn find_by_reference(pool: &PgPool, reference: &str) -> WebResult<Opti
     Ok(found)
 }
 
-/// Whether this account belongs to the association: an Epitech address
-/// verified on the platform. Internal endpoints ask this before answering.
+/// The platform account for a server member, created if they have never
+/// signed in.
+///
+/// Lets the Bureau appoint anybody on the Discord server, not only the
+/// people who happen to have opened the platform already. The row is the
+/// same one Discord OAuth would have made — keyed on the snowflake — so
+/// when they do sign in, `upsert_from_discord` finds it and they arrive
+/// with their office or track role already in place. They are on the
+/// server, so they are not a candidate.
+///
+/// # Errors
+/// Propagates database errors.
+pub async fn ensure_for_guild_member(
+    pool: &PgPool,
+    member: &crate::services::discord::GuildMember,
+) -> WebResult<Uuid> {
+    let id: Uuid = sqlx::query_scalar(
+        r"
+        INSERT INTO users (discord_id, discord_username, discord_global_name, global_rank, candidate)
+        VALUES ($1, $2, $3, 'Initiate', FALSE)
+        ON CONFLICT (discord_id) DO UPDATE
+            SET discord_username    = EXCLUDED.discord_username,
+                discord_global_name = COALESCE(EXCLUDED.discord_global_name,
+                                               users.discord_global_name),
+                candidate           = FALSE
+        RETURNING id
+        ",
+    )
+    .bind(&member.id)
+    .bind(&member.username)
+    .bind(member.global_name.as_deref())
+    .fetch_one(pool)
+    .await?;
+    Ok(id)
+}
+
+/// Whether this account belongs to the association.
+///
+/// Membership is being on the association's Discord server — or holding
+/// an office, or having been admitted by the Bureau — which is exactly
+/// what the stored `candidate` flag records: login sets it from Discord's
+/// own answer. It used to be "has verified an Epitech address", which
+/// shut out members who were plainly on the server; the address is now
+/// optional and decides nothing.
 ///
 /// # Errors
 /// Propagates database errors.
 pub async fn is_member(pool: &PgPool, user_id: Uuid) -> WebResult<bool> {
-    let verified: Option<bool> =
-        sqlx::query_scalar("SELECT email_verified FROM users WHERE id = $1")
+    let candidate: Option<bool> =
+        sqlx::query_scalar("SELECT candidate FROM users WHERE id = $1")
             .bind(user_id)
             .fetch_optional(pool)
             .await?;
-    Ok(verified.unwrap_or(false))
+    // An unknown account is not a member.
+    Ok(candidate == Some(false))
 }
 
 /// Pseudos of the members with these Discord ids, keyed by id, to write
@@ -405,6 +537,58 @@ pub fn visible_tracks(authority: &Authority) -> Vec<String> {
         .filter(|t| authority.can(gamecloud_shared::roles::Action::ViewTrackInternalProjects(**t)))
         .map(|t| t.as_str().to_string())
         .collect()
+}
+
+#[cfg(test)]
+mod office_tests {
+    use super::{apply_office_change, OfficeChange};
+    use gamecloud_shared::roles::BureauRole::{self, *};
+
+    fn apply(current: &[BureauRole], change: OfficeChange) -> Vec<BureauRole> {
+        apply_office_change(current, change)
+    }
+
+    #[test]
+    fn adding_a_second_office_keeps_the_first() {
+        // Inari: Secretary, then Treasurer as well. The single-value
+        // column this replaces overwrote the first.
+        assert_eq!(apply(&[Secretary], OfficeChange::Add(Treasurer)), vec![Secretary, Treasurer]);
+    }
+
+    #[test]
+    fn offices_are_kept_in_protocol_order() {
+        // Added in the "wrong" order, stored President-first, so the
+        // principal office is always the most senior one.
+        assert_eq!(apply(&[Treasurer], OfficeChange::Add(Secretary)), vec![Secretary, Treasurer]);
+        assert_eq!(apply(&[Moderator], OfficeChange::Add(President)), vec![President, Moderator]);
+    }
+
+    #[test]
+    fn a_real_office_replaces_the_provisional_seat() {
+        assert_eq!(apply(&[Provisional], OfficeChange::Add(Treasurer)), vec![Treasurer]);
+    }
+
+    #[test]
+    fn the_provisional_seat_is_never_added_beside_an_office() {
+        assert_eq!(apply(&[Treasurer], OfficeChange::Add(Provisional)), vec![Treasurer]);
+    }
+
+    #[test]
+    fn removing_one_office_leaves_the_others() {
+        assert_eq!(apply(&[Secretary, Treasurer], OfficeChange::Remove(Secretary)), vec![Treasurer]);
+        assert_eq!(apply(&[Treasurer], OfficeChange::Remove(Treasurer)), vec![]);
+    }
+
+    #[test]
+    fn adding_an_office_already_held_changes_nothing() {
+        assert_eq!(apply(&[Secretary, Treasurer], OfficeChange::Add(Treasurer)), vec![Secretary, Treasurer]);
+    }
+
+    #[test]
+    fn replace_keeps_the_old_single_office_behaviour() {
+        assert_eq!(apply(&[Secretary, Treasurer], OfficeChange::Replace(Some(President))), vec![President]);
+        assert_eq!(apply(&[Secretary], OfficeChange::Replace(None)), vec![]);
+    }
 }
 
 #[cfg(test)]

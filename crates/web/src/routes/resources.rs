@@ -75,9 +75,9 @@ async fn submit(
     user: CurrentUser,
     Json(body): Json<resources::NewResource>,
 ) -> WebResult<Json<CreatedResponse>> {
-    if !user.record.email_verified {
+    if !crate::db::queries::users::is_member(state.pool(), user.id).await? {
         return Err(WebError::Domain(
-            gamecloud_shared::DomainError::EmailNotVerified,
+            gamecloud_shared::DomainError::NotAMember,
         ));
     }
     let id = resources::submit(state.pool(), state.channels(), user.id, &body).await?;

@@ -151,16 +151,15 @@ fn CandidateView(
     let status = if let Some(url) = view.invite_url.clone() {
         Some(view! {
             <Notice kind=NoticeKind::Success>
-                <span>"Tu es admis. Rejoins le serveur Discord (lien valable une semaine), puis vérifie ton adresse Epitech."</span>
+                <span>"Tu es admis. Rejoins le serveur Discord (lien valable une semaine), puis connecte-toi ici avec Discord."</span>
                 <ButtonLink kind=ButtonKind::Primary href=url new_tab=true icon=IconName::DiscordLogo>"Rejoindre le serveur"</ButtonLink>
-                <ButtonLink href="/onboarding/email" icon=IconName::Envelope>"Vérifier mon adresse"</ButtonLink>
             </Notice>
         }.into_any())
     } else if view.admitted {
         Some(view! {
             <Notice kind=NoticeKind::Success>
-                <span>"Tu es admis. Vérifie ton adresse Epitech pour finir ton inscription."</span>
-                <ButtonLink kind=ButtonKind::Primary href="/onboarding/email" icon=IconName::Envelope>"Vérifier mon adresse"</ButtonLink>
+                <span>"Tu es admis : la plateforme t'est ouverte."</span>
+                <ButtonLink kind=ButtonKind::Primary href="/profile" icon=IconName::ArrowRight>"Voir mon profil"</ButtonLink>
             </Notice>
         }.into_any())
     } else if view.is_candidate {

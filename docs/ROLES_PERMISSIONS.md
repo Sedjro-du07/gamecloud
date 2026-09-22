@@ -221,3 +221,68 @@ association-wide event by resubmitting it under their own track.
 Generating a QR code for an event accepts either `GenerateQrToken` or
 `ManageEvents` for that event's scope — a track Lead running their own
 session should not need the association-wide QR right.
+
+
+---
+
+# Le mail Epitech ne conditionne plus rien
+
+*Migration 0025.*
+
+Le rang était barré par une vérification d'adresse `@epitech.eu` :
+un membre restait `Pending` tant qu'il n'avait pas validé un code reçu
+par mail, et `Authority::can` renvoyait `false` pour absolument tout
+sauf `SubmitEpitechEmail`. Deux contraintes `CHECK` imposaient la même
+chose en base.
+
+L'effet observé en production : **un membre à 14 844 XP affiché
+`⏳ L'Aspirant`**, incapable de créer un projet, de relire quoi que ce
+soit ou d'exercer l'office qui lui avait été confié. Six membres sur
+sept étaient dans cet état.
+
+La règle est désormais celle que l'association applique réellement :
+**être sur le serveur Discord suffit**. Le rang découle de l'XP seule,
+avec `Initiate` comme plancher.
+
+- `Pending` et `Visitor` ne sont plus attribués à personne. Les variantes
+  subsistent pour les lignes historiques et l'échelle de rôles Discord.
+- `SubmitEpitechEmail` et `CompleteOnboarding` ne sont plus des barrières
+  mais des actions ordinaires, disponibles à tout moment.
+- La colonne `email` reste : la plateforme peut détenir une adresse, elle
+  n'en dépend pas.
+
+
+---
+
+# Nommer depuis la plateforme
+
+*Panneau Bureau → « Offices du Bureau » et « Nommer un responsable de track ».*
+
+Les deux formulaires proposent **tous les membres du serveur Discord**,
+pas seulement ceux qui se sont déjà connectés à la plateforme : la liste
+est demandée à Discord par le jeton du bot. Nommer quelqu'un qui n'a
+jamais ouvert GameCloud OS lui crée son compte sur-le-champ, à partir de
+son identifiant Discord ; à sa première connexion, l'OAuth retrouve la
+même ligne et il arrive avec son office ou son titre déjà en place.
+
+Une nomination déclenche, sans autre manipulation :
+
+| Où | Quoi |
+|---|---|
+| Base | l'office ou le titre de track ; nommer sur une track l'y inscrit |
+| Discord | le bot pose le rôle de l'office et l'accès aux salons du Bureau |
+| Message privé | la personne est prévenue, avec l'office en clair |
+| Profil → *Mes droits* | la liste de ce qu'elle peut faire, et ce qui le lui donne |
+| Journal | qui a nommé qui, à quoi |
+
+Seuls le ou la président·e et le ou la vice-président·e nomment aux
+offices (`AssignBureauRole`) ; tout membre de l'exécutif nomme les
+responsables de track, et un responsable nomme ses co-responsables.
+
+## *Mes droits*
+
+La liste affichée sur chaque profil est produite par
+`Authority::rights()`, qui **interroge `Authority::can`** pour chaque
+droit plutôt que de redire les règles. Elle ne peut donc pas promettre
+une action que la plateforme refuserait ensuite, et un test verrouille
+qu'un membre sans office ni titre n'y voit rien.

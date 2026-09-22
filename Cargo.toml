@@ -46,7 +46,6 @@ oauth2       = "4.4"
 hmac         = "0.12"
 sha2         = "0.10"
 rand         = "0.8"
-argon2       = "0.5"
 base64       = "0.22"
 
 # --- http / web -----------------------------------------------------------
@@ -74,13 +73,6 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # --- email ----------------------------------------------------------------
-lettre = { version = "0.11", default-features = false, features = [
-    "smtp-transport",
-    "tokio1",
-    "tokio1-rustls-tls",
-    "builder",
-    "hostname",
-] }
 
 # --- misc -----------------------------------------------------------------
 qrcode      = "0.14"

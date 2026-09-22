@@ -1,5 +1,111 @@
 # Changelog
 
+## Septembre 2026 — plus de mail du tout
+
+La vérification d'adresse Epitech est supprimée, pas seulement désactivée
+(migration 0027) : pages `/onboarding/email` et `/onboarding/verify`
+(qui redirigent désormais vers le profil), routes `POST /api/auth/email`
+et `/api/auth/verify`, service de code à usage unique, envoi de mail,
+validateur `@epitech.eu`, table `email_otps`, colonnes `users.email` et
+`users.email_verified`, variables `SMTP_*` (qui étaient *obligatoires* au
+démarrage), dépendances `lettre` et `argon2`. Les deux messages du bot qui
+disaient encore « vérifie ton adresse Epitech » ont été réécrits.
+
+Se connecter avec Discord est désormais la totalité de l'inscription.
+
+## Septembre 2026 — nommer depuis la plateforme, *Mes droits*
+
+- **Offices du Bureau** : le panneau Bureau permet enfin d'attribuer et
+  de retirer un office. Il n'existait qu'une route API.
+- **Tout le serveur est nommable** : les deux formulaires de nomination
+  proposent les 32 membres du serveur Discord, pas seulement les 7 qui
+  s'étaient déjà connectés. Un compte est créé à la volée ; à la
+  première connexion la personne retrouve son office ou son titre.
+- **Mes droits** : chaque profil liste ce que le membre peut faire et ce
+  qui le lui donne, calculé à partir de `Authority::can` — la liste ne
+  peut pas promettre une action refusée ensuite.
+- Une nomination prévient la personne en privé et met son rôle Discord à
+  jour, sans autre manipulation.
+- **Offices cumulables** (migration 0026) : une personne peut tenir
+  plusieurs offices — Inari est secrétaire *et* trésorière. `offices` est
+  la liste écrite, triée dans l'ordre protocolaire ; `bureau_role` devient
+  une colonne calculée (le premier office) pour ce qui n'affiche qu'un
+  titre. Les permissions tiennent compte de tous les offices, Discord pose
+  tous les rôles, et *Mes droits* nomme pour chaque droit l'office qui le
+  donne. Le panneau propose « Ajouter cet office » et « Retirer cet
+  office » ; ni l'un ni l'autre ne remplace les offices déjà tenus.
+
+## Septembre 2026 — suppression de la barrière mail, nominations réparées
+
+### Le mail Epitech ne barre plus le rang
+
+Un membre restait `Pending` tant qu'il n'avait pas vérifié une adresse
+`@epitech.eu`, et à ce rang la matrice de permissions refusait tout.
+Conséquence en production : **fred040 avait 14 844 XP et s'affichait
+`⏳ L'Aspirant`**, sans pouvoir créer un projet ni utiliser son poste de
+vice-président. Six membres sur sept étaient gelés ainsi.
+
+Deux contraintes `CHECK` imposaient la même règle en base, si bien que
+corriger le code seul n'aurait rien changé — Postgres aurait refusé la
+mise à jour. La migration 0025 les retire et recalcule tous les rangs à
+partir de l'XP déjà acquise.
+
+Être sur le serveur Discord est désormais le seul test d'appartenance.
+
+### Les nominations qui ne nommaient personne
+
+`set_role` était un `UPDATE ... WHERE user_id = ... AND track = ...`.
+Nommer quelqu'un responsable d'une track qu'il n'avait **pas rejointe**
+ne touchait aucune ligne, la fonction renvoyait `Ok`, et l'interface
+affichait « Nomination enregistrée » alors que rien ne s'était produit.
+
+Le journal d'audit en portait la trace : trois nominations enregistrées
+le 15 septembre, dont une — *yange4legend, responsable Visual Art* —
+n'existait nulle part ailleurs. Elle a été rejouée.
+
+La requête est devenue un `INSERT ... ON CONFLICT` : nommer quelqu'un
+l'inscrit à la track, et réadmet celui qui l'avait quittée. Une
+nomination identique ne touche toujours aucune ligne, donc ne notifie
+personne inutilement.
+
+`set_bureau_role` souffrait du même silence et renvoie maintenant
+`NotFound` quand l'identifiant ne correspond à personne.
+
+### « Membre » ne veut plus dire « mail vérifié »
+
+La barrière ne se limitait pas au rang : le mail vérifié servait aussi de
+**définition du membre** dans toute la plateforme. Un compte sans mail
+vérifié ne voyait pas Projets, Partages, Classement ni Ressources dans
+la navigation, se voyait refuser le tableau des tracks, ne pouvait pas
+**scanner un QR de présence**, ni rejoindre une track, ni proposer une
+ressource, ni partager un fichier. Côté Discord, `/leaderboard` et le
+salon `gc-classement` ne listaient que les mails vérifiés — fred040,
+premier en XP, en était absent.
+
+Il n'existe plus qu'une définition, `users::is_member` : **ne pas être
+candidat** — c'est-à-dire être sur le serveur Discord (vérifié par le
+bot à la connexion), occuper un office, ou avoir été admis par le
+Bureau. Toutes les gardes web, les fonctions serveur, les routes REST et
+le bot passent par elle. Les boutons « Vérifier mon adresse » ont été
+retirés ou remplacés par le test d'entrée pour les candidats.
+
+### La production redémarre toute seule
+
+Rien ne relançait GameCloud après un redémarrage de la machine : la
+plateforme est tombée au reboot du 21 septembre et personne ne l'a vu.
+Web et bot tournent désormais en services systemd utilisateur
+(`~/.config/systemd/user/gamecloud-{web,bot}.service`), avec
+`Restart=on-failure` et le *lingering* activé, donc ils démarrent au
+boot sans session ouverte et reviennent seuls après un plantage.
+
+```
+systemctl --user status gamecloud-web gamecloud-bot
+journalctl --user -u gamecloud-bot -f
+systemctl --user restart gamecloud-web     # après un nouveau build
+```
+
+---
+
 ## Septembre 2026 (suite) — tests d'entrée, admission, contacter Kumo
 
 ### Tests d'entrée

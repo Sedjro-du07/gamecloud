@@ -287,6 +287,46 @@ impl Announcement {
         }
     }
 
+    /// Somebody was given a Bureau office, or had one removed.
+    ///
+    /// `office` is the one that changed; `now` is everything they hold
+    /// afterwards, so a second office reads as an addition rather than
+    /// sounding like a replacement of the first.
+    #[must_use]
+    pub fn bureau_appointment(
+        member: Uuid,
+        office: (&str, &str),
+        added: bool,
+        now: &[String],
+    ) -> Self {
+        let (title, plain) = office;
+        let rest = if now.is_empty() {
+            "Tu n'occupes plus d'office au Bureau.".to_string()
+        } else {
+            format!("Tes offices : {}.", now.join(" · "))
+        };
+        let description = if added {
+            let also = if now.len() > 1 { "aussi " } else { "" };
+            format!(
+                "Tu es désormais {also}**{title}** — {plain}.\n\n{rest}\n\n\
+                 Ton rôle sur Discord suit, et ce que tu peux faire est listé sur ton \
+                 profil GameCloud OS, rubrique *Mes droits*."
+            )
+        } else {
+            format!("L'office **{title}** — {plain} t'a été retiré.\n\n{rest}")
+        };
+        Self {
+            kind: "BureauAppointment",
+            title: "🏛️ Bureau".to_string(),
+            description,
+            color: 0xff_aa00,
+            user_id: Some(member),
+            track: None,
+            mention: Mention::Member,
+            dm: true,
+        }
+    }
+
     /// Somebody was appointed Lead or CoLead of a track.
     #[must_use]
     pub fn track_appointment(member: Uuid, track: Track, role: &str) -> Self {

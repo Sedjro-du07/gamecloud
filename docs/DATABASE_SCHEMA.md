@@ -845,3 +845,16 @@ public.
 
 Bureau meetings are filtered out **in SQL**, not after the fetch — a row
 that reaches the browser and merely goes undrawn is not private.
+
+
+# `users.offices`
+
+*Migration 0026.* Liste des offices du Bureau tenus, dans l'ordre
+protocolaire de `BureauRole::ALL` (président·e d'abord). C'est la seule
+colonne d'office qui s'écrit, via `users::change_offices`.
+
+`bureau_role` est désormais `GENERATED ALWAYS AS (offices[1]) STORED` :
+l'office principal, en lecture seule, pour ce qui n'affiche qu'un titre.
+Un `CHECK` limite les valeurs aux offices connus ; `Provisional`
+(« membre du Bureau sans office ») disparaît dès qu'un vrai office est
+ajouté.

@@ -8,7 +8,7 @@ use sqlx::PgPool;
 use crate::{
     config::{Config, DiscordChannels},
     middleware::rate_limit::RateLimiter,
-    services::{github::GitHub, mailer::Mailer},
+    services::github::GitHub,
 };
 
 /// State held by the Axum router. Cheap to clone (it's `Arc`-based).
@@ -20,7 +20,6 @@ pub struct AppState {
 struct Inner {
     pub config: Config,
     pub pool: PgPool,
-    pub mailer: Mailer,
     pub leptos_options: LeptosOptions,
     pub rate_limiter: RateLimiter,
 }
@@ -28,12 +27,11 @@ struct Inner {
 impl AppState {
     /// Build a new state.
     #[must_use]
-    pub fn new(config: Config, pool: PgPool, mailer: Mailer, leptos_options: LeptosOptions) -> Self {
+    pub fn new(config: Config, pool: PgPool, leptos_options: LeptosOptions) -> Self {
         Self {
             inner: Arc::new(Inner {
                 config,
                 pool,
-                mailer,
                 leptos_options,
                 rate_limiter: RateLimiter::default(),
             }),
@@ -52,11 +50,6 @@ impl AppState {
         &self.inner.pool
     }
 
-    /// Outgoing-mail transport.
-    #[must_use]
-    pub fn mailer(&self) -> &Mailer {
-        &self.inner.mailer
-    }
 
     /// Leptos options (site root, pkg dir, …).
     #[must_use]

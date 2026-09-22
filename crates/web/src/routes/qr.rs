@@ -205,9 +205,9 @@ async fn scan(
     user: CurrentUser,
     Json(body): Json<ScanBody>,
 ) -> WebResult<Json<ScanResponse>> {
-    if !user.record.email_verified {
+    if !crate::db::queries::users::is_member(state.pool(), user.id).await? {
         return Err(WebError::Domain(
-            gamecloud_shared::DomainError::EmailNotVerified,
+            gamecloud_shared::DomainError::NotAMember,
         ));
     }
 

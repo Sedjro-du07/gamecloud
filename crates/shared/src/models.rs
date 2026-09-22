@@ -51,10 +51,6 @@ pub struct UserRecord {
     pub discord_global_name: Option<String>,
     /// GitHub login, set during onboarding.
     pub github_username: Option<String>,
-    /// Epitech email. `None` for `Pending` users.
-    pub email: Option<String>,
-    /// Whether the OTP has been validated.
-    pub email_verified: bool,
     /// Discord avatar URL — refreshed on each login by default.
     pub avatar_url: Option<String>,
     /// User-uploaded custom avatar in Supabase Storage.
@@ -156,30 +152,6 @@ pub struct NewUser {
     pub discord_global_name: Option<String>,
     /// Discord avatar at signup.
     pub avatar_url: Option<String>,
-}
-
-// ===========================================================================
-// Email OTP
-// ===========================================================================
-
-/// Row of `email_otps` — one outstanding code per user at most.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "server", derive(sqlx::FromRow))]
-pub struct EmailOtpRecord {
-    /// Primary key.
-    pub id: Uuid,
-    /// Owning user.
-    pub user_id: Uuid,
-    /// `@epitech.eu` email this code was issued for.
-    pub email: String,
-    /// Argon2 hash of the 6-digit code (never store the plaintext).
-    pub code_hash: String,
-    /// When the code expires.
-    pub expires_at: Timestamp,
-    /// Number of failed attempts so far.
-    pub attempts: i32,
-    /// Issued-at.
-    pub created_at: Timestamp,
 }
 
 // ===========================================================================

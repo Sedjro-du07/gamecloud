@@ -221,7 +221,7 @@ fn HeaderAction(
             {move || {
                 me.get()
                     .map(|result| match result.ok().flatten() {
-                        Some(user) if user.email_verified => {
+                        Some(user) if user.is_member => {
                             view! {
                                 <Button
                                     kind=ButtonKind::Primary
@@ -235,8 +235,8 @@ fn HeaderAction(
                         }
                         Some(_) => {
                             view! {
-                                <ButtonLink href="/onboarding/email" icon=IconName::Envelope>
-                                    "Vérifier mon adresse pour proposer"
+                                <ButtonLink href="/tests" icon=IconName::GraduationCap>
+                                    "Passer le test d'entrée pour proposer"
                                 </ButtonLink>
                             }
                                 .into_any()
@@ -302,7 +302,7 @@ pub fn ResourcesPage() -> impl IntoView {
                 {move || {
                     me.get()
                         .map(|result| match result.ok().flatten() {
-                            Some(user) if user.email_verified => view! { <ResourceList items kind on_changed /> }.into_any(),
+                            Some(user) if user.is_member => view! { <ResourceList items kind on_changed /> }.into_any(),
                             _ => view! { <MembersOnlyState what="voir la bibliothèque de l'association" /> }.into_any(),
                         })
                 }}

@@ -13,8 +13,152 @@ use crate::{
         FormActions, IconName, ListRow, Notice, NoticeKind, Page, PageHeader, Pattern, RowText,
         RowsSkeleton, Section,
     },
-    server_fns::{appoint_track_role, get_audit, grant_xp, open_quest},
+    api::DirectoryEntry,
+    server_fns::{
+        appoint_bureau, appoint_track_role, get_audit, get_directory, grant_xp, open_quest,
+    },
 };
+
+/// Everybody on the server, loaded once for the whole page.
+type Directory = Resource<Result<Vec<DirectoryEntry>, ServerFnError>>;
+
+/// The id of the `<datalist>` both appointment forms suggest names from.
+const MEMBERS_LIST: &str = "membres-du-serveur";
+
+/// Name suggestions for the appointment forms: every human on the
+/// Discord server, whether or not they have opened the platform.
+///
+/// A `<datalist>` rather than a `<select>` because thirty-odd names in a
+/// drop-down is a scroll, while typing three letters narrows it — and
+/// the field still accepts a name that is not in the list, which the
+/// server resolves against Discord itself.
+#[component]
+fn MemberSuggestions(directory: Directory) -> impl IntoView {
+    view! {
+        <datalist id=MEMBERS_LIST>
+            <Suspense fallback=|| ()>
+                {move || directory.get().and_then(Result::ok).map(|people| {
+                    people.into_iter().map(|p| {
+                        let label = if p.display_name == p.username {
+                            p.username.clone()
+                        } else {
+                            format!("{} ({})", p.display_name, p.username)
+                        };
+                        view! { <option value=p.username>{label}</option> }
+                    }).collect_view()
+                })}
+            </Suspense>
+        </datalist>
+    }
+}
+
+/// Every office, gamified title first, with the plain name beside it.
+fn office_choices() -> Vec<(&'static str, String)> {
+    gamecloud_shared::roles::BureauRole::ALL
+        .iter()
+        .map(|b| (b.as_str(), format!("{} — {}", b.title(), b.plain())))
+        .collect()
+}
+
+/// Who holds which office, and the form to change it.
+///
+/// Appointing here is the whole procedure: the member is told privately,
+/// their Discord role follows through the bot, and the rights the office
+/// opens appear on their profile at their next page load.
+#[component]
+fn OfficesPanel(directory: Directory) -> impl IntoView {
+    let (member, set_member) = signal(String::new());
+    let (office, set_office) = signal("Treasurer".to_string());
+    let (notice, set_notice) = signal(Outcome::None);
+    // `true` adds the office on top of any others, `false` removes just
+    // this one: a member may hold several, so neither is a replacement.
+    let appoint = Action::new(move |(m, o, add): &(String, String, bool)| {
+        let (m, o, add) = (m.clone(), o.clone(), *add);
+        async move { appoint_bureau(m, o, add).await }
+    });
+    Effect::new(move |_| {
+        if let Some(result) = appoint.value().get() {
+            set_notice.set(Some(match result {
+                Ok(done) => {
+                    set_member.set(String::new());
+                    directory.refetch();
+                    Ok(done)
+                }
+                Err(e) => Err(e.to_string()),
+            }));
+        }
+    });
+
+    view! {
+        <Section title="Offices du Bureau"
+            lead="Une personne peut cumuler plusieurs offices. Nommer ici suffit : elle est prévenue en privé, ses rôles Discord suivent, et ce que ses offices lui ouvrent apparaît sur son profil.">
+            {move || outcome_notice(notice.get())}
+            <Form on:submit=move |ev| {
+                ev.prevent_default();
+                appoint.dispatch((member.get(), office.get(), true));
+            }>
+                <Field id="office-membre" label="Membre (pseudo Discord)" wide=true
+                    hint="N'importe qui sur le serveur, même sans s'être encore connecté à la plateforme.">
+                    <input id="office-membre" class="ui-control" type="text" required=true
+                        list=MEMBERS_LIST autocomplete="off" placeholder="Commence à taper un nom…"
+                        prop:value=move || member.get() on:input=move |ev| set_member.set(event_target_value(&ev)) />
+                </Field>
+                <Field id="office-role" label="Office" wide=true>
+                    <select id="office-role" class="ui-control"
+                        prop:value=move || office.get()
+                        on:change=move |ev| set_office.set(event_target_value(&ev))>
+                        {office_choices().into_iter().map(|(id, label)| view! { <option value=id>{label}</option> }).collect_view()}
+                    </select>
+                </Field>
+                <FormActions>
+                    <Button kind=ButtonKind::Primary button_type="submit" icon=IconName::Crown
+                        disabled=Signal::derive(move || appoint.pending().get())>
+                        {move || if appoint.pending().get() { "Envoi…" } else { "Ajouter cet office" }}
+                    </Button>
+                    <Button kind=ButtonKind::Ghost button_type="button"
+                        disabled=Signal::derive(move || appoint.pending().get() || member.get().trim().is_empty())
+                        on:click=move |_| { appoint.dispatch((member.get(), office.get(), false)); }>
+                        "Retirer cet office"
+                    </Button>
+                </FormActions>
+            </Form>
+
+            <Suspense fallback=|| view! { <RowsSkeleton rows=5 /> }>
+                {move || directory.get().map(|result| match result {
+                    Err(e) => view! {
+                        <ErrorState message=format!("Annuaire indisponible : {e}") on_retry=Callback::new(move |()| directory.refetch()) />
+                    }.into_any(),
+                    Ok(people) => {
+                        let holders: Vec<DirectoryEntry> = people
+                            .into_iter()
+                            .filter(|p| p.bureau_label.is_some() || !p.track_roles.is_empty())
+                            .collect();
+                        if holders.is_empty() {
+                            return view! { <EmptyState icon=IconName::Crown title="Personne n'a encore d'office" /> }.into_any();
+                        }
+                        view! {
+                            <DenseList label="Offices et responsabilités">
+                                {holders.into_iter().map(|p| {
+                                    let mut meta = vec![format!("@{}", p.username)];
+                                    if !p.signed_in {
+                                        meta.push("pas encore connecté·e à la plateforme".into());
+                                    }
+                                    let mut detail: Vec<String> = p.bureau_label.clone().into_iter().collect();
+                                    detail.extend(p.track_roles.iter().cloned());
+                                    view! {
+                                        <ListRow title=p.display_name meta=meta.join(" · ")>
+                                            <RowText text=detail.join(" · ") />
+                                        </ListRow>
+                                    }
+                                }).collect_view()}
+                            </DenseList>
+                        }.into_any()
+                    }
+                })}
+            </Suspense>
+        </Section>
+    }
+}
 
 /// The outcome of an action, shown above its form.
 type Outcome = Option<Result<String, String>>;
@@ -160,7 +304,7 @@ fn QuestPanel() -> impl IntoView {
 
 /// Appoint a track lead or co-lead: the two track titles XP never confers.
 #[component]
-fn AppointPanel() -> impl IntoView {
+fn AppointPanel(directory: Directory) -> impl IntoView {
     let (member, set_member) = signal(String::new());
     let (track, set_track) = signal("Engineering".to_string());
     let (role, set_role) = signal("Lead".to_string());
@@ -174,7 +318,8 @@ fn AppointPanel() -> impl IntoView {
             set_notice.set(Some(match result {
                 Ok(()) => {
                     set_member.set(String::new());
-                    Ok("Nomination enregistrée.".to_string())
+                    directory.refetch();
+                    Ok("Nomination enregistrée. La personne est prévenue et rejoint la track si elle n'y était pas.".to_string())
                 }
                 Err(e) => Err(e.to_string()),
             }));
@@ -188,8 +333,9 @@ fn AppointPanel() -> impl IntoView {
                 ev.prevent_default();
                 appoint.dispatch((member.get(), track.get(), role.get()));
             }>
-                <Field id="nomination-membre" label="Nom d'utilisateur Discord" wide=true>
-                    <input id="nomination-membre" class="ui-control" type="text" required=true placeholder="fred04"
+                <Field id="nomination-membre" label="Membre (pseudo Discord)" wide=true>
+                    <input id="nomination-membre" class="ui-control" type="text" required=true
+                        list=MEMBERS_LIST autocomplete="off" placeholder="Commence à taper un nom…"
                         prop:value=move || member.get() on:input=move |ev| set_member.set(event_target_value(&ev)) />
                 </Field>
                 <Field id="nomination-track" label="Track">
@@ -247,11 +393,14 @@ fn AuditPanel() -> impl IntoView {
 /// Bureau panel page.
 #[component]
 pub fn AdminPage() -> impl IntoView {
+    let directory: Directory = Resource::new(|| (), |()| async { get_directory().await });
     view! {
         <Page pattern=Pattern::Detail>
             <PageHeader title="Bureau" lead="Ce que seul le Bureau peut faire, et la trace que ça laisse. Chaque action est revérifiée par le serveur." />
+            <MemberSuggestions directory />
+            <OfficesPanel directory />
+            <AppointPanel directory />
             <GrantPanel />
-            <AppointPanel />
             <QuestPanel />
             <AuditPanel />
         </Page>

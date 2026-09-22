@@ -65,17 +65,6 @@ pub struct Config {
     /// Shared secret for the DraftBot → Axum sync endpoint.
     pub draftbot_api_key: String,
 
-    /// SMTP host.
-    pub smtp_host: String,
-    /// SMTP port (typically 587 with STARTTLS).
-    pub smtp_port: u16,
-    /// SMTP login.
-    pub smtp_username: String,
-    /// SMTP password (should come from a secret manager).
-    pub smtp_password: String,
-    /// `From:` header used by outgoing mail.
-    pub smtp_from: String,
-
     /// Supabase project URL (used to build presigned upload URLs).
     /// Optional in dev: file uploads are disabled when absent.
     pub supabase_url: Option<String>,
@@ -159,12 +148,6 @@ impl Config {
             draftbot_api_key: required("DRAFTBOT_API_KEY")
                 .and_then(|s| secret("DRAFTBOT_API_KEY", s))
                 .map(|b| String::from_utf8(b).unwrap_or_default())?,
-
-            smtp_host: required("SMTP_HOST")?,
-            smtp_port: parse_or("SMTP_PORT", 587_u16)?,
-            smtp_username: required("SMTP_USERNAME")?,
-            smtp_password: required("SMTP_PASSWORD")?,
-            smtp_from: required("SMTP_FROM")?,
 
             supabase_url: optional("SUPABASE_URL"),
             supabase_service_key: optional("SUPABASE_SERVICE_KEY"),

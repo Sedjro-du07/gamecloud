@@ -222,13 +222,18 @@ pub async fn sync_all(state: &BotState, http: &Http) {
     let (bureau, access) = bureau_roles(http, guild).await;
     match fetch_offices(state.pool()).await {
         Ok(rows) => {
-            for (discord_id, office) in rows {
+            for (discord_id, offices) in rows {
                 let Ok(raw) = discord_id.parse::<u64>() else {
                     continue;
                 };
+                // Every office held gets its role — a Secretary who is
+                // also Treasurer wears both — plus the one role that opens
+                // the Bureau's channels.
                 let mut wanted = HashSet::new();
-                if let Some(office) = office.as_deref().and_then(BureauRole::parse) {
+                for office in offices.iter().filter_map(|o| BureauRole::parse(o)) {
                     wanted.insert(office.title().to_string());
+                }
+                if !wanted.is_empty() {
                     if let Some(access) = &access {
                         wanted.insert(access.clone());
                     }
@@ -271,9 +276,9 @@ async fn bureau_roles(http: &Http, guild: GuildId) -> (HashMap<String, RoleId>, 
     (map, access)
 }
 
-/// Every platform account and the office it holds, if any.
-async fn fetch_offices(pool: &PgPool) -> sqlx::Result<Vec<(String, Option<String>)>> {
-    sqlx::query_as("SELECT discord_id, bureau_role FROM users")
+/// Every platform account and the offices it holds.
+async fn fetch_offices(pool: &PgPool) -> sqlx::Result<Vec<(String, Vec<String>)>> {
+    sqlx::query_as("SELECT discord_id, offices FROM users")
         .fetch_all(pool)
         .await
 }
@@ -299,38 +304,35 @@ async fn active_tracks(pool: &PgPool, discord_id: &str) -> sqlx::Result<HashSet<
         .collect())
 }
 
-/// Every platform account and the member title Discord should show.
+/// Every member of the association and the title Discord should show.
 ///
-/// A verified member shows the rank the platform holds. An account that
-/// has not verified its email yet — a Bureau member created ahead of their
-/// first login, say — is gated on the platform, but the title is earned
-/// by progression on the server: with XP it shows the title that XP is
-/// worth, and without any it shows nothing. Email verification gates
-/// platform rights, not recognition.
+/// Members are accounts that are not candidates — on the server,
+/// holding an office, or admitted. The title follows lifetime XP with
+/// `Initiate` as the floor, exactly as the platform computes it.
+///
+/// This used to split on `email_verified`: verified accounts showed the
+/// stored rank, unverified ones a recomputation, and unverified accounts
+/// with no XP got no title at all. The mail no longer decides anything,
+/// so being on the server is enough to stand on the ladder.
 async fn fetch_ranked_members(pool: &PgPool) -> sqlx::Result<Vec<(String, GlobalRank)>> {
-    let rows: Vec<(String, String, bool, i64)> = sqlx::query_as(
-        r#"
-        SELECT discord_id, global_rank, email_verified, xp_total
-          FROM users
-         WHERE email_verified OR xp_total > 0
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(String, i64)> =
+        sqlx::query_as("SELECT discord_id, xp_total FROM users WHERE NOT candidate")
+            .fetch_all(pool)
+            .await?;
 
     Ok(rows
         .into_iter()
-        .map(|(id, rank, verified, xp)| (id, discord_title(&rank, verified, xp)))
+        .map(|(id, xp)| (id, discord_title(xp)))
         .collect())
 }
 
 /// The member title shown on Discord for an account.
-fn discord_title(stored: &str, verified: bool, xp_total: i64) -> GlobalRank {
-    if verified {
-        GlobalRank::parse(stored)
-    } else {
-        GlobalRank::from_xp(xp_total).max(GlobalRank::Initiate)
-    }
+///
+/// Derived from XP rather than read from the stored column, so the
+/// Discord title cannot drift from the XP even if a stored rank is ever
+/// stale.
+fn discord_title(xp_total: i64) -> GlobalRank {
+    GlobalRank::from_xp(xp_total).max(GlobalRank::Initiate)
 }
 
 #[cfg(test)]
@@ -340,15 +342,18 @@ mod title_tests {
     use super::discord_title;
 
     #[test]
-    fn an_unverified_account_shows_the_title_its_xp_is_worth() {
-        // Fred: created ahead of his first login, 15 344 XP from Kumo.
-        assert_eq!(discord_title("Pending", false, 15_344), GlobalRank::Legend);
+    fn the_title_is_what_the_xp_is_worth() {
+        // Fred: 14 844 XP, and for days shown as `Pending` because his
+        // mailbox was unverified.
+        assert_eq!(discord_title(14_844), GlobalRank::Legend);
+        assert_eq!(discord_title(7_830), GlobalRank::Veteran);
     }
 
     #[test]
-    fn a_verified_member_shows_the_platform_rank() {
-        assert_eq!(discord_title("Visitor", true, 15_344), GlobalRank::Visitor);
-        assert_eq!(discord_title("Veteran", true, 7_830), GlobalRank::Veteran);
+    fn a_member_with_no_xp_still_holds_the_first_title() {
+        // Being on the server is membership: nobody sits below the
+        // ladder, and nobody is left without a title.
+        assert_eq!(discord_title(0), GlobalRank::Initiate);
     }
 }
 

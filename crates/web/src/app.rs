@@ -3,7 +3,7 @@
 use leptos::prelude::*;
 use leptos_meta::{provide_meta_context, Link, Meta, MetaTags, Stylesheet, Title};
 use leptos_router::{
-    components::{Route, Router, Routes},
+    components::{Redirect, Route, Router, Routes},
     ParamSegment, StaticSegment,
 };
 
@@ -20,7 +20,6 @@ use crate::{
         kumo::KumoPage,
         new_project::NewProjectPage,
         leaderboard::LeaderboardPage,
-        onboarding::{OnboardingEmailPage, OnboardingVerifyPage},
         profile::ProfilePage,
         project_detail::ProjectDetailPage,
         projects::ProjectsPage,
@@ -130,10 +129,14 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("tracks") view=TrackPickerPage />
                     <Route path=(StaticSegment("tracks"), ParamSegment("id"))
                            view=TrackDetailPage />
+                    // There is no email step any more: signing in with
+                    // Discord is the whole of it. These two addresses are
+                    // kept only so an old link or bookmark lands on the
+                    // profile instead of a 404.
                     <Route path=(StaticSegment("onboarding"), StaticSegment("email"))
-                           view=OnboardingEmailPage />
+                           view=|| view! { <Redirect path="/profile" /> } />
                     <Route path=(StaticSegment("onboarding"), StaticSegment("verify"))
-                           view=OnboardingVerifyPage />
+                           view=|| view! { <Redirect path="/profile" /> } />
                     <Route path=(StaticSegment("onboarding"), StaticSegment("tracks"))
                            view=TrackPickerPage />
                 </Routes>

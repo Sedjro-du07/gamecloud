@@ -14,8 +14,8 @@ pub async fn leaderboard(
     if !super::is_registered(ctx.data().pool(), &ctx.author().id.to_string()).await {
         ctx.send(
             poise::CreateReply::default().ephemeral(true).content(
-                "Le classement est réservé aux membres inscrits : connecte-toi sur \
-                 GameCloud OS avec Discord et vérifie ton adresse Epitech.",
+                "Le classement est réservé aux membres de l'association : connecte-toi \
+                 une fois sur GameCloud OS avec Discord.",
             ),
         )
         .await?;
@@ -49,7 +49,7 @@ async fn global_leaderboard(ctx: &Context<'_>) -> Result<String, anyhow::Error> 
         r#"
         SELECT discord_id, xp_total, global_rank
         FROM users
-        WHERE email_verified = TRUE
+        WHERE NOT candidate
         ORDER BY xp_total DESC
         LIMIT 10
         "#,

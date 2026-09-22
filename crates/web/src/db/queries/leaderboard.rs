@@ -35,8 +35,6 @@ pub struct LeaderboardRow {
     pub level: i32,
     /// Total XP, whatever the scope — what the member title is worth.
     pub total_xp: i64,
-    /// Whether the member has verified their email.
-    pub email_verified: bool,
     /// Current streak.
     pub streak_days: i32,
 }
@@ -55,10 +53,9 @@ pub async fn all_time(pool: &PgPool, limit: i64) -> WebResult<Vec<LeaderboardRow
                u.global_rank,
                u.level,
                u.xp_total AS total_xp,
-               u.email_verified,
                u.streak_days
           FROM users u
-         WHERE (u.email_verified OR u.xp_total > 0)
+         WHERE (NOT u.candidate)
          ORDER BY u.xp_total DESC, u.created_at ASC
          LIMIT $1
         "#,
@@ -90,11 +87,10 @@ pub async fn by_season(
                u.global_rank,
                u.level,
                u.xp_total AS total_xp,
-               u.email_verified,
                u.streak_days
           FROM users u
           JOIN xp_logs x ON x.user_id = u.id AND x.season_id = $1
-         WHERE (u.email_verified OR u.xp_total > 0)
+         WHERE (NOT u.candidate)
          GROUP BY u.id
         HAVING SUM(x.amount) > 0
          ORDER BY xp DESC, u.created_at ASC
@@ -122,11 +118,10 @@ pub async fn by_track(pool: &PgPool, track: &str, limit: i64) -> WebResult<Vec<L
                m.track_role AS global_rank,
                u.level,
                u.xp_total AS total_xp,
-               u.email_verified,
                u.streak_days
           FROM track_memberships m
           JOIN users u ON u.id = m.user_id
-         WHERE m.track = $1 AND m.left_at IS NULL AND (u.email_verified OR u.xp_total > 0)
+         WHERE m.track = $1 AND m.left_at IS NULL AND (NOT u.candidate)
          ORDER BY m.track_xp DESC, m.joined_at ASC
          LIMIT $2
         "#,
@@ -150,7 +145,7 @@ pub async fn position_of(pool: &PgPool, user_id: Uuid) -> WebResult<Option<i64>>
         SELECT position FROM (
             SELECT id, ROW_NUMBER() OVER (ORDER BY xp_total DESC, created_at ASC) AS position
               FROM users
-             WHERE (email_verified OR xp_total > 0)
+             WHERE (NOT candidate)
         ) ranked
         WHERE ranked.id = $1
         "#,

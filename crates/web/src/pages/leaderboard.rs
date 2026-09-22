@@ -81,7 +81,7 @@ fn Standings(
                                     <EmptyState
                                         icon=IconName::LockSimple
                                         title="Le classement est réservé aux membres inscrits"
-                                        body="Connecte-toi et vérifie ton adresse Epitech pour le voir."
+                                        body="Connecte-toi avec Discord pour le voir."
                                     >
                                         <Cluster>
                                             <ButtonLink
@@ -92,9 +92,6 @@ fn Standings(
                                                 hide_label=true
                                             >
                                                 "Se connecter avec Discord"
-                                            </ButtonLink>
-                                            <ButtonLink kind=ButtonKind::Ghost href="/onboarding/email" icon=IconName::Envelope>
-                                                "Vérifier mon adresse"
                                             </ButtonLink>
                                         </Cluster>
                                     </EmptyState>

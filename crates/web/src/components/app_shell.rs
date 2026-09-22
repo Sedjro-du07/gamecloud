@@ -72,7 +72,7 @@ fn sections(me: Option<&MeView>) -> Vec<Section> {
     }
     // Projects, shares, the leaderboard and the library are the
     // association's own: a visitor is not shown the door to them.
-    if me.is_some_and(|u| u.email_verified) {
+    if me.is_some_and(|u| u.is_member) {
         association.extend([PROJECTS, SHARES, LEADERBOARD, RESOURCES]);
     }
     if me.map_or(true, |u| u.can_see_tests) {
@@ -441,7 +441,7 @@ mod tests {
 
     fn member() -> MeView {
         MeView {
-            email_verified: true,
+            is_member: true,
             ..MeView::default()
         }
     }

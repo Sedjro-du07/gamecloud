@@ -239,7 +239,7 @@ pub async fn grant_in_tx(
 
     let xp_after = (member.xp_total + i64::from(global_delta)).max(0);
     let rank_before = GlobalRank::parse(&member.global_rank);
-    let rank_after = next_rank(rank_before, xp_after, member.email_verified);
+    let rank_after = next_rank(xp_after);
     let level_before = member.level;
     let level_after = level_for_xp(xp_after);
 
@@ -263,7 +263,6 @@ pub async fn grant_in_tx(
         tx,
         request,
         season_id,
-        member.email_verified,
         xp_after,
         rank_after,
         level_after,
@@ -362,7 +361,6 @@ async fn settle_quests(
     tx: &mut Transaction<'_, Postgres>,
     request: &XpGrant<'_>,
     season_id: Option<Uuid>,
-    email_verified: bool,
     xp_after: i64,
     rank_after: GlobalRank,
     level_after: i32,
@@ -380,7 +378,7 @@ async fn settle_quests(
     }
 
     let xp = xp_after + xp_from_quests;
-    let rank = next_rank(rank_after, xp, email_verified);
+    let rank = next_rank(xp);
     let level = level_for_xp(xp);
 
     sqlx::query("UPDATE users SET xp_total = $2, global_rank = $3, level = $4 WHERE id = $1")
@@ -488,7 +486,6 @@ struct MemberRow {
     xp_total: i64,
     level: i32,
     global_rank: String,
-    email_verified: bool,
     streak_days: i32,
     longest_streak: i32,
     last_streak_day: Option<NaiveDate>,
@@ -516,7 +513,6 @@ async fn load_member(
                u.xp_total,
                u.level,
                u.global_rank,
-               u.email_verified,
                u.streak_days,
                u.longest_streak,
                u.last_streak_day,
@@ -563,19 +559,20 @@ impl std::ops::Deref for MemberSnapshot {
 /// The three lowest rungs are *not* XP-derived and must never be
 /// awarded by this function:
 ///
-/// - `Pending` — no verified email. XP cannot move the rank at all.
-/// - `Visitor` — verified, but onboarding (track selection) not done.
-/// - `Initiate` — onboarding complete; this is the floor of the XP
-///   ladder.
+/// The rank is a pure function of total XP, with `Initiate` as the
+/// floor — being on the Discord server is the whole membership test.
 ///
-/// The pre-audit SQL `CASE` skipped `Initiate` entirely, so a Visitor
-/// crossing 150 XP jumped straight to `Apprentice`. Deferring to
-/// [`GlobalRank::from_xp`] restores the one-source-of-truth rule the
-/// shared crate documents.
-fn next_rank(current: GlobalRank, xp_total: i64, email_verified: bool) -> GlobalRank {
-    if !email_verified || current == GlobalRank::Pending || current == GlobalRank::Visitor {
-        return current;
-    }
+/// It used to take an `email_verified` flag and refuse to move the rank
+/// without one. That turned the ladder into a trap: XP accumulated
+/// against a rank that could not rise, and one member reached 14 844 XP
+/// while still displayed as `⏳ L'Aspirant`, unable to create a project
+/// or use the office they had been given. Two CHECK constraints enforced
+/// the same thing in the database; migration 0025 removed them.
+///
+/// `current` is no longer consulted either: a rank derived from XP
+/// cannot disagree with itself, and reading the stored value was how the
+/// old `Pending` / `Visitor` states became impossible to leave.
+fn next_rank(xp_total: i64) -> GlobalRank {
     GlobalRank::from_xp(xp_total).max(GlobalRank::Initiate)
 }
 
@@ -603,14 +600,13 @@ pub async fn credit_legacy_xp(pool: &PgPool, user_id: Uuid, discord_id: &str) ->
         return Ok(());
     };
 
-    let (total, rank, verified): (i64, String, bool) = sqlx::query_as(
-        "SELECT xp_total, global_rank, email_verified FROM users WHERE id = $1 FOR UPDATE",
-    )
-    .bind(user_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    let total: i64 =
+        sqlx::query_scalar("SELECT xp_total FROM users WHERE id = $1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?;
     let total = total + i64::from(xp);
-    let rank = next_rank(GlobalRank::parse(&rank), total, verified);
+    let rank = next_rank(total);
 
     sqlx::query("UPDATE users SET xp_total = $2, level = $3, global_rank = $4 WHERE id = $1")
         .bind(user_id)
@@ -1047,45 +1043,48 @@ mod tests {
     }
 
     #[test]
-    fn unverified_members_never_change_rank() {
-        assert_eq!(
-            next_rank(GlobalRank::Pending, 999_999, false),
-            GlobalRank::Pending
-        );
-        assert_eq!(
-            next_rank(GlobalRank::Initiate, 999_999, false),
-            GlobalRank::Initiate
-        );
+    fn the_mailbox_no_longer_holds_the_ladder_shut() {
+        // The whole point of migration 0025. Before it, an unverified
+        // member's rank could not move at all, so XP piled up against a
+        // frozen title — one real member reached 14 844 XP still shown
+        // as `⏳ L'Aspirant`.
+        assert_eq!(next_rank(14_844), GlobalRank::Legend);
+        assert_eq!(next_rank(999_999), GlobalRank::Myth);
     }
 
     #[test]
-    fn visitors_are_gated_on_onboarding_not_xp() {
-        // A verified member who has not picked a track stays a Visitor
-        // however much XP they accumulate.
-        assert_eq!(
-            next_rank(GlobalRank::Visitor, 10_000, true),
-            GlobalRank::Visitor
-        );
+    fn initiate_is_the_floor_and_is_not_skipped() {
+        // The audit's finding: the old SQL CASE jumped straight to
+        // Apprentice at 150 XP and never assigned Initiate at all.
+        assert_eq!(next_rank(0), GlobalRank::Initiate);
+        assert_eq!(next_rank(149), GlobalRank::Initiate);
+        assert_eq!(next_rank(150), GlobalRank::Apprentice);
     }
 
     #[test]
-    fn initiate_is_not_skipped() {
-        // The audit's finding: the old SQL CASE jumped Visitor -> Apprentice
-        // at 150 XP and never assigned Initiate at all.
-        assert_eq!(next_rank(GlobalRank::Initiate, 0, true), GlobalRank::Initiate);
-        assert_eq!(
-            next_rank(GlobalRank::Initiate, 149, true),
-            GlobalRank::Initiate
-        );
-        assert_eq!(
-            next_rank(GlobalRank::Initiate, 150, true),
-            GlobalRank::Apprentice
-        );
+    fn a_member_with_no_xp_still_stands_on_the_ladder() {
+        // Being on the Discord server is the membership test, so nobody
+        // sits below `Initiate` waiting to be let in.
+        assert_eq!(next_rank(0), GlobalRank::Initiate);
+        assert!(next_rank(0) > GlobalRank::Visitor);
+        assert!(next_rank(0) > GlobalRank::Pending);
     }
 
     #[test]
-    fn rank_never_regresses_below_initiate_for_an_onboarded_member() {
-        assert_eq!(next_rank(GlobalRank::Legend, 0, true), GlobalRank::Initiate);
+    fn every_threshold_lands_on_the_rank_it_names() {
+        for (xp, want) in [
+            (150, GlobalRank::Apprentice),
+            (400, GlobalRank::JuniorDev),
+            (1_000, GlobalRank::SeniorDev),
+            (2_500, GlobalRank::Expert),
+            (5_000, GlobalRank::Veteran),
+            (10_000, GlobalRank::Legend),
+            (25_000, GlobalRank::Myth),
+        ] {
+            assert_eq!(next_rank(xp), want, "{xp} XP");
+            // And one XP short of the threshold is still the rank below.
+            assert!(next_rank(xp - 1) < want, "{xp} XP minus one");
+        }
     }
 
     #[test]

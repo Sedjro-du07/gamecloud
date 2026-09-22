@@ -51,7 +51,7 @@ fn access_button(href: String, is_link: bool, can_download: bool, signed_in: boo
         .into_any()
     } else if signed_in {
         view! {
-            <ButtonLink href="/onboarding/email" icon=IconName::Envelope>"Vérifier mon adresse pour télécharger"</ButtonLink>
+            <ButtonLink href="/tests" icon=IconName::GraduationCap>"Passer le test d'entrée pour télécharger"</ButtonLink>
         }
         .into_any()
     } else {
@@ -242,7 +242,7 @@ pub fn SharesPage() -> impl IntoView {
                             }
                             .into_any()
                         } else if view.signed_in {
-                            view! { <ButtonLink href="/onboarding/email" icon=IconName::Envelope>"Vérifier mon adresse pour partager"</ButtonLink> }.into_any()
+                            view! { <ButtonLink href="/tests" icon=IconName::GraduationCap>"Passer le test d'entrée pour partager"</ButtonLink> }.into_any()
                         } else {
                             view! {
                                 <ButtonLink href="/api/auth/login" external=true icon=IconName::DiscordLogo hide_label=true>
@@ -269,7 +269,7 @@ pub fn SharesPage() -> impl IntoView {
                 {move || {
                     me.get()
                         .map(|result| match result.ok().flatten() {
-                            Some(user) if user.email_verified => view! { <ShareList shares filter on_changed /> }.into_any(),
+                            Some(user) if user.is_member => view! { <ShareList shares filter on_changed /> }.into_any(),
                             _ => view! { <MembersOnlyState what="voir ce que les membres partagent" /> }.into_any(),
                         })
                 }}

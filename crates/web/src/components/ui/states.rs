@@ -111,7 +111,7 @@ pub fn MembersOnlyState(
             <Icon name=IconName::LockSimple size=IconSize::Medium />
             <p class="ui-state__title">"Réservé aux membres de l'association"</p>
             <p class="ui-meta">
-                {format!("Il faut être membre pour {what}. Déjà sur le serveur Discord de l'association ? Connecte-toi, puis vérifie ton adresse Epitech. Sinon, le test d'entrée ouvre la porte.")}
+                {format!("Il faut être membre pour {what}. Déjà sur le serveur Discord de l'association ? Connecte-toi avec Discord, c'est tout. Sinon, le test d'entrée ouvre la porte.")}
             </p>
             <div class="ui-cluster">
                 <ButtonLink
@@ -122,9 +122,6 @@ pub fn MembersOnlyState(
                     hide_label=true
                 >
                     "Se connecter avec Discord"
-                </ButtonLink>
-                <ButtonLink href="/onboarding/email" icon=IconName::Envelope>
-                    "Vérifier mon adresse"
                 </ButtonLink>
                 <ButtonLink kind=ButtonKind::Ghost href="/tests" icon=IconName::GraduationCap>
                     "Passer le test d'entrée"

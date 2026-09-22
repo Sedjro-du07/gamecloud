@@ -52,10 +52,6 @@ pub struct ProfileResponse {
     pub display_name: String,
     /// Linked GitHub login.
     pub github_username: Option<String>,
-    /// Verified Epitech address; only in the member's own profile.
-    pub email: Option<String>,
-    /// Whether the address is verified.
-    pub email_verified: bool,
     /// Avatar.
     pub avatar_url: Option<String>,
     /// Total XP.
@@ -88,8 +84,6 @@ pub(crate) async fn build_profile(state: &AppState, user_id: Uuid) -> WebResult<
     Ok(ProfileResponse {
         display_name: record.display_name(),
         github_username: record.github_username,
-        email: record.email,
-        email_verified: record.email_verified,
         avatar_url: record.avatar_custom_url.or(record.avatar_url),
         xp_total: record.xp_total,
         level: record.level,
@@ -109,15 +103,11 @@ async fn me(State(state): State<AppState>, user: CurrentUser) -> WebResult<Json<
 
 async fn public_profile(
     State(state): State<AppState>,
-    user: CurrentUser,
+    // Required only so that profiles are for signed-in members.
+    _viewer: CurrentUser,
     Path(id): Path<Uuid>,
 ) -> WebResult<Json<ProfileResponse>> {
-    let mut profile = build_profile(&state, id).await?;
-    // Another member's address is theirs to share, not the platform's.
-    if id != user.id {
-        profile.email = None;
-    }
-    Ok(Json(profile))
+    Ok(Json(build_profile(&state, id).await?))
 }
 
 async fn update_me(
@@ -196,9 +186,9 @@ async fn join_track(
     user: CurrentUser,
     Json(body): Json<JoinTrackBody>,
 ) -> WebResult<Json<tracks::MembershipView>> {
-    if !user.record.email_verified {
+    if !crate::db::queries::users::is_member(state.pool(), user.id).await? {
         return Err(WebError::Domain(
-            gamecloud_shared::DomainError::EmailNotVerified,
+            gamecloud_shared::DomainError::NotAMember,
         ));
     }
 
@@ -286,9 +276,9 @@ async fn leaderboard_route(
     user: CurrentUser,
     Query(q): Query<LeaderboardQuery>,
 ) -> WebResult<Json<LeaderboardResponse>> {
-    if !user.record.email_verified {
+    if !crate::db::queries::users::is_member(state.pool(), user.id).await? {
         return Err(WebError::Domain(
-            gamecloud_shared::DomainError::EmailNotVerified,
+            gamecloud_shared::DomainError::NotAMember,
         ));
     }
     let limit = q.limit.unwrap_or(20);

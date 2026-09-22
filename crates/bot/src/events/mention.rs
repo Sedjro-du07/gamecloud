@@ -110,8 +110,8 @@ pub async fn on_message(ctx: &Context, msg: &Message, state: &BotState) {
                 CreateEmbed::new()
                     .title("🏅 Classement réservé aux membres")
                     .description(
-                        "Connecte-toi sur GameCloud OS avec Discord et vérifie ton adresse \
-                         Epitech pour voir le classement.",
+                        "Connecte-toi une fois sur GameCloud OS avec Discord pour voir le \
+                         classement.",
                     )
                     .color(0xff_aa00)
             }

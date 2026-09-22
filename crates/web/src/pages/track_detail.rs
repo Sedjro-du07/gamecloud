@@ -197,7 +197,7 @@ pub fn TrackDetailPage() -> impl IntoView {
                     .get()
                     .and_then(Result::ok)
                     .flatten()
-                    .is_some_and(|u| u.email_verified);
+                    .is_some_and(|u| u.is_member);
                 if !member {
                     return view! {
                         <Page pattern=Pattern::Detail>

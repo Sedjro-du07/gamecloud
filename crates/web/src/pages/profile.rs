@@ -14,10 +14,10 @@ use crate::{
         vocab::{badge_icon, plain_title, role_title, track_icon_by_id, track_name},
         xp::{rank_percent, streak_caption, xp_caption},
         Avatar, AvatarSize, Button, ButtonLink, Cluster, DenseList, EmptyState, ErrorState, Fact,
-        Facts, Icon, IconName, ListRow, Notice, Page, PageHeader, PageSkeleton, Pattern, RowValue,
+        Facts, Icon, IconName, ListRow, Page, PageHeader, PageSkeleton, Pattern, RowValue,
         Section, SignInState, Stack, StreakMarks, Tag, TagKind, TitleLadder, XpProgress,
     },
-    server_fns::get_sheet,
+    server_fns::{get_my_rights, get_sheet},
 };
 
 /// The member's tracks, each with the bar to its next title.
@@ -56,6 +56,38 @@ fn Tracks(
         </DenseList>
     }
     .into_any()
+}
+
+/// What the member may do on the platform, and what grants each right.
+///
+/// Asked of the server rather than worked out here, and computed there
+/// from the same permission matrix every action is checked against — so
+/// this list cannot promise something the platform then refuses. An
+/// appointment shows up on the member's next page load.
+#[component]
+fn Rights() -> impl IntoView {
+    let rights = Resource::new(|| (), |()| async { get_my_rights().await });
+    view! {
+        <Suspense fallback=|| ()>
+            {move || rights.get().and_then(Result::ok).map(|list| {
+                if list.is_empty() {
+                    return view! {
+                        <EmptyState icon=IconName::Compass
+                            title="Pas de responsabilité pour l'instant"
+                            body="Tu peux déjà tout consulter, rejoindre des tracks, scanner les présences et gagner de l'XP. Les droits de création et de gestion viennent avec le rang, une nomination ou un office." />
+                    }.into_any();
+                }
+                view! {
+                    <DenseList label="Mes droits">
+                        {list.into_iter().map(|r| view! {
+                            <ListRow lead=view! { <Icon name=IconName::CheckCircle /> }.into_any()
+                                title=r.what meta=r.because />
+                        }).collect_view()}
+                    </DenseList>
+                }.into_any()
+            })}
+        </Suspense>
+    }
 }
 
 /// Every badge, earned ones first; the others show what is worth doing.
@@ -128,7 +160,7 @@ fn SheetBody(
 ) -> impl IntoView {
     let me = sheet.me;
     // Every title held, most important first: office, member title, tracks.
-    let office = me.bureau_title.as_deref().map(|o| plain_title(o).to_string());
+    let offices: Vec<String> = me.office_titles.iter().map(|o| plain_title(o).to_string()).collect();
     let title = plain_title(&me.rank_title).to_string();
     let track_titles: Vec<String> = sheet
         .tracks
@@ -136,29 +168,22 @@ fn SheetBody(
         .map(|t| format!("{} · {}", role_title(&t.role), track_name(&t.id)))
         .collect();
     let next_title = me.next_rank_title.as_deref().map_or_else(|| "—".to_string(), |t| plain_title(t).to_string());
-    let place = me.email_verified.then_some(me.leaderboard_position).flatten().map(|p| format!("{p}ᵉ"));
+    let place = me.is_member.then_some(me.leaderboard_position).flatten().map(|p| format!("{p}ᵉ"));
     let held = sheet.badges.iter().filter(|b| b.held).count();
     let total = sheet.badges.len();
     let rank = GlobalRank::parse(&me.global_rank);
     let (percent, caption, streak) = (rank_percent(&me), xp_caption(&me), streak_caption(&me));
     let (name, avatar, total_xp, streak_days) = (me.display_name.clone(), me.avatar_url.clone(), format_xp(me.xp_total), me.streak_days);
-    let verified = me.email_verified;
 
     view! {
         <Page pattern=Pattern::Detail>
             <PageHeader title=name.clone() kicker="Profil" lead="Ton parcours dans l'association, prêt à joindre à une candidature.">
                 <Button icon=IconName::Printer attr:onclick="window.print()">"Imprimer ou enregistrer en PDF"</Button>
             </PageHeader>
-            {(!verified).then(|| view! {
-                <Notice>
-                    <span>"Ton adresse Epitech n'est pas encore vérifiée."</span>
-                    <ButtonLink href="/onboarding/email" external=true trailing_icon=IconName::ArrowRight>"Vérifier"</ButtonLink>
-                </Notice>
-            })}
             <Stack>
                 <Cluster>
                     <Avatar name src=avatar size=AvatarSize::Large />
-                    {office.map(|o| view! { <Tag>{o}</Tag> })}
+                    {offices.into_iter().map(|o| view! { <Tag>{o}</Tag> }).collect_view()}
                     <Tag kind=TagKind::Accent>{title}</Tag>
                     {track_titles.into_iter().map(|t| view! { <Tag>{t}</Tag> }).collect_view()}
                 </Cluster>
@@ -173,6 +198,7 @@ fn SheetBody(
                     {place.map(|p| view! { <Fact label="Classement" value=p /> })}
                 </Facts>
             </Stack>
+            <Section title="Mes droits" lead="Ce que tu peux faire sur la plateforme, et ce qui te le donne."><Rights /></Section>
             <Section title="Tracks"><Tracks tracks=sheet.tracks /></Section>
             <Section title="Badges" meta=format!("{held} / {total}")><Badges badges=sheet.badges /></Section>
             <Section title="Activité récente"><History entries=sheet.recent_xp /></Section>

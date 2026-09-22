@@ -259,7 +259,8 @@ async fn subject(
         return Ok(Redirect::to("/api/auth/login").into_response());
     };
     let test = entrance::find(state.pool(), id).await?;
-    let candidate_may = !user.record.email_verified && test.closes_at > Utc::now();
+    let member = crate::db::queries::users::is_member(state.pool(), user.id).await?;
+    let candidate_may = !member && test.closes_at > Utc::now();
     if !candidate_may && !is_bureau(&state, &user).await? {
         return Err(WebError::Forbidden);
     }
@@ -286,7 +287,7 @@ async fn submit(
 ) -> Response {
     let result: WebResult<serde_json::Value> = async {
         let user = user.ok_or(WebError::Unauthorized)?;
-        if user.record.email_verified {
+        if crate::db::queries::users::is_member(state.pool(), user.id).await? {
             return Err(WebError::Validation(
                 "les tests d'entrée sont pour les candidats : tu es déjà membre".into(),
             ));

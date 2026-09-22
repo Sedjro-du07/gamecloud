@@ -74,11 +74,11 @@ fn Dashboard(
         .as_deref()
         .map_or_else(|| "—".to_string(), |t| plain_title(t).to_string());
     // Tag text is owned by the tag, so it is worked out here.
-    let office = me.bureau_title.as_deref().map(|o| plain_title(o).to_string());
+    let offices: Vec<String> = me.office_titles.iter().map(|o| plain_title(o).to_string()).collect();
     let title = plain_title(&me.rank_title).to_string();
-    // The leaderboard is for verified members; its place only shows to them.
+    // The leaderboard is for members; its place only shows to them.
     let place = me
-        .email_verified
+        .is_member
         .then_some(me.leaderboard_position)
         .flatten()
         .map(|p| format!("{p}ᵉ"));
@@ -92,7 +92,7 @@ fn Dashboard(
                 <h1 class="ui-display">{name}</h1>
                 // Every title held, most important first: office, then member title.
                 <Cluster>
-                    {office.map(|office| view! { <Tag>{office}</Tag> })}
+                    {offices.into_iter().map(|o| view! { <Tag>{o}</Tag> }).collect_view()}
                     <Tag kind=TagKind::Accent>{title}</Tag>
                 </Cluster>
             </Stack>

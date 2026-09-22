@@ -7,7 +7,6 @@ pub mod home;
 pub mod kumo;
 pub mod new_project;
 pub mod leaderboard;
-pub mod onboarding;
 pub mod profile;
 pub mod project_detail;
 pub mod projects;

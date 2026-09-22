@@ -10,7 +10,6 @@ Guide pas-à-pas pour avoir une plateforme **fonctionnelle en local** en
 - Rust stable (≥ 1.80) — `rustup default stable`
 - PostgreSQL 14+ (local, Docker, ou Supabase)
 - Un compte Discord Developer (gratuit)
-- Un compte SMTP pour envoyer les OTP (Mailgun / Brevo / Gmail App Password)
 
 ---
 
@@ -91,15 +90,10 @@ en mode "Transaction Mode" pour le DSN.
 
 ---
 
-## 5. SMTP
+## 5. Pas de mail
 
-Pour les OTP par email. Le plus simple en dev : **Mailgun sandbox**
-(gratuit, 100 mails/jour).
-
-Alternativement, **Gmail App Password** :
-1. Active 2FA sur ton compte Google
-2. Génère un App Password : https://myaccount.google.com/apppasswords
-3. Utilise `smtp.gmail.com:587` + email + app password
+La plateforme n'envoie aucun mail et ne demande aucune adresse : se
+connecter avec Discord suffit. Il n'y a rien à configurer ici.
 
 ---
 
@@ -132,11 +126,6 @@ DRAFTBOT_API_KEY=<une chaîne random partagée web/bot>
 
 GITHUB_WEBHOOK_SECRET=<random pour plus tard>
 
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=ton.email@gmail.com
-SMTP_PASSWORD=<app password>
-SMTP_FROM=GameCloud <ton.email@gmail.com>
 
 # Optionnels pour démarrer (laisse vide tant que tu n'en as pas besoin)
 SUPABASE_URL=
@@ -177,9 +166,9 @@ Si tu vois `gamecloud-web listening` dans les logs JSON, c'est bon.
    - vérifie le state (cookie CSRF)
    - échange le code contre un access_token
    - récupère ton ID Discord
-   - upsert un row `users` avec `global_rank = 'Pending'`
+   - upsert un row `users` avec `global_rank = 'Initiate'`
    - pose `gc_access` (JWT) et `gc_refresh` (token opaque) cookies
-   - **redirige vers `/onboarding/email`** (parce que tu es `Pending`)
+   - **redirige vers `/profile`** — pas d'étape de mail
 
 Si ça échoue à cette étape, regarde les logs : ils sont en JSON
 structuré et précis sur la cause (state mismatch, Discord token
@@ -187,25 +176,14 @@ exchange failed, etc.).
 
 ---
 
-## 9. Soumettre l'email + OTP
+## 9. Après la connexion
 
-Sur `/onboarding/email`, entre ton email Epitech (le format
-**`prenom.nom@epitech.eu`** avec des hyphens dans le nom est accepté
-maintenant). Soumets.
+Discord te renvoie directement sur `/profile` : il n'y a pas d'étape
+d'adresse mail. Si tu es sur le serveur Discord de l'association, tu es
+membre ; sinon la plateforme t'oriente vers le test d'entrée.
 
-- Le serveur valide le format
-- Génère un OTP, stocke son hash Argon2
-- T'envoie le code par mail
-- Te redirige vers `/onboarding/verify`
-
-Sur `/onboarding/verify`, entre les 6 chiffres reçus :
-
-- Le serveur vérifie l'Argon2
-- Met `email_verified = true` et `global_rank = 'Visitor'`
-- Te redirige vers `/profile`
-
-Tu vois ton avatar Discord, ton rang **Observateur des Ombres**, ta
-barre de XP à 0/150.
+Tu vois ton avatar Discord, ton titre **L'Initié** (ou celui que ton XP
+vaut déjà) et ta barre vers le titre suivant.
 
 ---
 
@@ -255,9 +233,7 @@ Tu dois voir ta row.
 - [ ] `cargo leptos watch` démarre sans crash
 - [ ] http://localhost:3000 affiche la home avec le titre Cyberpunk
 - [ ] Click "Connexion Discord" me redirige vers Discord (sans refresh)
-- [ ] Après autorisation, je suis sur `/onboarding/email` avec mes cookies posés
-- [ ] Soumettre mon email Epitech (avec hyphen) marche, je reçois le mail
-- [ ] OTP me passe à `Visitor`, j'arrive sur `/profile`
+- [ ] Après autorisation, j'arrive directement sur `/profile`, cookies posés
 - [ ] `/profile` affiche ma carte avec mon avatar Discord et ma XP
 - [ ] `cargo run -p gamecloud-bot` démarre, `/profil` Discord répond
 
@@ -271,21 +247,17 @@ Une fois `cargo leptos watch` et le bot lancés :
 
 1. **http://localhost:3000** → « Connexion Discord ». La redirection est
    immédiate.
-2. Soumets ton email `prenom.nom@epitech.eu`. Tu as droit à un code
-   toutes les 60 secondes, 5 au total.
-3. Tape le code reçu (ou lu dans MailHog). Tu passes `Pending` →
-   `Visitor`.
-4. **`/onboarding/tracks`** → choisis une track, et une spécialisation si
-   tu veux. Tu passes `Visitor` → `Initiate` : c'est cette étape qui te
-   met sur l'échelle d'XP. Tant qu'elle n'est pas faite, un bandeau te le
+2. Tu arrives directement sur ton profil : aucune étape de mail.
+3. **`/onboarding/tracks`** → choisis une track, et une spécialisation si
+   tu veux. Ton XP de track commence à compter. Tant qu'elle n'est pas faite, un bandeau te le
    rappelle sur toutes les pages.
-5. **`/profile`** → ta feuille de personnage : niveau, série, tracks,
+4. **`/profile`** → ta feuille de personnage : niveau, série, tracks,
    badges, historique d'XP.
-6. **`/leaderboard`** → classement de la saison, par défaut. Les onglets
+5. **`/leaderboard`** → classement de la saison, par défaut. Les onglets
    « Depuis toujours » et « Par track » sont là aussi.
-7. **`/quests`** → vide au départ. Crée-en une avec
+6. **`/quests`** → vide au départ. Crée-en une avec
    `POST /api/quests` (il faut un rôle Bureau exécutif).
-8. **`/scan`** → colle un token produit par `POST /api/qr/generate`.
+7. **`/scan`** → colle un token produit par `POST /api/qr/generate`.
    Plusieurs membres peuvent scanner le même code ; chacun une seule
    fois.
 
@@ -295,7 +267,7 @@ Le panneau admin et la création de quêtes demandent un rôle exécutif.
 En développement, le plus simple est de se l'attribuer en SQL :
 
 ```bash
-psql gamecloud_dev -c "UPDATE users SET bureau_role = 'President' WHERE email = 'prenom.nom@epitech.eu';"
+psql gamecloud_dev -c "UPDATE users SET offices = '{President}' WHERE discord_username = 'ton_pseudo_discord';"
 ```
 
 ### Annonces Discord

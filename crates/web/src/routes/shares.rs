@@ -86,8 +86,8 @@ async fn upload(
 fn form_message(e: &WebError) -> String {
     match e {
         WebError::Unauthorized => "connecte-toi pour partager".into(),
-        WebError::Domain(DomainError::EmailNotVerified) => {
-            "vérifie ton adresse Epitech avant de partager".into()
+        WebError::Domain(DomainError::NotAMember) => {
+            "le partage est réservé aux membres de l'association".into()
         }
         WebError::Validation(message) => message.clone(),
         other => {
@@ -98,8 +98,8 @@ fn form_message(e: &WebError) -> String {
 }
 
 async fn receive(state: &AppState, user: &CurrentUser, mut multipart: Multipart) -> WebResult<Uuid> {
-    if !user.record.email_verified {
-        return Err(WebError::Domain(DomainError::EmailNotVerified));
+    if !crate::db::queries::users::is_member(state.pool(), user.id).await? {
+        return Err(WebError::Domain(DomainError::NotAMember));
     }
 
     let dir = state.config().shares_dir.clone();
@@ -211,10 +211,11 @@ async fn download(
     let Some(user) = user else {
         return Ok(Redirect::to("/api/auth/login").into_response());
     };
-    // Signed in but not yet a member: send them to finish signing up
-    // rather than showing a JSON refusal in place of their download.
-    if !user.record.email_verified {
-        return Ok(Redirect::to("/onboarding/email").into_response());
+    // Signed in but not a member: a candidate, whose way in is the
+    // entrance test — sent there rather than shown a JSON refusal in
+    // place of their download.
+    if !crate::db::queries::users::is_member(state.pool(), user.id).await? {
+        return Ok(Redirect::to("/tests").into_response());
     }
 
     let share = shares::find(state.pool(), id).await?;

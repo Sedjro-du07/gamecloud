@@ -13,7 +13,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config::Config,
         db::pool,
         router,
-        services::mailer::Mailer,
         state::AppState,
     };
     use leptos::config::get_configuration;
@@ -27,10 +26,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
     let pool = pool::build(&config.database_url).await?;
     pool::migrate(&pool).await?;
-    let mailer = Mailer::new(&config)?;
 
     let leptos_options = get_configuration(None)?.leptos_options;
-    let state = AppState::new(config.clone(), pool, mailer, leptos_options);
+    let state = AppState::new(config.clone(), pool, leptos_options);
     let app = router::build(state);
 
     let addr: SocketAddr = config.bind_addr.parse()?;

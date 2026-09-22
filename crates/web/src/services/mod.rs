@@ -4,12 +4,8 @@
 //! variables directly; the `Config` is passed in.
 
 pub mod discord;
-pub mod email_validator;
 pub mod github;
 pub mod jwt;
-pub mod mailer;
 pub mod notifications;
-pub mod otp;
-pub mod password;
 pub mod tokens;
 pub mod uploads;

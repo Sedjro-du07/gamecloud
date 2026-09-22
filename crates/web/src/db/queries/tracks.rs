@@ -162,8 +162,7 @@ pub async fn join(
         UPDATE users
            SET global_rank = $2
          WHERE id = $1
-           AND global_rank = 'Visitor'
-           AND email_verified = TRUE
+           AND global_rank IN ('Pending', 'Visitor')
         RETURNING member_display_name(current_title, discord_global_name, discord_username, discord_id), TRUE
         "#,
     )
@@ -250,8 +249,27 @@ pub async fn set_role(
     role: TrackRole,
 ) -> WebResult<()> {
     let mut tx = pool.begin().await?;
+
+    // Appointing somebody *joins* them to the track when they are not
+    // already in it. The previous version was a bare UPDATE, so naming
+    // a Lead for a track they had never joined matched zero rows,
+    // returned `Ok`, and the interface cheerfully reported "Nomination
+    // enregistrée" while nothing whatsoever had happened — which is
+    // exactly how several real appointments went missing.
+    //
+    // A member who left the track is re-admitted rather than left
+    // behind a `left_at`, since being appointed is a deliberate act by
+    // somebody with the authority to do it.
     let changed = sqlx::query(
-        "UPDATE track_memberships SET track_role = $3 WHERE user_id = $1 AND track = $2 AND left_at IS NULL",
+        r"
+        INSERT INTO track_memberships (user_id, track, track_role)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id, track) DO UPDATE
+            SET track_role = EXCLUDED.track_role,
+                left_at    = NULL
+         WHERE track_memberships.track_role IS DISTINCT FROM EXCLUDED.track_role
+            OR track_memberships.left_at IS NOT NULL
+        ",
     )
     .bind(user_id)
     .bind(track.as_str())

@@ -1,10 +1,9 @@
 //! Per-IP request rate limiting.
 //!
 //! The architecture document promised a Tower rate-limit layer from the
-//! start; this is it. The immediate motivation is the OTP endpoint pair
-//! — without a limiter, `/api/auth/email` and `/api/auth/verify` can be
-//! driven in a tight loop to brute-force a 6-digit code — but the layer
-//! is applied globally because every unauthenticated endpoint benefits.
+//! start; this is it. The sensitive bucket covers sign-in, token refresh
+//! and QR scanning — the endpoints worth hammering — and the layer is
+//! applied globally because every unauthenticated endpoint benefits.
 //!
 //! ## Design
 //!
@@ -122,9 +121,7 @@ impl RateLimiter {
 /// router.
 #[must_use]
 pub fn bucket_for(path: &str) -> Bucket {
-    const SENSITIVE: [&str; 6] = [
-        "/api/auth/email",
-        "/api/auth/verify",
+    const SENSITIVE: [&str; 4] = [
         "/api/auth/refresh",
         "/api/auth/login",
         "/api/qr/scan",
@@ -234,9 +231,9 @@ mod tests {
     }
 
     #[test]
-    fn otp_endpoints_land_in_the_sensitive_bucket() {
-        assert_eq!(bucket_for("/api/auth/email"), Bucket::Sensitive);
-        assert_eq!(bucket_for("/api/auth/verify"), Bucket::Sensitive);
+    fn sensitive_endpoints_land_in_the_sensitive_bucket() {
+        assert_eq!(bucket_for("/api/auth/login"), Bucket::Sensitive);
+        assert_eq!(bucket_for("/api/auth/refresh"), Bucket::Sensitive);
         assert_eq!(bucket_for("/api/qr/scan"), Bucket::Sensitive);
         assert_eq!(bucket_for("/api/users/leaderboard"), Bucket::Default);
         assert_eq!(bucket_for("/"), Bucket::Default);

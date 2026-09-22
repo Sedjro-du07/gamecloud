@@ -101,7 +101,7 @@ pub fn ProjectsPage() -> impl IntoView {
                 {move || {
                     me.get()
                         .map(|result| match result.ok().flatten() {
-                            Some(user) if user.email_verified => view! { <ProjectList projects /> }.into_any(),
+                            Some(user) if user.is_member => view! { <ProjectList projects /> }.into_any(),
                             _ => view! { <MembersOnlyState what="voir les projets de l'association" /> }.into_any(),
                         })
                 }}
