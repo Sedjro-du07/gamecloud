@@ -8,7 +8,7 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLay
 
 use crate::{
     app::App,
-    middleware::{rate_limit, security_headers},
+    middleware::{rate_limit, security_headers, session},
     routes,
     state::AppState,
 };
@@ -115,6 +115,11 @@ pub fn build(state: AppState) -> Router {
             move |options: LeptosOptions| {
                 Shell(crate::app::ShellProps { options })
             },
+        ))
+        // Renew an expiring session before any handler reads it.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            session::layer,
         ))
         // Rate limiting sits outermost of the application layers so a
         // flood is rejected before it touches the database.

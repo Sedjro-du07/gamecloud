@@ -294,8 +294,11 @@ async fn logout(
     // browser keeps the original — which is exactly what used to happen:
     // the session cookie was set with `Path=/` and removed with no path
     // at all, so it survived and the member stayed signed in.
+    // Both refresh-cookie paths: sessions issued before it moved to `/`
+    // still carry the old `/api/auth` one.
     let jar = jar
         .remove(Cookie::build((ACCESS_COOKIE, "")).path("/").build())
+        .remove(Cookie::build((REFRESH_COOKIE, "")).path("/").build())
         .remove(
             Cookie::build((REFRESH_COOKIE, ""))
                 .path("/api/auth")
@@ -356,20 +359,17 @@ async fn issue_session(
 
     let secure = cfg.is_production;
 
-    let access_cookie = Cookie::build((ACCESS_COOKIE, access_jwt))
+    let access_cookie = crate::middleware::session::access_cookie(state, access_jwt);
+    // Sent on every path, not only `/api/auth`: the session layer renews
+    // the access token from it on ordinary page and server-function
+    // requests, which is what keeps a member signed in past the hour.
+    // `Lax` rather than `Strict` so that following a link from Discord
+    // still renews; it is `HttpOnly`, and only ever mints access tokens.
+    let refresh_cookie = Cookie::build((REFRESH_COOKIE, refresh_plain))
         .http_only(true)
         .secure(secure)
         .same_site(SameSite::Lax)
         .path("/")
-        .max_age(
-            time::Duration::seconds(cfg.jwt_access_ttl_seconds.try_into().unwrap_or(3600)),
-        )
-        .build();
-    let refresh_cookie = Cookie::build((REFRESH_COOKIE, refresh_plain))
-        .http_only(true)
-        .secure(secure)
-        .same_site(SameSite::Strict)
-        .path("/api/auth")
         .max_age(time::Duration::seconds(
             cfg.jwt_refresh_ttl_seconds.try_into().unwrap_or(604_800),
         ))
