@@ -840,6 +840,13 @@ impl Authority {
         self.offices.iter().copied().find(|b| test(*b))
     }
 
+    /// Whether the user may appoint anybody to anything: President or
+    /// Vice-President, and only them.
+    #[must_use]
+    pub fn can_appoint(&self) -> bool {
+        self.holds(|b| matches!(b, BureauRole::President | BureauRole::VicePresident))
+    }
+
     /// Whether the user holds any executive bureau office.
     #[must_use]
     pub fn is_executive(&self) -> bool {
@@ -872,11 +879,15 @@ impl Authority {
             Action::SubmitProjectForReview => self.rank >= GlobalRank::JuniorDev,
             Action::ReviewProjectForTrack(t) => self.has_track_role(t, TrackRole::Reviewer),
             Action::PublishProjectAsReleased(t) => self.has_track_role(t, TrackRole::Lead),
-            Action::AppointTrackCoLead(t) => self.has_track_role(t, TrackRole::Lead),
-            Action::AppointTrackLead(_) => self.is_executive(),
-            Action::AssignBureauRole => self.holds(|b| {
-                matches!(b, BureauRole::President | BureauRole::VicePresident)
-            }),
+            // Every appointment — offices, track Leads and co-Leads alike —
+            // belongs to the President and the Vice-President, and to
+            // nobody else. It used to be wider: any executive office could
+            // name track Leads, and a track Lead could name their own
+            // co-Leads. The association decided that naming people is one
+            // power, held by two people.
+            Action::AppointTrackCoLead(_) | Action::AppointTrackLead(_) | Action::AssignBureauRole => {
+                self.can_appoint()
+            }
             Action::GenerateQrToken => self.is_event_manager() || self.is_executive(),
             // A track Lead owns their track's sessions; anything that
             // concerns the whole association stays with the people whose
@@ -957,12 +968,6 @@ impl Authority {
                     format!("{role} de la track"),
                 );
             }
-            if self.can(Action::AppointTrackCoLead(t)) {
-                push(
-                    format!("Nommer les co-responsables de la track {}", t.as_str()),
-                    format!("{role} de la track"),
-                );
-            }
             if self.can(Action::ReviewProjectForTrack(t)) {
                 push(
                     format!("Relire et noter les projets pour la track {}", t.as_str()),
@@ -1008,14 +1013,12 @@ impl Authority {
         if self.can(Action::GrantManualXp) {
             push("Attribuer ou retirer de l'XP, et ouvrir des quêtes".into(), by(&exec));
         }
-        if self.can(Action::AssignBureauRole) {
+        if self.can_appoint() {
             push(
-                "Nommer aux offices du Bureau".into(),
+                "Nommer aux offices du Bureau, et les responsables et co-responsables de track"
+                    .into(),
                 by(&|b| matches!(b, BureauRole::President | BureauRole::VicePresident)),
             );
-        }
-        if self.is_executive() {
-            push("Nommer les responsables de track".into(), by(&exec));
         }
         if self.can(Action::ValidateResource) {
             // Two different things grant this: the archivist offices, or
@@ -1265,11 +1268,37 @@ mod tests {
         let rights = lead.rights();
         let has = |w: &str| rights.iter().any(|r| r.what.contains(w));
         assert!(has("Publier les projets de la track VisualArt"));
-        assert!(has("Nommer les co-responsables de la track VisualArt"));
+        // Leading a track no longer means naming its co-Leads.
+        assert!(!has("Nommer"));
         assert!(has("Relire et noter les projets pour la track VisualArt"));
         assert!(has("Programmer les séances de la track VisualArt"));
         assert!(!has("track Audio"));
         assert!(!has("panneau du Bureau"));
+    }
+
+    #[test]
+    fn only_the_president_and_vice_president_appoint_anybody() {
+        let appoints = |offices: Vec<BureauRole>, tracks: Vec<TrackMembership>| {
+            let a = Authority { rank: GlobalRank::Myth, offices, tracks };
+            [
+                a.can(Action::AssignBureauRole),
+                a.can(Action::AppointTrackLead(Track::Audio)),
+                a.can(Action::AppointTrackCoLead(Track::Audio)),
+            ]
+        };
+        // The two who may, for every kind of appointment.
+        assert_eq!(appoints(vec![BureauRole::President], vec![]), [true; 3]);
+        assert_eq!(appoints(vec![BureauRole::VicePresident], vec![]), [true; 3]);
+        // Every other office — executive ones included — may not.
+        for office in BureauRole::ALL {
+            if matches!(office, BureauRole::President | BureauRole::VicePresident) {
+                continue;
+            }
+            assert_eq!(appoints(vec![office], vec![]), [false; 3], "{office:?}");
+        }
+        // Nor may a track's own Lead name its co-Leads any more.
+        let lead = vec![TrackMembership { track: Track::Audio, role: TrackRole::Lead }];
+        assert_eq!(appoints(vec![], lead), [false; 3]);
     }
 
     #[test]

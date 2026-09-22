@@ -87,6 +87,9 @@ pub struct MeView {
     pub needs_onboarding: bool,
     /// Whether this member can reach the admin panel.
     pub can_access_admin: bool,
+    /// Whether this member may appoint people — President or
+    /// Vice-President only.
+    pub can_appoint: bool,
     /// Whether this member can mint QR codes.
     pub can_generate_qr: bool,
     /// Whether this member holds `Reviewer` or above in any track, and

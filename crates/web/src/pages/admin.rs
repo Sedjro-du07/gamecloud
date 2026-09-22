@@ -15,7 +15,7 @@ use crate::{
     },
     api::DirectoryEntry,
     server_fns::{
-        appoint_bureau, appoint_track_role, get_audit, get_directory, grant_xp, open_quest,
+        appoint_bureau, appoint_track_role, get_audit, get_directory, get_me, grant_xp, open_quest,
     },
 };
 
@@ -66,7 +66,13 @@ fn office_choices() -> Vec<(&'static str, String)> {
 /// their Discord role follows through the bot, and the rights the office
 /// opens appear on their profile at their next page load.
 #[component]
-fn OfficesPanel(directory: Directory) -> impl IntoView {
+fn OfficesPanel(
+    /// Everybody on the server.
+    directory: Directory,
+    /// Whether the viewer may appoint; everybody else on the Bureau sees
+    /// who holds what, without the form.
+    can_appoint: Signal<bool>,
+) -> impl IntoView {
     let (member, set_member) = signal(String::new());
     let (office, set_office) = signal("Treasurer".to_string());
     let (notice, set_notice) = signal(Outcome::None);
@@ -91,8 +97,9 @@ fn OfficesPanel(directory: Directory) -> impl IntoView {
 
     view! {
         <Section title="Offices du Bureau"
-            lead="Une personne peut cumuler plusieurs offices. Nommer ici suffit : elle est prévenue en privé, ses rôles Discord suivent, et ce que ses offices lui ouvrent apparaît sur son profil.">
+            lead="Qui occupe quel office. Seuls le ou la président·e et le ou la vice-président·e nomment ; une personne peut cumuler plusieurs offices, elle est prévenue en privé et ses rôles Discord suivent.">
             {move || outcome_notice(notice.get())}
+            <Show when=move || can_appoint.get()>
             <Form on:submit=move |ev| {
                 ev.prevent_default();
                 appoint.dispatch((member.get(), office.get(), true));
@@ -122,6 +129,7 @@ fn OfficesPanel(directory: Directory) -> impl IntoView {
                     </Button>
                 </FormActions>
             </Form>
+            </Show>
 
             <Suspense fallback=|| view! { <RowsSkeleton rows=5 /> }>
                 {move || directory.get().map(|result| match result {
@@ -394,12 +402,28 @@ fn AuditPanel() -> impl IntoView {
 #[component]
 pub fn AdminPage() -> impl IntoView {
     let directory: Directory = Resource::new(|| (), |()| async { get_directory().await });
+    // Appointing is for the President and the Vice-President alone. The
+    // server refuses anybody else regardless; hiding the forms spares the
+    // rest of the Bureau a button that can only fail.
+    let me = Resource::new(|| (), |()| async { get_me().await });
+    let appoints = move || {
+        me.get()
+            .and_then(Result::ok)
+            .flatten()
+            .is_some_and(|m| m.can_appoint)
+    };
     view! {
         <Page pattern=Pattern::Detail>
             <PageHeader title="Bureau" lead="Ce que seul le Bureau peut faire, et la trace que ça laisse. Chaque action est revérifiée par le serveur." />
-            <MemberSuggestions directory />
-            <OfficesPanel directory />
-            <AppointPanel directory />
+            <Suspense fallback=|| ()>
+                <Show when=appoints>
+                    <MemberSuggestions directory />
+                </Show>
+                <OfficesPanel directory can_appoint=Signal::derive(appoints) />
+                <Show when=appoints>
+                    <AppointPanel directory />
+                </Show>
+            </Suspense>
             <GrantPanel />
             <QuestPanel />
             <AuditPanel />

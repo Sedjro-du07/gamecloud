@@ -255,6 +255,7 @@ pub async fn get_me() -> Result<Option<MeView>, ServerFnError> {
             // Visitor; that is the step the onboarding banner nags about.
             needs_onboarding: authority.tracks.is_empty(),
             can_access_admin: authority.can(Action::AccessAdminPanel),
+            can_appoint: authority.can_appoint(),
             can_generate_qr: authority.can(Action::GenerateQrToken),
             can_review: authority
                 .tracks
