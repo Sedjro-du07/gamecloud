@@ -13,7 +13,7 @@ use crate::{
     components::ui::{
         vocab::{plain_title, track_icon, track_label},
         xp::{rank_percent, streak_caption, xp_caption},
-        ButtonKind, ButtonLink, Card, CardGrid, CardSkeleton, Cluster, DenseList, Disclosure,
+        Avatar, AvatarSize, Quote, ButtonKind, ButtonLink, Card, CardGrid, CardSkeleton, Cluster, DenseList,
         EmptyState, ErrorState, Fact, Facts, Gap, IconName, RowsSkeleton, Section, Split, Stack,
         Step, Steps, StreakMarks, Tag, TagKind, TitleLadder, XpProgress,
     },
@@ -57,7 +57,7 @@ pub fn HomePage() -> impl IntoView {
 /// A "see all" link at the end of a section heading.
 fn see_all(href: &'static str, label: &'static str) -> AnyView {
     view! {
-        <ButtonLink kind=ButtonKind::Ghost href trailing_icon=IconName::ArrowRight>{label}</ButtonLink>
+        <ButtonLink kind=ButtonKind::Ghost href>{label}</ButtonLink>
     }
     .into_any()
 }
@@ -85,19 +85,19 @@ fn Dashboard(
     let (percent, caption, streak) = (rank_percent(&me), xp_caption(&me), streak_caption(&me));
     let name = me.display_name.clone();
 
+    let avatar = me.avatar_url.clone();
     view! {
-        <Stack gap=Gap::Loose>
-            <Stack gap=Gap::Tight reading=true>
-                <span class="ui-label">"Tableau de bord"</span>
-                <h1 class="ui-display">{name}</h1>
+        <div class="ui-stack ui-stack--loose ui-dashboard">
+            <section class="ui-hero-panel" aria-label="Où tu en es">
+                <div class="ui-cluster">
+                    <Avatar name=name.clone() src=avatar size=AvatarSize::Large />
+                    <h1 class="ui-display">{name}</h1>
+                </div>
                 // Every title held, most important first: office, then member title.
                 <Cluster>
                     {offices.into_iter().map(|o| view! { <Tag>{o}</Tag> }).collect_view()}
                     <Tag kind=TagKind::Accent>{title}</Tag>
                 </Cluster>
-            </Stack>
-
-            <Stack reading=true>
                 <XpProgress percent caption />
                 <Cluster>
                     <StreakMarks days=me.streak_days />
@@ -108,17 +108,19 @@ fn Dashboard(
                     <Fact label="Titre suivant" value=next_title />
                     {place.map(|p| view! { <Fact label="Classement" value=p /> })}
                 </Facts>
-            </Stack>
+            </section>
+
+            <Quote salt=1 shuffle=true />
 
             <Split>
                 <QuestsInProgress />
                 <NextSession />
             </Split>
 
-            <Disclosure summary="Comment on progresse">
+            <Section title="Comment on progresse">
                 <HowItWorks />
-            </Disclosure>
-        </Stack>
+            </Section>
+        </div>
     }
 }
 
@@ -258,34 +260,36 @@ fn NextSession() -> impl IntoView {
 #[component]
 fn Welcome() -> impl IntoView {
     view! {
-        <Stack gap=Gap::Loose>
+        <div class="ui-stack ui-stack--loose ui-dashboard">
             <Stack reading=true>
-                <span class="ui-label">"Epitech Bénin · association game-dev"</span>
+                <span class="ui-label">"L'association game-dev d'Epitech Bénin"</span>
                 <h1 class="ui-display">"Code, crée, viens aux séances : chaque action te fait monter en titre."</h1>
                 <p class="ui-body ui-muted">
                     "Les membres gagnent de l'XP en codant, en publiant des projets et en venant
                      aux séances, et l'XP les fait monter de titre en titre."
                 </p>
                 <Cluster>
-                    <ButtonLink kind=ButtonKind::Primary href="/api/auth/login" external=true icon=IconName::DiscordLogo>
-                        "Rejoindre la partie"
+                    <ButtonLink kind=ButtonKind::Primary href="/tests" icon=IconName::GraduationCap>
+                        "Rejoindre l'association"
                     </ButtonLink>
-                    <ButtonLink href="/tests" icon=IconName::GraduationCap>
-                        "Passer le test d'entrée"
+                    <ButtonLink href="/api/auth/login" external=true icon=IconName::DiscordLogo>
+                        "Déjà membre ? Se connecter"
                     </ButtonLink>
                     <ButtonLink kind=ButtonKind::Ghost href="/kumo" icon=IconName::ChatCircle>
-                        "Contacter Kumo"
+                        "Une question ? Écrire à Kumo"
                     </ButtonLink>
                 </Cluster>
                 <p class="ui-meta">
-                    "Déjà sur le serveur Discord de l'association ? Connecte-toi, l'inscription est
-                     directe. Sinon, le test d'entrée ouvre la porte."
+                    "Pas encore sur le serveur Discord ? Préinscris-toi à un test d'entrée, sans
+                     compte. Déjà sur le serveur ? Connecte-toi avec Discord, l'inscription est directe."
                 </p>
             </Stack>
 
             <Section title="Comment on progresse">
                 <HowItWorks />
             </Section>
+
+            <Quote salt=2 shuffle=true />
 
             <Section
                 title="L'échelle des titres"
@@ -306,7 +310,7 @@ fn Welcome() -> impl IntoView {
                         .collect_view()}
                 </CardGrid>
             </Section>
-        </Stack>
+        </div>
     }
 }
 

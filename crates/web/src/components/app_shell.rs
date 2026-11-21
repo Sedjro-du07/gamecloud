@@ -12,7 +12,7 @@ use crate::{
     api::MeView,
     components::ui::{
         play, vocab::plain_title, ButtonKind, ButtonLink, Icon, IconName, IconSize, Sound,
-        SoundToggle, Tag, TagKind,
+        Quote, SoundToggle, Tag, TagKind,
     },
     server_fns::get_me,
 };
@@ -228,7 +228,7 @@ fn OnboardingNotice() -> impl IntoView {
                 kind=ButtonKind::Primary
                 href="/onboarding/tracks"
                 external=true
-                trailing_icon=IconName::ArrowRight
+               
             >
                 "Choisir mes tracks"
             </ButtonLink>
@@ -425,7 +425,13 @@ pub fn AppShell(
                 </Suspense>
                 {children()}
                 <footer class="ui-shell__footer">
-                    <p class="ui-meta">"GameCloud OS · association game-dev d'Epitech Bénin"</p>
+                    // A different quote on each screen: the page's address picks it.
+                    {move || {
+                        let path = location.pathname.get();
+                        let salt = path.bytes().fold(5_usize, |h, b| h.wrapping_mul(31).wrapping_add(usize::from(b)));
+                        view! { <Quote salt compact=true /> }
+                    }}
+                    <p class="ui-meta">"GameCloud OS, l'association game-dev d'Epitech Bénin"</p>
                 </footer>
             </main>
 

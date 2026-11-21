@@ -540,6 +540,23 @@ impl Announcement {
         }
     }
 
+    /// An entrance-test applicant is waiting on the Bureau: access to the
+    /// subject, or a verdict on their work. Bureau channel only, like a
+    /// Bureau meeting: it names somebody who is not a member yet.
+    #[must_use]
+    pub fn entrance_application(title: &str, description: String) -> Self {
+        Self {
+            kind: "EntranceApplication",
+            title: title.to_string(),
+            description,
+            color: 0x6b_4cff,
+            user_id: None,
+            track: None,
+            mention: Mention::Bureau,
+            dm: false,
+        }
+    }
+
     /// An event was called off.
     ///
     /// Pings for the same reason the scheduling did: somebody has

@@ -44,6 +44,9 @@ pub fn Card(
     /// Milestone reached or quest validated.
     #[prop(optional)]
     achieved: bool,
+    /// Not reached yet: shown quieter, with a lock.
+    #[prop(optional)]
+    locked: bool,
     /// Makes the whole card a link.
     #[prop(optional, into)]
     href: Option<String>,
@@ -67,6 +70,9 @@ pub fn Card(
     if achieved {
         class.push_str(" ui-card--achieved");
     }
+    if locked {
+        class.push_str(" ui-card--locked");
+    }
     class.push_str(state.class());
 
     let media = media.map(|m| match m {
@@ -87,12 +93,15 @@ pub fn Card(
         }
         .into_any(),
     });
-    let head = (kicker.is_some() || achieved).then(|| {
+    let head = (kicker.is_some() || achieved || locked).then(|| {
         view! {
             <div class="ui-card__head">
                 {kicker.map(|k| view! { <span class="ui-card__kicker">{k}</span> })}
                 {achieved.then(|| view! {
                     <span class="ui-card__status" title="Validé"><Icon name=IconName::Check /></span>
+                })}
+                {locked.then(|| view! {
+                    <span class="ui-card__status" title="À débloquer"><Icon name=IconName::LockSimple /></span>
                 })}
             </div>
         }

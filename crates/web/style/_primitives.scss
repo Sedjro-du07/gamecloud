@@ -83,7 +83,6 @@
 .ui-label {
   font-size: var(--size-label);
   letter-spacing: var(--ls-label);
-  text-transform: uppercase;
   color: var(--text-faint);
   font-weight: var(--weight-heading);
 }
@@ -260,7 +259,6 @@
   &__kicker {
     font-size: var(--size-label);
     letter-spacing: var(--ls-label);
-    text-transform: uppercase;
     font-weight: var(--weight-heading);
     color: var(--text-faint);
   }

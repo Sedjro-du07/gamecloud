@@ -13,9 +13,10 @@ use crate::{
     components::ui::{
         vocab::{badge_icon, plain_title, role_title, track_icon_by_id, track_name},
         xp::{rank_percent, streak_caption, xp_caption},
-        Avatar, AvatarSize, Button, ButtonLink, Cluster, DenseList, EmptyState, ErrorState, Fact,
-        Facts, Icon, IconName, ListRow, Page, PageHeader, PageSkeleton, Pattern, RowValue,
-        Section, SignInState, Stack, StreakMarks, Tag, TagKind, TitleLadder, XpProgress,
+        Avatar, AvatarSize, Button, ButtonLink, Card, CardGrid, Cluster, DenseList, EmptyState, ErrorState, Fact,
+        Facts, Icon, IconName, ListRow, Page, Panel, Quote, PageHeader, PageSkeleton, Pattern, RowValue,
+        Section, SegmentedControl, SignInState, Stack, StreakMarks, Tag, TagKind, TabPanel, TitleLadder, XpProgress,
+        segment_with_icon,
     },
     server_fns::{get_my_rights, get_sheet},
 };
@@ -100,20 +101,18 @@ fn Badges(
     let mut badges = badges;
     badges.sort_by_key(|b| !b.held);
     view! {
-        <DenseList label="Badges">
+        <CardGrid>
             {badges
                 .into_iter()
                 .map(|b| {
-                    let lead = view! { <Icon name=badge_icon(&b.id) /> }.into_any();
-                    let end = if b.held {
-                        view! { <Tag icon=IconName::CheckCircle>"Obtenu"</Tag> }.into_any()
-                    } else {
-                        view! { <Tag icon=IconName::LockSimple>"À débloquer"</Tag> }.into_any()
-                    };
-                    view! { <ListRow lead title=plain_title(&b.title).to_string() meta=b.description end dimmed=!b.held /> }
+                    let kicker = if b.held { "Obtenu" } else { "À débloquer" };
+                    view! {
+                        <Card kicker icon=badge_icon(&b.id) title=plain_title(&b.title).to_string()
+                            meta=b.description achieved=b.held locked=!b.held />
+                    }
                 })
                 .collect_view()}
-        </DenseList>
+        </CardGrid>
     }
 }
 
@@ -162,25 +161,41 @@ fn SheetBody(
     // Every title held, most important first: office, member title, tracks.
     let offices: Vec<String> = me.office_titles.iter().map(|o| plain_title(o).to_string()).collect();
     let title = plain_title(&me.rank_title).to_string();
-    let track_titles: Vec<String> = sheet
+    // Track titles above the first one are named one by one; the tracks a
+    // member only observes are counted in a single tag, not seven.
+    let observer = role_title("Observer");
+    let mut track_titles: Vec<String> = sheet
         .tracks
         .iter()
+        .filter(|t| role_title(&t.role) != observer)
         .map(|t| format!("{} · {}", role_title(&t.role), track_name(&t.id)))
         .collect();
+    match sheet.tracks.iter().filter(|t| role_title(&t.role) == observer).count() {
+        0 => {}
+        1 => track_titles.extend(
+            sheet
+                .tracks
+                .iter()
+                .filter(|t| role_title(&t.role) == observer)
+                .map(|t| format!("{observer} · {}", track_name(&t.id))),
+        ),
+        n => track_titles.push(format!("{observer} · {n} tracks")),
+    }
     let next_title = me.next_rank_title.as_deref().map_or_else(|| "—".to_string(), |t| plain_title(t).to_string());
     let place = me.is_member.then_some(me.leaderboard_position).flatten().map(|p| format!("{p}ᵉ"));
     let held = sheet.badges.iter().filter(|b| b.held).count();
     let total = sheet.badges.len();
     let rank = GlobalRank::parse(&me.global_rank);
     let (percent, caption, streak) = (rank_percent(&me), xp_caption(&me), streak_caption(&me));
+    let (tab, set_tab) = signal("titres".to_string());
     let (name, avatar, total_xp, streak_days) = (me.display_name.clone(), me.avatar_url.clone(), format_xp(me.xp_total), me.streak_days);
 
     view! {
         <Page pattern=Pattern::Detail>
-            <PageHeader title=name.clone() kicker="Profil" lead="Ton parcours dans l'association, prêt à joindre à une candidature.">
+            <PageHeader title=name.clone() lead="Ton parcours dans l'association, prêt à joindre à une candidature.">
                 <Button icon=IconName::Printer attr:onclick="window.print()">"Imprimer ou enregistrer en PDF"</Button>
             </PageHeader>
-            <Stack>
+            <Panel><Stack>
                 <Cluster>
                     <Avatar name src=avatar size=AvatarSize::Large />
                     {offices.into_iter().map(|o| view! { <Tag>{o}</Tag> }).collect_view()}
@@ -197,12 +212,30 @@ fn SheetBody(
                     <Fact label="Titre suivant" value=next_title />
                     {place.map(|p| view! { <Fact label="Classement" value=p /> })}
                 </Facts>
-            </Stack>
-            <Section title="Mes droits" lead="Ce que tu peux faire sur la plateforme, et ce qui te le donne."><Rights /></Section>
-            <Section title="Tracks"><Tracks tracks=sheet.tracks /></Section>
-            <Section title="Badges" meta=format!("{held} / {total}")><Badges badges=sheet.badges /></Section>
-            <Section title="Activité récente"><History entries=sheet.recent_xp /></Section>
-            <Section title="Échelle des titres"><TitleLadder current=rank /></Section>
+            </Stack></Panel>
+            <SegmentedControl label="Sections du profil" options=vec![
+                segment_with_icon("titres", "Titres", IconName::Crown),
+                segment_with_icon("tracks", "Tracks", IconName::Compass),
+                segment_with_icon("badges", "Badges", IconName::Medal),
+                segment_with_icon("droits", "Mes droits", IconName::Key),
+                segment_with_icon("activite", "Activité", IconName::Lightning),
+            ] value=tab on_change=Callback::new(move |t| set_tab.set(t)) />
+            <TabPanel active=Signal::derive(move || tab.get() == "titres")>
+                <Section title="Échelle des titres"><TitleLadder current=rank /></Section>
+            </TabPanel>
+            <TabPanel active=Signal::derive(move || tab.get() == "tracks")>
+                <Section title="Tracks"><Tracks tracks=sheet.tracks /></Section>
+            </TabPanel>
+            <TabPanel active=Signal::derive(move || tab.get() == "badges")>
+                <Section title="Badges" meta=format!("{held} / {total}")><Badges badges=sheet.badges /></Section>
+            </TabPanel>
+            <TabPanel active=Signal::derive(move || tab.get() == "droits")>
+                <Section title="Mes droits" lead="Ce que tu peux faire sur la plateforme, et ce qui te le donne."><Rights /></Section>
+            </TabPanel>
+            <TabPanel active=Signal::derive(move || tab.get() == "activite")>
+                <Section title="Activité récente"><History entries=sheet.recent_xp /></Section>
+            </TabPanel>
+            <Quote salt=3 shuffle=true />
         </Page>
     }
 }

@@ -61,8 +61,8 @@
   --size-body: 15px;
   --lh-body: 1.6;
   --size-meta: 13px;
-  --size-label: 12px;
-  --ls-label: 0.14em;
+  --size-label: 13px;
+  --ls-label: 0.01em;     // labels in sentence case, not tracked capitals
 
   // --- Spacing — dense 0.7× scale, no in-betweens ----------------------------
   --space-1: 2.8px;
@@ -94,7 +94,7 @@
 
   // --- Gamified details -------------------------------------------------------
   --xp-rail: rgba(0, 242, 255, 0.12);
-  --xp-rail-height: 4px;
+  --xp-rail-height: 6px;
   --xp-glow: 0 0 14px rgba(0, 242, 255, 0.6), 0 0 22px rgba(191, 0, 255, 0.35);
   --streak-on: var(--accent);
   --streak-off: rgba(0, 242, 255, 0.18);
@@ -118,7 +118,7 @@
   --content-max: 1100px;
   --reading-max: 68ch;
   --rule-fade: 48px;        // horizontal rules fade over their last 48px
-  --detail-max: 760px;      // detail pages: one column, on the left
+  --detail-max: var(--content-max); // detail pages: on the left, as wide as the others
   --card-min: 260px;        // narrowest card in a grid
   --form-col-min: 220px;    // narrowest field column in a form
   --list-lead-w: var(--space-7); // lead column of a dense row: icon, rank, time
@@ -151,9 +151,26 @@
   --corner: 14px;             // HUD corner brackets on panels
   --scanline: rgba(0, 242, 255, 0.025);
   --bg-image: url("/images/fond-gamecloud.svg");
-  --veil: linear-gradient(180deg, rgba(5, 6, 16, 0.55) 0%, rgba(5, 6, 16, 0.72) 50%, rgba(5, 6, 16, 0.86) 100%);
+  // The image shows at the edges and under the top bar; where the content
+  // sits, the veil deepens so text never fights the scene.
+  --veil:
+    radial-gradient(ellipse 75% 70% at 40% 45%, rgba(5, 6, 16, 0.78) 0%, rgba(5, 6, 16, 0.5) 70%, rgba(5, 6, 16, 0.35) 100%),
+    linear-gradient(180deg, rgba(5, 6, 16, 0.35) 0%, rgba(5, 6, 16, 0.7) 55%, rgba(5, 6, 16, 0.92) 100%);
   --qr-paper: #ffffff;        // a QR code only scans dark on white
   --lift: -2px;
+
+  // --- Motion -------------------------------------------------------------------
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-rise: 420ms;          // a block arriving on the page
+  --rise-step: 60ms;          // delay between blocks arriving in turn
+  --rise-from: 10px;
+  --dur-shimmer: 2.8s;        // the light running along an XP bar
+  --dur-flow: 8s;             // the neon line under the top bar
+  --press: 0.97;              // a button pressed
+  --on-accent: #04050d;       // text on a neon fill
+  --size-button: 14px;
+  --panel-pad: var(--space-6);
+  --panel-pad-sm: var(--space-5);
 }
 
 // Paper: ink on white. The page ground and its decor go, the hierarchy stays.

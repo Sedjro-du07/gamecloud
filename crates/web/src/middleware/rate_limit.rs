@@ -127,7 +127,10 @@ pub fn bucket_for(path: &str) -> Bucket {
         "/api/qr/scan",
         "/api/sync/draftbot",
     ];
-    if SENSITIVE.iter().any(|p| path.starts_with(p)) {
+    // Pre-registration is an open form anybody can post without an
+    // account: the strict bucket keeps it from being flooded.
+    let pre_registration = path.starts_with("/api/tests/") && path.ends_with("/apply");
+    if pre_registration || SENSITIVE.iter().any(|p| path.starts_with(p)) {
         Bucket::Sensitive
     } else {
         Bucket::Default
@@ -186,6 +189,13 @@ mod tests {
 
     fn ip(last: u8) -> IpAddr {
         IpAddr::V4(Ipv4Addr::new(127, 0, 0, last))
+    }
+
+    #[test]
+    fn pre_registration_is_strictly_limited() {
+        assert_eq!(bucket_for("/api/tests/0f/apply"), Bucket::Sensitive);
+        assert_eq!(bucket_for("/api/tests/0f/subject"), Bucket::Default);
+        assert_eq!(bucket_for("/api/auth/login"), Bucket::Sensitive);
     }
 
     #[test]

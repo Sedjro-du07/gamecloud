@@ -26,13 +26,13 @@ use leptos::prelude::*;
 use crate::api::{
     AuditLine, CalendarEvent, CalendarRights, DirectoryEntry, EventAttendee, EventDraft, FileItem, LeaderboardView, MeView, ProjectCard,
     ProjectDetailView, QrTicket, KumoChatView, QuestItem, ResourceItem, ReviewItem, SharesView, SheetView, SubmissionItem, TestsView, TrackBoard,
-    TrackOption,
+    TrackOption, ApplicationItem, ApplicationView, TestItem,
 };
 
 // Types only constructed inside the server bodies.
 #[cfg(feature = "ssr")]
 use crate::api::{
-    AttendanceEntry, BadgeItem, ChatMessage, ContributorItem, LeaderboardEntry, MySubmission, ProjectRights, ShareItem, TestItem, TrackView,
+    AttendanceEntry, BadgeItem, ChatMessage, ContributorItem, LeaderboardEntry, HandedInWork, ProjectRights, ShareItem, TrackView,
     VerdictItem, XpEntry,
 };
 
@@ -1227,6 +1227,74 @@ fn looks_like_id(text: &str) -> bool {
     uuid::Uuid::parse_str(text).is_ok() || (text.len() >= 15 && text.chars().all(|c| c.is_ascii_digit()))
 }
 
+/// What a journal entry records, in words.
+#[cfg(feature = "ssr")]
+fn audit_label(action: &str) -> String {
+    match action {
+        "admin.add_office" => "Office attribué",
+        "admin.remove_office" => "Office retiré",
+        "admin.set_bureau_role" => "Office du Bureau modifié",
+        "admin.set_track_role" => "Titre de track nommé",
+        "admin.grant_xp" => "XP attribuée à la main",
+        "admin.award_badge" => "Badge décerné",
+        "admin.create_season" => "Saison ouverte",
+        "draftbot.level_up" => "Niveau DraftBot reporté",
+        "entrance.access_granted" => "Test d'entrée : sujet autorisé",
+        "entrance.access_refused" => "Test d'entrée : préinscription refusée",
+        "entrance.admitted" => "Test d'entrée : candidat admis",
+        "entrance.rejected" => "Test d'entrée : candidat non retenu",
+        "entrance.link_reissued" => "Test d'entrée : lien de suivi renvoyé",
+        "project.created" => "Projet créé",
+        "project.submitted" => "Projet soumis à la relecture",
+        "project.reviewed" => "Projet relu",
+        "project.released" => "Projet publié",
+        "quest.created" => "Quête ouverte",
+        "resource.validated" => "Ressource validée",
+        other => return other.to_string(),
+    }
+    .to_string()
+}
+
+/// A journal detail's key, in words.
+#[cfg(feature = "ssr")]
+fn audit_key(key: &str) -> String {
+    match key {
+        "amount" => "montant",
+        "awarded" => "crédité",
+        "reason" => "motif",
+        "role" => "titre",
+        "name" => "nom",
+        "title" => "intitulé",
+        "status" => "statut",
+        "target" => "objectif",
+        "xp_reward" => "récompense (XP)",
+        other => return other.replace('_', " "),
+    }
+    .to_string()
+}
+
+/// A journal detail's stored value, in words where it is a code.
+#[cfg(feature = "ssr")]
+fn audit_value(value: &str) -> String {
+    let words = match value {
+        "Lead" => "Responsable",
+        "CoLead" => "Co-responsable",
+        "Observer" => "Observateur",
+        "Approved" => "Approuvé",
+        "Rejected" => "Refusé",
+        "Admitted" => "Admis",
+        "Review" => "Revues",
+        "Push" => "Pushs",
+        _ => {
+            if let Some(office) = gamecloud_shared::roles::BureauRole::parse(value) {
+                return office.plain().to_string();
+            }
+            return value.to_string();
+        }
+    };
+    words.to_string()
+}
+
 /// An audit line's detail, readable and without identifiers: the member it
 /// concerns by pseudo, then the recorded facts, skipping every id.
 #[cfg(feature = "ssr")]
@@ -1258,7 +1326,7 @@ fn audit_detail(target: Option<&str>, metadata: Option<&serde_json::Value>) -> S
                 other => scalar(other).filter(|t| !looks_like_id(t)).unwrap_or_default(),
             };
             if !text.is_empty() {
-                parts.push(format!("{} : {text}", key.replace('_', " ")));
+                parts.push(format!("{} : {}", audit_key(key), audit_value(&text)));
             }
         }
     }
@@ -1267,7 +1335,23 @@ fn audit_detail(target: Option<&str>, metadata: Option<&serde_json::Value>) -> S
 
 #[cfg(all(test, feature = "ssr"))]
 mod audit_detail_tests {
-    use super::audit_detail;
+    use super::{audit_detail, audit_label};
+
+    #[test]
+    fn journal_actions_read_as_words() {
+        assert_eq!(audit_label("admin.grant_xp"), "XP attribuée à la main");
+        assert_eq!(audit_label("entrance.admitted"), "Test d'entrée : candidat admis");
+        // An action nobody named yet still shows, as recorded.
+        assert_eq!(audit_label("future.thing"), "future.thing");
+    }
+
+    #[test]
+    fn stored_codes_read_as_words() {
+        let metadata = serde_json::json!({ "role": "Lead", "track": "Audio" });
+        let detail = audit_detail(Some("crimad"), Some(&metadata));
+        assert!(detail.contains("titre : Responsable"));
+        assert!(detail.contains("track : Audio"));
+    }
 
     #[test]
     fn identifiers_never_reach_the_journal() {
@@ -1280,8 +1364,8 @@ mod audit_detail_tests {
         });
         let detail = audit_detail(Some("fred04"), Some(&metadata));
         assert!(detail.contains("membre : fred04"));
-        assert!(detail.contains("amount : 50"));
-        assert!(detail.contains("reason : Aide au stand"));
+        assert!(detail.contains("montant : 50"));
+        assert!(detail.contains("motif : Aide au stand"));
         assert!(detail.contains("tracks : Audio"));
         assert!(!detail.contains("20c67afb"));
         assert!(!detail.contains("865973472223428608"));
@@ -1319,7 +1403,7 @@ pub async fn get_audit() -> Result<Vec<AuditLine>, ServerFnError> {
             .map(|a| AuditLine {
                 actor: a.actor_name.clone().unwrap_or_else(|| "la plateforme".into()),
                 detail: audit_detail(a.target_name.as_deref(), a.metadata.as_ref()),
-                action: a.action,
+                action: audit_label(&a.action),
                 when: ctx::stamp(a.created_at),
             })
             .collect());
@@ -1805,10 +1889,7 @@ async fn require_bureau(state: &crate::state::AppState) -> Result<uuid::Uuid, Se
 }
 
 #[cfg(feature = "ssr")]
-fn present_test(
-    test: &crate::db::queries::entrance::EntranceTest,
-    mine: Option<&crate::db::queries::entrance::Submission>,
-) -> TestItem {
+fn present_test(test: &crate::db::queries::entrance::EntranceTest) -> TestItem {
     use crate::api::format_bytes;
     TestItem {
         id: test.id.to_string(),
@@ -1819,23 +1900,37 @@ fn present_test(
         open: test.closes_at > chrono::Utc::now(),
         subject_size: format_bytes(test.subject_size),
         submissions: test.submissions,
-        mine: mine.map(|m| MySubmission {
-            filename: m.filename.clone(),
-            size: format_bytes(m.size_bytes),
-            when: format!("{} UTC", ctx::stamp(m.submitted_at)),
-            verdict: m.verdict.clone(),
-        }),
+        applications: test.applications,
+        waiting: test.waiting,
     }
+}
+
+/// A session as the public sees it: no counts.
+#[cfg(feature = "ssr")]
+fn present_public_test(test: &crate::db::queries::entrance::EntranceTest) -> TestItem {
+    TestItem {
+        submissions: 0,
+        applications: 0,
+        waiting: 0,
+        ..present_test(test)
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn present_work(app: &crate::db::queries::applications::Application) -> Option<HandedInWork> {
+    Some(HandedInWork {
+        filename: app.filename.clone()?,
+        size: crate::api::format_bytes(app.size_bytes?),
+        when: format!("{} UTC", ctx::stamp(app.submitted_at?)),
+    })
 }
 
 /// The entrance tests page.
 ///
-/// For the Bureau, every session. For somebody who is not a verified
-/// member yet, the open sessions and the ones they handed work in for.
-/// For somebody not signed in — quite possibly an outsider wondering how
-/// to join — the open sessions, without the subject or any count, so the
-/// page can tell them what to do. For members, nothing: the page is not
-/// for them.
+/// For the Bureau, every session with its counts. For everybody else who
+/// is not a member — signed out, or signed in with Discord without being
+/// on the server — the open sessions, to pre-register for. For members,
+/// nothing: the page is not for them.
 ///
 /// # Errors
 /// Returns a `ServerFnError` on database failure.
@@ -1852,62 +1947,44 @@ pub async fn get_tests() -> Result<TestsView, ServerFnError> {
         };
         let sessions = entrance::list(state.pool()).await.map_err(fail)?;
         let now = chrono::Utc::now();
+        let open: Vec<TestItem> = sessions
+            .iter()
+            .filter(|t| t.closes_at > now)
+            .map(present_public_test)
+            .collect();
         let signin = TestsView {
             access: "signin".into(),
-            tests: sessions
-                .iter()
-                .filter(|t| t.closes_at > now)
-                .map(|t| TestItem {
-                    submissions: 0,
-                    ..present_test(t, None)
-                })
-                .collect(),
+            tests: open.clone(),
             ..TestsView::default()
         };
         let Some(user_id) = ctx::current_user_id(&state).await else {
             return Ok(signin);
         };
-        if crate::db::queries::users::find_by_id(state.pool(), user_id)
-            .await
-            .map_err(fail)?
-            .is_none()
-        {
-            return Ok(signin);
-        }
         let authority = crate::db::queries::users::load_authority(state.pool(), user_id)
             .await
             .map_err(fail)?;
-        let bureau = authority.can(Action::AccessAdminPanel);
-        let member = crate::db::queries::users::is_member(state.pool(), user_id)
+        if authority.can(Action::AccessAdminPanel) {
+            return Ok(TestsView {
+                access: "bureau".into(),
+                tests: sessions.iter().map(present_test).collect(),
+                ..TestsView::default()
+            });
+        }
+        if crate::db::queries::users::is_member(state.pool(), user_id)
             .await
-            .map_err(fail)?;
-        if !bureau && member {
+            .map_err(fail)?
+        {
             return Ok(TestsView {
                 access: "member".into(),
                 ..TestsView::default()
             });
         }
-
-        if bureau {
-            return Ok(TestsView {
-                access: "bureau".into(),
-                tests: sessions.iter().map(|t| present_test(t, None)).collect(),
-                ..TestsView::default()
-            });
-        }
-
-        let mine = entrance::my_submissions(state.pool(), user_id).await.map_err(fail)?;
+        // Signed in with Discord but not on the server. Somebody admitted
+        // through the former sign-in path still finds their invitation.
         let admission = entrance::admission(state.pool(), user_id).await.map_err(fail)?;
         return Ok(TestsView {
             access: "candidate".into(),
-            tests: sessions
-                .iter()
-                .filter_map(|t| {
-                    let handed_in = mine.iter().find(|m| m.test_id == t.id);
-                    (t.closes_at > now || handed_in.is_some()).then(|| present_test(t, handed_in))
-                })
-                .collect(),
-            is_candidate: admission.candidate,
+            tests: open,
             admitted: admission.admitted_at.is_some(),
             invite_url: admission.discord_invite_url,
         });
@@ -1915,6 +1992,212 @@ pub async fn get_tests() -> Result<TestsView, ServerFnError> {
 
     #[cfg(not(feature = "ssr"))]
     Ok(TestsView::default())
+}
+
+/// One open session, for its pre-registration page. Public. `None` once
+/// it has closed or when it does not exist.
+///
+/// # Errors
+/// Returns a `ServerFnError` on database failure.
+#[server(GetOpenTest, "/_fn")]
+pub async fn get_open_test(id: String) -> Result<Option<TestItem>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let Ok(id) = id.parse::<uuid::Uuid>() else {
+            return Ok(None);
+        };
+        return match crate::db::queries::entrance::find(state.pool(), id).await {
+            Ok(test) if test.closes_at > chrono::Utc::now() => Ok(Some(present_public_test(&test))),
+            Ok(_) | Err(crate::error::WebError::NotFound) => Ok(None),
+            Err(e) => Err(ServerFnError::new(e.to_string())),
+        };
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = id;
+        Ok(None)
+    }
+}
+
+/// An applicant's own page, from the token in their private link. `None`
+/// for an unknown or replaced link.
+///
+/// # Errors
+/// Returns a `ServerFnError` on database failure.
+#[server(GetApplication, "/_fn")]
+pub async fn get_application(token: String) -> Result<Option<ApplicationView>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let app = match crate::db::queries::applications::find_by_token(state.pool(), &token).await {
+            Ok(app) => app,
+            Err(crate::error::WebError::NotFound) => return Ok(None),
+            Err(e) => return Err(ServerFnError::new(e.to_string())),
+        };
+        let origin = state.config().public_origin.trim_end_matches('/').to_string();
+        return Ok(Some(ApplicationView {
+            link: format!("{origin}/candidature/{token}"),
+            test_title: app.test_title.clone(),
+            test_description: app.test_description.clone(),
+            closes: format!("{} UTC", ctx::stamp(app.closes_at)),
+            time_left: ctx::time_left(app.closes_at),
+            open: app.closes_at > chrono::Utc::now(),
+            subject_size: crate::api::format_bytes(app.subject_size),
+            work: present_work(&app),
+            status: app.status,
+            full_name: app.full_name,
+            discord: app.discord_username,
+        }));
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = token;
+        Ok(None)
+    }
+}
+
+/// The pre-registrations for a session. Bureau only.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau.
+#[server(GetTestApplications, "/_fn")]
+pub async fn get_test_applications(test_id: String) -> Result<Vec<ApplicationItem>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        require_bureau(&state).await?;
+        let id = test_id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("test introuvable"))?;
+        let rows = crate::db::queries::applications::for_test(state.pool(), id)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(rows
+            .into_iter()
+            .map(|a| ApplicationItem {
+                id: a.id.to_string(),
+                registered: format!("{} UTC", ctx::stamp(a.created_at)),
+                work: present_work(&a),
+                full_name: a.full_name,
+                email: a.email,
+                github: a.github_username,
+                discord: a.discord_username,
+                motivation: a.motivation,
+                status: a.status,
+                comment: a.comment,
+                invite_url: a.discord_invite_url,
+            })
+            .collect());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = test_id;
+        Ok(Vec::new())
+    }
+}
+
+/// Grant or refuse an applicant access to the subject. Bureau only.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau or the
+/// request was already decided.
+#[server(DecideApplicationAccess, "/_fn")]
+pub async fn decide_application_access(id: String, grant: bool) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let reviewer = require_bureau(&state).await?;
+        let id = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("préinscription introuvable"))?;
+        crate::db::queries::applications::decide_access(state.pool(), id, reviewer, grant)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (id, grant);
+        Ok(())
+    }
+}
+
+/// Admit or turn down an applicant on their work. Bureau only.
+///
+/// Admitting creates their single-use invitation to the Discord server;
+/// their page then sends them there. Returns what to tell the Bureau.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau or the
+/// work cannot be graded.
+#[server(JudgeApplication, "/_fn")]
+pub async fn judge_application(id: String, verdict: String) -> Result<String, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::db::queries::applications;
+
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let reviewer = require_bureau(&state).await?;
+        let id = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("préinscription introuvable"))?;
+        applications::judge(state.pool(), id, reviewer, &verdict)
+            .await
+            .map_err(fail)?;
+        if verdict != "Admitted" {
+            return Ok("Candidature refusée : le candidat le voit sur sa page.".into());
+        }
+        return Ok(match crate::services::discord::create_invite(state.config()).await {
+            Some(url) => {
+                applications::set_invite(state.pool(), id, &url).await.map_err(fail)?;
+                "Admis. Sa page le redirige vers le serveur Discord (invitation valable une semaine)."
+                    .into()
+            }
+            None => "Admis, mais l'invitation n'a pas pu être créée pour l'instant : \
+                     sa page réessaiera quand il cliquera sur « Rejoindre le serveur »."
+                .into(),
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (id, verdict);
+        Ok(String::new())
+    }
+}
+
+/// Give an applicant a fresh private link, for one who lost theirs. The
+/// old link stops working. Bureau only; returns the full link to send.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau.
+#[server(ReissueApplicationLink, "/_fn")]
+pub async fn reissue_application_link(id: String) -> Result<String, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let reviewer = require_bureau(&state).await?;
+        let id = id
+            .parse::<uuid::Uuid>()
+            .map_err(|_| ServerFnError::new("préinscription introuvable"))?;
+        let token = crate::db::queries::applications::reissue_token(state.pool(), id, reviewer)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let origin = state.config().public_origin.trim_end_matches('/').to_string();
+        return Ok(format!("{origin}/candidature/{token}"));
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = id;
+        Ok(String::new())
+    }
 }
 
 /// The work handed in for a session. Bureau only.
@@ -3115,7 +3398,7 @@ pub async fn get_directory() -> Result<Vec<DirectoryEntry>, ServerFnError> {
             let all: Vec<String> = stored
                 .iter()
                 .filter_map(|o| BureauRole::parse(o))
-                .map(|b| format!("{} — {}", b.title(), b.plain()))
+                .map(|b| format!("{} — {}", gamecloud_shared::roles::undecorated(b.title()), b.plain()))
                 .collect();
             (!all.is_empty()).then(|| all.join(" · "))
         };

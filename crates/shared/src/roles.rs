@@ -271,6 +271,17 @@ pub enum BureauRole {
     Provisional,
 }
 
+/// A title without its leading emoji: "🛡️ Archonte Adjoint" reads
+/// "Archonte Adjoint". Discord keeps the emoji; the platform shows the
+/// words, next to an icon.
+#[must_use]
+pub fn undecorated(title: &str) -> &str {
+    title
+        .char_indices()
+        .find(|(_, c)| c.is_alphanumeric() || matches!(c, '\'' | '’' | '«' | '"'))
+        .map_or(title, |(i, _)| &title[i..])
+}
+
 impl BureauRole {
     /// Gamified display title shown in the HUD.
     #[must_use]
@@ -953,7 +964,7 @@ impl Authority {
         if self.can(Action::CreateProject) {
             push(
                 "Créer un projet et le soumettre à la relecture".into(),
-                format!("ton rang, {}", self.rank.title()),
+                format!("ton rang, {}", undecorated(self.rank.title())),
             );
         }
 
@@ -988,7 +999,7 @@ impl Authority {
         // first, in protocol order, that does. With several offices a
         // blanket "ton office" would be wrong half the time: a Secretary
         // who is also Event Manager generates QR codes as Event Manager.
-        let named = |b: BureauRole| format!("{} ({})", b.title(), b.plain());
+        let named = |b: BureauRole| format!("{} ({})", undecorated(b.title()), b.plain());
         let by = |test: &dyn Fn(BureauRole) -> bool| {
             self.office_where(test).map_or_else(|| "ton office".to_string(), named)
         };

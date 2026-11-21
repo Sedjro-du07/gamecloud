@@ -20,6 +20,7 @@ pub mod ladder;
 pub mod layout;
 pub mod list;
 pub mod notice;
+pub mod quote;
 pub mod segmented;
 pub mod sound;
 pub mod states;
@@ -38,10 +39,11 @@ pub use icon::{Icon, IconName, IconSize};
 pub use ladder::TitleLadder;
 pub use layout::{
     CardGrid, Cluster, Disclosure, Fact, Facts, FilterBar, Gap, Page, PageHeader, Panel, Pattern,
-    Section, Split, Stack, Step, Stepper, Steps,
+    Journey, Section, Split, Stack, Step, StepState, Stepper, Steps, TabPanel,
 };
 pub use list::{DenseList, ListGroup, ListRow, RowText, RowValue};
 pub use notice::{Notice, NoticeKind};
+pub use quote::Quote;
 pub use segmented::{segment, segment_with_icon, Segment, SegmentedControl};
 pub use sound::{play, Sound, SoundToggle};
 pub use states::{

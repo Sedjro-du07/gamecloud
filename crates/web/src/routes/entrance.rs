@@ -1,16 +1,22 @@
 //! Entrance test routes.
 //!
-//! - `POST /api/tests`                          — open a session (Bureau, multipart).
-//! - `GET  /api/tests/:id/subject`              — the PDF subject.
-//! - `POST /api/tests/:id/submit`               — hand in work (candidate, multipart).
-//! - `GET  /api/tests/submissions/:id/download` — a candidate's work (Bureau).
+//! - `POST /api/tests`                               — open a session (Bureau, multipart).
+//! - `GET  /api/tests/:id/subject`                   — the PDF subject (Bureau).
+//! - `POST /api/tests/:id/apply`                     — pre-register, no account (form).
+//! - `GET  /api/tests/candidature/:token/subject`    — the subject, once access is granted.
+//! - `POST /api/tests/candidature/:token/submit`     — hand in work (multipart).
+//! - `GET  /api/tests/candidature/:token/discord`    — an admitted applicant, to the server.
+//! - `GET  /api/tests/submissions/:id/download`      — work handed in by Discord sign-in (Bureau).
+//! - `GET  /api/tests/applications/:id/download`     — an applicant's work (Bureau).
 //!
-//! Listing, grading, closing and deleting are server functions. These four
-//! stay plain HTTP because they carry or return whole files.
+//! Listing, granting, grading, closing and deleting are server functions.
+//! These stay plain HTTP because they carry or return whole files, or
+//! answer a plain HTML form.
 //!
-//! Who may do what: the Bureau (any office holder) runs sessions and reads
-//! the work; an account whose Epitech address is not verified — somebody
-//! who is not a member yet — takes tests. Members never see any of it.
+//! Who may do what: the Bureau (any office holder) runs sessions, decides
+//! who may read a subject and reads the work. Anybody may pre-register for
+//! an open session; an applicant acts only through their private link,
+//! whose token is the whole of their identity here.
 
 use std::path::{Path as FsPath, PathBuf};
 
@@ -26,7 +32,7 @@ use gamecloud_shared::roles::Action;
 use uuid::Uuid;
 
 use crate::{
-    db::queries::{entrance, users},
+    db::queries::{applications, entrance, users},
     error::{WebError, WebResult},
     middleware::auth::CurrentUser,
     services::uploads::{self, Written},
@@ -42,8 +48,15 @@ pub fn router() -> Router<AppState> {
         // Both uploads stream to disk and enforce their own 500 MB cap.
         .route("/", post(open_session).layer(DefaultBodyLimit::disable()))
         .route("/{id}/subject", get(subject))
-        .route("/{id}/submit", post(submit).layer(DefaultBodyLimit::disable()))
+        .route("/{id}/apply", post(apply))
+        .route("/candidature/{token}/subject", get(applicant_subject))
+        .route(
+            "/candidature/{token}/submit",
+            post(applicant_submit).layer(DefaultBodyLimit::disable()),
+        )
+        .route("/candidature/{token}/discord", get(applicant_discord))
         .route("/submissions/{id}/download", get(download_submission))
+        .route("/applications/{id}/download", get(download_application_work))
 }
 
 /// Where subjects are kept.
@@ -87,8 +100,8 @@ fn answer(result: WebResult<serde_json::Value>, headers: &HeaderMap, ok: &str) -
 fn message(e: &WebError) -> String {
     match e {
         WebError::Unauthorized => "connecte-toi avec Discord d'abord".into(),
-        WebError::Forbidden => "réservé au Bureau et aux candidats".into(),
-        WebError::NotFound => "test introuvable".into(),
+        WebError::Forbidden => "accès refusé".into(),
+        WebError::NotFound => "test ou lien introuvable".into(),
         WebError::Validation(message) => message.clone(),
         other => {
             tracing::error!(error = ?other, "entrance test form failed");
@@ -249,7 +262,8 @@ async fn is_pdf(path: &FsPath) -> bool {
 // Subject
 // ---------------------------------------------------------------------------
 
-/// The subject. The Bureau always; a candidate while the session is open.
+/// The subject, for the Bureau. Applicants read it through their private
+/// link once the Bureau has granted them access.
 async fn subject(
     State(state): State<AppState>,
     user: Option<CurrentUser>,
@@ -258,14 +272,16 @@ async fn subject(
     let Some(user) = user else {
         return Ok(Redirect::to("/api/auth/login").into_response());
     };
-    let test = entrance::find(state.pool(), id).await?;
-    let member = crate::db::queries::users::is_member(state.pool(), user.id).await?;
-    let candidate_may = !member && test.closes_at > Utc::now();
-    if !candidate_may && !is_bureau(&state, &user).await? {
+    if !is_bureau(&state, &user).await? {
         return Err(WebError::Forbidden);
     }
+    let test = entrance::find(state.pool(), id).await?;
+    stream_subject(&state, &test).await
+}
+
+async fn stream_subject(state: &AppState, test: &entrance::EntranceTest) -> WebResult<Response> {
     stream_file(
-        &subjects_dir(&state),
+        &subjects_dir(state),
         &test.subject_storage,
         &test.subject_filename,
         test.subject_size,
@@ -275,36 +291,93 @@ async fn subject(
 }
 
 // ---------------------------------------------------------------------------
-// Handing in
+// Pre-registration and the applicant's private link
 // ---------------------------------------------------------------------------
 
-async fn submit(
-    State(state): State<AppState>,
-    user: Option<CurrentUser>,
-    Path(id): Path<Uuid>,
-    headers: HeaderMap,
-    multipart: Multipart,
-) -> Response {
-    let result: WebResult<serde_json::Value> = async {
-        let user = user.ok_or(WebError::Unauthorized)?;
-        if crate::db::queries::users::is_member(state.pool(), user.id).await? {
-            return Err(WebError::Validation(
-                "les tests d'entrée sont pour les candidats : tu es déjà membre".into(),
-            ));
-        }
-        receive_submission(&state, &user, id, multipart).await?;
-        Ok(serde_json::json!({ "ok": true }))
-    }
-    .await;
-    answer(result, &headers, "rendu")
+/// The pre-registration form.
+#[derive(serde::Deserialize)]
+struct ApplyForm {
+    full_name: String,
+    email: String,
+    github: String,
+    discord: String,
+    #[serde(default)]
+    motivation: Option<String>,
 }
 
-async fn receive_submission(state: &AppState, user: &CurrentUser, test_id: Uuid, mut multipart: Multipart) -> WebResult<()> {
+/// Where an applicant's private link leads.
+fn application_page(token: &str) -> String {
+    format!("/candidature/{token}")
+}
+
+/// Back to a page with `?ok=…`, or `?erreur=…` when the form failed.
+fn back_to(page: &str, result: WebResult<&str>) -> Response {
+    match result {
+        Ok(ok) => Redirect::to(&format!("{page}?ok={ok}")).into_response(),
+        Err(e) => {
+            let query = serde_urlencoded::to_string([("erreur", message(&e))]).unwrap_or_default();
+            Redirect::to(&format!("{page}?{query}")).into_response()
+        }
+    }
+}
+
+/// Pre-register for a session: no account needed. Lands on the
+/// applicant's private page, whose link is their only key.
+async fn apply(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    axum::Form(form): axum::Form<ApplyForm>,
+) -> Response {
+    let created = async {
+        let applicant = applications::validate(
+            &form.full_name,
+            &form.email,
+            &form.github,
+            &form.discord,
+            form.motivation.as_deref(),
+        )?;
+        applications::create(state.pool(), state.channels(), id, &applicant).await
+    }
+    .await;
+    match created {
+        Ok(token) => back_to(&application_page(&token), Ok("nouveau")),
+        Err(e) => back_to(&format!("/tests/{id}/preinscription"), Err(e)),
+    }
+}
+
+/// The subject, through the applicant's link, once access is granted.
+async fn applicant_subject(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> WebResult<Response> {
+    let application = applications::find_by_token(state.pool(), &token).await?;
+    if !matches!(application.status.as_str(), "Granted" | "HandedIn" | "Admitted" | "Rejected") {
+        return Err(WebError::Forbidden);
+    }
+    let test = entrance::find(state.pool(), application.test_id).await?;
+    stream_subject(&state, &test).await
+}
+
+/// Hand in work through the applicant's link.
+async fn applicant_submit(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    multipart: Multipart,
+) -> Response {
+    let page = application_page(&token);
+    let result = receive_hand_in(&state, &token, multipart).await;
+    back_to(&page, result.map(|()| "rendu"))
+}
+
+async fn receive_hand_in(state: &AppState, token: &str, mut multipart: Multipart) -> WebResult<()> {
     // Refuse before taking the bytes: no point storing half a gigabyte
-    // for a session that closed yesterday. `entrance::submit` checks
-    // again under a lock.
-    let test = entrance::find(state.pool(), test_id).await?;
-    if test.closes_at <= Utc::now() {
+    // for an application that may not hand in. `applications::hand_in`
+    // checks again under a lock.
+    let application = applications::find_by_token(state.pool(), token).await?;
+    if !matches!(application.status.as_str(), "Granted" | "HandedIn") {
+        return Err(WebError::Validation("tu ne peux pas rendre de travail pour ce test".into()));
+    }
+    if application.closes_at <= Utc::now() {
         return Err(WebError::Validation("ce test est terminé : les rendus sont fermés".into()));
     }
 
@@ -334,11 +407,11 @@ async fn receive_submission(state: &AppState, user: &CurrentUser, test_id: Uuid,
         (Err(e), _) => Err(e),
         (Ok(()), None) => Err(WebError::Validation("ajoute ton travail (un fichier)".into())),
         (Ok(()), Some((filename, stored, written))) => {
-            entrance::submit(
+            applications::hand_in(
                 state.pool(),
-                &entrance::NewSubmission {
-                    test_id,
-                    user_id: user.id,
+                state.channels(),
+                token,
+                &applications::HandIn {
                     filename,
                     size_bytes: i64::try_from(written.size).unwrap_or(i64::MAX),
                     checksum: &written.checksum,
@@ -366,6 +439,40 @@ async fn receive_submission(state: &AppState, user: &CurrentUser, test_id: Uuid,
     }
 }
 
+/// Send an admitted applicant to the Discord server. The invitation is
+/// created on admission; if Discord refused then, it is tried again here.
+async fn applicant_discord(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> Response {
+    let page = application_page(&token);
+    let invite = async {
+        let application = applications::find_by_token(state.pool(), &token).await?;
+        if application.status != "Admitted" {
+            return Err(WebError::Forbidden);
+        }
+        if let Some(url) = application.discord_invite_url {
+            return Ok(url);
+        }
+        let url = crate::services::discord::create_invite(state.config())
+            .await
+            .ok_or_else(|| {
+                WebError::Validation(
+                    "l'invitation au serveur n'a pas pu être créée : réessaie dans un instant, \
+                     ou demande-la au Bureau"
+                        .into(),
+                )
+            })?;
+        applications::set_invite(state.pool(), application.id, &url).await?;
+        Ok(url)
+    }
+    .await;
+    match invite {
+        Ok(url) => Redirect::to(&url).into_response(),
+        Err(e) => back_to(&page, Err(e)),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Reading the work
 // ---------------------------------------------------------------------------
@@ -390,6 +497,27 @@ async fn download_submission(
         "application/octet-stream",
     )
     .await
+}
+
+/// A pre-registered applicant's work, for the Bureau.
+async fn download_application_work(
+    State(state): State<AppState>,
+    user: Option<CurrentUser>,
+    Path(id): Path<Uuid>,
+) -> WebResult<Response> {
+    let Some(user) = user else {
+        return Ok(Redirect::to("/api/auth/login").into_response());
+    };
+    if !is_bureau(&state, &user).await? {
+        return Err(WebError::Forbidden);
+    }
+    let application = applications::find(state.pool(), id).await?;
+    let (Some(stored), Some(filename), Some(size)) =
+        (application.storage_name, application.filename, application.size_bytes)
+    else {
+        return Err(WebError::NotFound);
+    };
+    stream_file(&submissions_dir(&state), &stored, &filename, size, "application/octet-stream").await
 }
 
 /// Stream a stored file as a download.

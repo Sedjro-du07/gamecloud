@@ -261,8 +261,10 @@ impl DiscordChannels {
             // A Bureau meeting goes to the Bureau's own channel and
             // nowhere else. No fallback on purpose: announcing a private
             // meeting in the public channel because one id happens to be
-            // unset would be worse than not announcing it at all.
-            "BureauMeeting" | "BureauMeetingCancelled" => self.bureau,
+            // unset would be worse than not announcing it at all. Same
+            // rule for entrance-test applicants waiting on the Bureau:
+            // they are named, and are not members.
+            "BureauMeeting" | "BureauMeetingCancelled" | "EntranceApplication" => self.bureau,
             "AttendanceRecorded" => self.presences,
             "SharePosted" => self.shares,
             "ResourcePublished" => self.resources,

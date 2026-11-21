@@ -11,7 +11,7 @@ use crate::{
     components::ui::{
         vocab::track_choices, Button, ButtonKind, DenseList, EmptyState, ErrorState, Field, Form,
         FormActions, IconName, ListRow, Notice, NoticeKind, Page, PageHeader, Pattern, RowText,
-        RowsSkeleton, Section,
+        Quote, RowsSkeleton, Section, SegmentedControl, TabPanel, segment_with_icon,
     },
     api::DirectoryEntry,
     server_fns::{
@@ -56,7 +56,7 @@ fn MemberSuggestions(directory: Directory) -> impl IntoView {
 fn office_choices() -> Vec<(&'static str, String)> {
     gamecloud_shared::roles::BureauRole::ALL
         .iter()
-        .map(|b| (b.as_str(), format!("{} — {}", b.title(), b.plain())))
+        .map(|b| (b.as_str(), format!("{} — {}", gamecloud_shared::roles::undecorated(b.title()), b.plain())))
         .collect()
 }
 
@@ -406,6 +406,7 @@ pub fn AdminPage() -> impl IntoView {
     // server refuses anybody else regardless; hiding the forms spares the
     // rest of the Bureau a button that can only fail.
     let me = Resource::new(|| (), |()| async { get_me().await });
+    let (tab, set_tab) = signal("offices".to_string());
     let appoints = move || {
         me.get()
             .and_then(Result::ok)
@@ -415,18 +416,30 @@ pub fn AdminPage() -> impl IntoView {
     view! {
         <Page pattern=Pattern::Detail>
             <PageHeader title="Bureau" lead="Ce que seul le Bureau peut faire, et la trace que ça laisse. Chaque action est revérifiée par le serveur." />
-            <Suspense fallback=|| ()>
-                <Show when=appoints>
-                    <MemberSuggestions directory />
-                </Show>
-                <OfficesPanel directory can_appoint=Signal::derive(appoints) />
-                <Show when=appoints>
-                    <AppointPanel directory />
-                </Show>
-            </Suspense>
-            <GrantPanel />
-            <QuestPanel />
-            <AuditPanel />
+            <Quote salt=6 />
+            <SegmentedControl label="Sections du Bureau" options=vec![
+                segment_with_icon("offices", "Offices et nominations", IconName::Crown),
+                segment_with_icon("xp", "XP et quêtes", IconName::Lightning),
+                segment_with_icon("journal", "Journal", IconName::Scroll),
+            ] value=tab on_change=Callback::new(move |t| set_tab.set(t)) />
+            <TabPanel active=Signal::derive(move || tab.get() == "offices")>
+                <Suspense fallback=|| ()>
+                    <Show when=appoints>
+                        <MemberSuggestions directory />
+                    </Show>
+                    <OfficesPanel directory can_appoint=Signal::derive(appoints) />
+                    <Show when=appoints>
+                        <AppointPanel directory />
+                    </Show>
+                </Suspense>
+            </TabPanel>
+            <TabPanel active=Signal::derive(move || tab.get() == "xp")>
+                <GrantPanel />
+                <QuestPanel />
+            </TabPanel>
+            <TabPanel active=Signal::derive(move || tab.get() == "journal")>
+                <AuditPanel />
+            </TabPanel>
         </Page>
     }
 }

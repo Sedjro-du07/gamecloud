@@ -412,16 +412,15 @@ pub struct ChatMessage {
 /// The entrance tests page, as the viewer may see it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TestsView {
-    /// `bureau`, `candidate`, `member` (not for them) or `signin`.
+    /// `bureau`, `candidate` (signed in with Discord, not a member),
+    /// `member` (not for them) or `signin`.
     pub access: String,
-    /// Sessions the viewer may see: every one for the Bureau; open ones,
-    /// and ones they handed work in for, for a candidate.
+    /// Sessions the viewer may see: every one for the Bureau, the open
+    /// ones for everybody else.
     pub tests: Vec<TestItem>,
-    /// Not on the server and not admitted yet.
-    pub is_candidate: bool,
-    /// Admitted by the Bureau.
+    /// Admitted by the Bureau through the former Discord sign-in path.
     pub admitted: bool,
-    /// Their invitation to the server, once admitted.
+    /// Their invitation to the server, once admitted that way.
     pub invite_url: Option<String>,
 }
 
@@ -442,23 +441,77 @@ pub struct TestItem {
     pub open: bool,
     /// Size of the PDF subject.
     pub subject_size: String,
-    /// Work handed in so far (shown to the Bureau).
+    /// Work handed in through the former Discord sign-in (Bureau).
     pub submissions: i64,
-    /// The viewer's own hand-in, for a candidate.
-    pub mine: Option<MySubmission>,
+    /// Pre-registrations (Bureau).
+    pub applications: i64,
+    /// Pre-registrations waiting on the Bureau: access or verdict.
+    pub waiting: i64,
 }
 
-/// A candidate's own hand-in.
+/// Work handed in, as shown next to an application.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MySubmission {
+pub struct HandedInWork {
     /// Original filename.
     pub filename: String,
     /// Human-readable size.
     pub size: String,
     /// Pre-formatted time handed in.
     pub when: String,
-    /// `Admitted`, `Rejected`, or `None` while ungraded.
-    pub verdict: Option<String>,
+}
+
+/// An applicant's own page, reached through their private link.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApplicationView {
+    /// Session title.
+    pub test_title: String,
+    /// Session instructions.
+    pub test_description: Option<String>,
+    /// Pre-formatted closing time.
+    pub closes: String,
+    /// "3 j restants", "terminée"…
+    pub time_left: String,
+    /// Whether the session still accepts work.
+    pub open: bool,
+    /// Size of the PDF subject.
+    pub subject_size: String,
+    /// `Requested`, `Granted`, `Refused`, `HandedIn`, `Admitted`, `Rejected`.
+    pub status: String,
+    /// Their full name.
+    pub full_name: String,
+    /// Their Discord username.
+    pub discord: String,
+    /// What they handed in, if anything.
+    pub work: Option<HandedInWork>,
+    /// Their private link, in full, for them to keep.
+    pub link: String,
+}
+
+/// A pre-registration, as the Bureau handles it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApplicationItem {
+    /// Row id, for the decisions and the download link.
+    pub id: String,
+    /// Full name.
+    pub full_name: String,
+    /// E-mail.
+    pub email: String,
+    /// GitHub username.
+    pub github: String,
+    /// Discord username.
+    pub discord: String,
+    /// Why they want to join.
+    pub motivation: Option<String>,
+    /// `Requested`, `Granted`, `Refused`, `HandedIn`, `Admitted`, `Rejected`.
+    pub status: String,
+    /// Pre-formatted time they pre-registered.
+    pub registered: String,
+    /// What they handed in, if anything.
+    pub work: Option<HandedInWork>,
+    /// Their note with the work.
+    pub comment: Option<String>,
+    /// Their invitation to the server, once admitted.
+    pub invite_url: Option<String>,
 }
 
 /// A hand-in, as the Bureau reviews it.

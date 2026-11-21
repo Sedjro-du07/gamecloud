@@ -10,7 +10,7 @@ use leptos_router::{
 use crate::{
     components::{
         app_shell::AppShell,
-        ui::{ButtonLink, EmptyState, IconName, Page, PageHeader, Pattern},
+        ui::{ButtonKind, ButtonLink, EmptyState, IconName, Page, PageHeader, Pattern, Quote},
     },
     pages::{
         admin::AdminPage,
@@ -28,7 +28,7 @@ use crate::{
         reviews::ReviewsPage,
         scan::ScanPage,
         shares::SharesPage,
-        tests::TestsPage,
+        tests::{ApplicationPage, PreRegistrationPage, TestsPage},
         track_detail::TrackDetailPage,
         tracks::TrackPickerPage,
     },
@@ -65,10 +65,11 @@ pub fn Shell(
 fn NotFound() -> impl IntoView {
     view! {
         <Page pattern=Pattern::Detail>
-            <PageHeader title="Page introuvable" />
-            <EmptyState icon=IconName::Compass title="Cette adresse ne mène nulle part">
-                <ButtonLink href="/" icon=IconName::House>"Retour à l'accueil"</ButtonLink>
+            <PageHeader kicker="Erreur 404" title="Zone non cartographiée" lead="Cette adresse ne mène nulle part : le niveau n'existe pas, ou il a été déplacé." />
+            <EmptyState icon=IconName::Compass title="Retour au point de sauvegarde">
+                <ButtonLink kind=ButtonKind::Primary href="/" icon=IconName::House>"Retour à l'accueil"</ButtonLink>
             </EmptyState>
+            <Quote salt=7 />
         </Page>
     }
 }
@@ -116,6 +117,9 @@ pub fn App() -> impl IntoView {
                     <Route path=StaticSegment("resources") view=ResourcesPage />
                     <Route path=StaticSegment("shares") view=SharesPage />
                     <Route path=StaticSegment("tests") view=TestsPage />
+                    <Route path=(StaticSegment("tests"), ParamSegment("id"), StaticSegment("preinscription"))
+                        view=PreRegistrationPage />
+                    <Route path=(StaticSegment("candidature"), ParamSegment("token")) view=ApplicationPage />
                     <Route path=StaticSegment("kumo") view=KumoPage />
                     // Preview of the redesign's tokens and primitives; not in the menu.
                     <Route path=StaticSegment("design") view=DesignPage />

@@ -1,5 +1,80 @@
 # Changelog
 
+## Novembre 2026 — citations, salon du Bureau
+
+- **Citations inspirantes** partout : une citation du jour en pied de page
+  de chaque écran (différente selon la page), et en grand sur le tableau
+  de bord, l'accueil visiteur, le profil, les tests d'entrée, la page de
+  candidature et le Bureau, avec « Une autre » pour en tirer une nouvelle.
+  Une quarantaine de citations (game design, code, création, proverbes
+  africains, devises maison), chacune attribuée à ce que l'auteur a
+  réellement dit ou écrit — les attributions douteuses sont écartées.
+  Primitive `Quote`, montrée sur `/design`.
+- **Page 404** : « Zone non cartographiée », retour au point de sauvegarde.
+- Barres de défilement aux couleurs néon.
+- **Salon du Bureau** : `DISCORD_BUREAU_CHANNEL_ID` pointait vers
+  `🏛gc-bureau`, supprimé ; il pointe désormais vers `🏛bureau`
+  (`1443521467252740204`). Réunions du Bureau et demandes des candidats y
+  arrivent de nouveau.
+
+## Novembre 2026 — refonte de l'interface
+
+Tous les écrans, d'un coup, par les tokens et les primitives :
+
+- **Panneaux en verre** : chaque section, liste, état vide, conversation ou
+  formulaire de premier niveau repose sur un panneau à coins HUD. Plus
+  rien ne flotte sur l'image de fond, dont le voile s'épaissit sous le
+  contenu. Les pages « détail » prennent toute la largeur.
+- **Hiérarchie** : boutons en casse normale, action principale remplie du
+  dégradé néon, boutons fantômes vraiment discrets ; étiquettes en pastilles
+  lisibles ; chiffres clés en tuiles.
+- **Tableau de bord** : un bandeau (avatar, titres, XP, série, chiffres),
+  puis quêtes et prochaine séance côte à côte, à hauteur égale.
+- **Profil en onglets** (Titres, Tracks, Badges, Mes droits, Activité), tout
+  s'imprime quand même ; badges en grille, verrouillés tant qu'ils ne sont
+  pas obtenus ; les sept « Observateur » deviennent « Observateur · 7 tracks ».
+- **Bureau en onglets** (Offices et nominations, XP et quêtes, Journal) ;
+  le journal parle français (« XP attribuée à la main », montant, motif…).
+- **Candidature** : un parcours en quatre étapes montre où en est le
+  candidat, l'étape en cours brille.
+- **Accueil visiteur** : une seule action principale, « Rejoindre
+  l'association » ; se connecter et écrire à Kumo viennent ensuite.
+- **Effets** : apparition des blocs en cascade, reflet sur la barre d'XP,
+  liseré néon qui coule sous la barre du haut, balayage de lumière sur les
+  cartes, étapes numérotées en filigrane. Tous coupés si le système demande
+  moins d'animations.
+- Plus aucun emoji dans l'interface (Mes droits, menu des offices) ;
+  Discord garde les siens.
+- Nouvelles primitives montrées sur `/design` : `TabPanel`, `Journey`,
+  carte `locked`. Onglets défilants sur téléphone.
+
+## Novembre 2026 — tests d'entrée sans compte Discord
+
+Passer un test d'entrée exigeait de se connecter avec Discord. C'est
+remplacé par une **préinscription sur le site**, sans aucun compte
+(migration 0028, table `entrance_applications`) :
+
+1. Sur `/tests`, le candidat choisit un test ouvert et remplit
+   `/tests/:id/preinscription` : nom, e-mail, GitHub, nom d'utilisateur
+   Discord (l'identifiant unique, vérifié), motivation.
+2. Il arrive sur **sa page de suivi** `/candidature/:token`. Le lien est
+   sa seule clé : la plateforme n'envoie pas de mail, seul le hash du
+   jeton est stocké, et le Bureau peut lui renvoyer un nouveau lien
+   (l'ancien cesse de marcher).
+3. **Première demande** : le Bureau autorise ou refuse l'accès au sujet.
+   Le sujet n'est plus téléchargeable sans cette autorisation.
+4. Le candidat télécharge le sujet et **rend son travail** depuis sa page,
+   remplaçable jusqu'à la clôture.
+5. **Deuxième demande** : le Bureau admet ou refuse. L'admission crée
+   l'invitation au serveur, et « Rejoindre le serveur Discord » sur la
+   page du candidat l'y redirige.
+
+Chaque demande prévient le Bureau dans **son salon privé uniquement**
+(jamais le salon public : le message nomme quelqu'un qui n'est pas
+membre). Le formulaire public est limité comme la connexion
+(`RATE_LIMIT_SENSITIVE_PER_MIN`). Les rendus faits par l'ancien parcours
+Discord restent lisibles et jugeables par le Bureau (« Anciens rendus »).
+
 ## Septembre 2026 — plus de mail du tout
 
 La vérification d'adresse Epitech est supprimée, pas seulement désactivée

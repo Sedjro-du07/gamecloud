@@ -95,7 +95,7 @@ fn TrackCard(
     let body = option.specializations.join(" · ");
     let actions = if option.joined {
         view! {
-            <ButtonLink href=format!("/tracks/{}", option.id) trailing_icon=IconName::ArrowRight>"Voir le tableau"</ButtonLink>
+            <ButtonLink href=format!("/tracks/{}", option.id)>"Voir le tableau"</ButtonLink>
         }
         .into_any()
     } else {
@@ -172,7 +172,7 @@ pub fn TrackPickerPage() -> impl IntoView {
                 title="Tracks"
                 lead="Une track, c'est ta discipline dans l'association. Tu peux en rejoindre plusieurs : à partir de deux tracks actives, toute ton XP est multipliée."
             >
-                <ButtonLink kind=ButtonKind::Ghost href="/profile" trailing_icon=IconName::ArrowRight>"Mon profil"</ButtonLink>
+                <ButtonLink kind=ButtonKind::Ghost href="/profile">"Mon profil"</ButtonLink>
             </PageHeader>
             <Suspense fallback=|| view! { <GridSkeleton cards=8 /> }>
                 {move || me.get().map(|result| match result {

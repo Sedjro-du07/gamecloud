@@ -1,9 +1,9 @@
 //! Entrance tests and admission.
 //!
-//! The Bureau opens a session with a PDF subject and a closing time;
-//! candidates hand in one piece of work per session, replaceable until it
-//! closes; the Bureau admits or turns each one down. Admission is what
-//! lets somebody who is not on the Discord server sign up.
+//! The Bureau opens a session with a PDF subject and a closing time.
+//! Applicants pre-register and hand in their work through
+//! [`super::applications`]. The hand-ins below were made through the
+//! former Discord sign-in path; the Bureau can still read and grade them.
 
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -40,14 +40,21 @@ pub struct EntranceTest {
     pub closes_at: DateTime<Utc>,
     /// When the session was opened.
     pub created_at: DateTime<Utc>,
-    /// Work handed in so far.
+    /// Work handed in so far through the former Discord sign-in.
     pub submissions: i64,
+    /// Pre-registrations.
+    pub applications: i64,
+    /// Pre-registrations waiting on the Bureau: access or verdict.
+    pub waiting: i64,
 }
 
 const SELECT_TEST: &str = r#"
     SELECT t.id, t.title, t.description, t.subject_filename, t.subject_size,
            t.subject_storage, t.closes_at, t.created_at,
-           (SELECT COUNT(*) FROM entrance_submissions s WHERE s.test_id = t.id) AS submissions
+           (SELECT COUNT(*) FROM entrance_submissions s WHERE s.test_id = t.id) AS submissions,
+           (SELECT COUNT(*) FROM entrance_applications a WHERE a.test_id = t.id) AS applications,
+           (SELECT COUNT(*) FROM entrance_applications a
+             WHERE a.test_id = t.id AND a.status IN ('Requested', 'HandedIn')) AS waiting
       FROM entrance_tests t
 "#;
 
@@ -172,11 +179,15 @@ pub async fn close_now(pool: &PgPool, id: Uuid) -> WebResult<()> {
 /// `NotFound` when it does not exist.
 pub async fn delete(pool: &PgPool, id: Uuid) -> WebResult<(String, Vec<String>)> {
     let mut tx = pool.begin().await?;
-    let work: Vec<String> =
-        sqlx::query_scalar("SELECT storage_name FROM entrance_submissions WHERE test_id = $1")
-            .bind(id)
-            .fetch_all(&mut *tx)
-            .await?;
+    let work: Vec<String> = sqlx::query_scalar(
+        "SELECT storage_name FROM entrance_submissions WHERE test_id = $1 \
+         UNION ALL \
+         SELECT storage_name FROM entrance_applications \
+          WHERE test_id = $1 AND storage_name IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
     let subject: String =
         sqlx::query_scalar("DELETE FROM entrance_tests WHERE id = $1 RETURNING subject_storage")
             .bind(id)
@@ -237,19 +248,6 @@ pub async fn submissions(pool: &PgPool, test_id: Uuid) -> WebResult<Vec<Submissi
     .await?)
 }
 
-/// Everything one candidate handed in.
-///
-/// # Errors
-/// Propagates database errors.
-pub async fn my_submissions(pool: &PgPool, user_id: Uuid) -> WebResult<Vec<Submission>> {
-    Ok(
-        sqlx::query_as::<_, Submission>(&format!("{SELECT_SUBMISSION} WHERE s.user_id = $1"))
-            .bind(user_id)
-            .fetch_all(pool)
-            .await?,
-    )
-}
-
 /// One piece of work.
 ///
 /// # Errors
@@ -260,112 +258,6 @@ pub async fn find_submission(pool: &PgPool, id: Uuid) -> WebResult<Submission> {
         .fetch_optional(pool)
         .await?
         .ok_or(WebError::NotFound)
-}
-
-/// Work about to be recorded.
-#[derive(Debug, Clone)]
-pub struct NewSubmission<'a> {
-    /// Session.
-    pub test_id: Uuid,
-    /// Candidate.
-    pub user_id: Uuid,
-    /// Original filename.
-    pub filename: &'a str,
-    /// Size in bytes.
-    pub size_bytes: i64,
-    /// SHA-256.
-    pub checksum: &'a str,
-    /// Name it is stored under.
-    pub storage_name: &'a str,
-    /// The candidate's note.
-    pub comment: Option<&'a str>,
-}
-
-/// Record a hand-in, replacing the candidate's previous one for the same
-/// session. Returns the stored name of the work it replaced, if any.
-///
-/// The closing time is checked under a lock on the session, so a hand-in
-/// racing the deadline is either in or out, never half-recorded.
-///
-/// # Errors
-/// `Validation` when the session is closed or the work already graded.
-pub async fn submit(pool: &PgPool, new: &NewSubmission<'_>) -> WebResult<Option<String>> {
-    if new.comment.is_some_and(|c| c.chars().count() > MAX_COMMENT_CHARS) {
-        return Err(WebError::Validation(format!(
-            "message trop long ({MAX_COMMENT_CHARS} caractères maximum)"
-        )));
-    }
-    let comment = new.comment.map(str::trim).filter(|c| !c.is_empty());
-
-    let mut tx = pool.begin().await?;
-    let closes_at: DateTime<Utc> =
-        sqlx::query_scalar("SELECT closes_at FROM entrance_tests WHERE id = $1 FOR SHARE")
-            .bind(new.test_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(WebError::NotFound)?;
-    if closes_at <= Utc::now() {
-        return Err(WebError::Validation("ce test est terminé : les rendus sont fermés".into()));
-    }
-
-    let previous: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT storage_name, verdict FROM entrance_submissions \
-          WHERE test_id = $1 AND user_id = $2 FOR UPDATE",
-    )
-    .bind(new.test_id)
-    .bind(new.user_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-
-    let replaced = match previous {
-        Some((_, Some(_))) => {
-            return Err(WebError::Validation(
-                "ton rendu a déjà été corrigé : il ne peut plus être remplacé".into(),
-            ))
-        }
-        Some((old, None)) => {
-            sqlx::query(
-                r#"
-                UPDATE entrance_submissions
-                   SET filename = $3, size_bytes = $4, checksum = $5, storage_name = $6,
-                       comment = $7, submitted_at = NOW()
-                 WHERE test_id = $1 AND user_id = $2
-                "#,
-            )
-            .bind(new.test_id)
-            .bind(new.user_id)
-            .bind(new.filename)
-            .bind(new.size_bytes)
-            .bind(new.checksum)
-            .bind(new.storage_name)
-            .bind(comment)
-            .execute(&mut *tx)
-            .await?;
-            Some(old)
-        }
-        None => {
-            sqlx::query(
-                r#"
-                INSERT INTO entrance_submissions (test_id, user_id, filename, size_bytes,
-                                                  checksum, storage_name, comment)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                "#,
-            )
-            .bind(new.test_id)
-            .bind(new.user_id)
-            .bind(new.filename)
-            .bind(new.size_bytes)
-            .bind(new.checksum)
-            .bind(new.storage_name)
-            .bind(comment)
-            .execute(&mut *tx)
-            .await?;
-            None
-        }
-    };
-
-    tx.commit().await?;
-    Ok(replaced)
 }
 
 /// Grade a piece of work: `Admitted` or `Rejected`. Returns the candidate.

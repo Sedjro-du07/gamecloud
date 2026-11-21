@@ -121,7 +121,7 @@ fn Sessions(
     let list = if events.is_empty() {
         view! {
             <EmptyState icon=IconName::CalendarBlank title="Rien de programmé">
-                <ButtonLink kind=ButtonKind::Ghost href="/calendar" trailing_icon=IconName::ArrowRight>"Voir le calendrier"</ButtonLink>
+                <ButtonLink kind=ButtonKind::Ghost href="/calendar">"Voir le calendrier"</ButtonLink>
             </EmptyState>
         }
         .into_any()

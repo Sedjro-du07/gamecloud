@@ -58,7 +58,7 @@ pub fn ReviewsPage() -> impl IntoView {
                                             .map(|item| {
                                                 let href = format!("/projects/{}", item.project_id);
                                                 let end = view! {
-                                                    <ButtonLink kind=ButtonKind::Ghost href=href.clone() trailing_icon=IconName::ArrowRight>
+                                                    <ButtonLink kind=ButtonKind::Ghost href=href.clone()>
                                                         "Relire"
                                                     </ButtonLink>
                                                 }

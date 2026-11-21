@@ -278,3 +278,77 @@ pub fn Step(
 pub fn CardGrid(children: Children) -> impl IntoView {
     view! { <div class="ui-grid">{children()}</div> }
 }
+
+/// One panel of a set of tabs, chosen with a [`super::SegmentedControl`]
+/// above it. Hidden on screen when another tab is chosen, but always
+/// printed: a page that prints keeps everything on paper.
+#[component]
+pub fn TabPanel(
+    /// Whether this tab is the one chosen.
+    #[prop(into)]
+    active: Signal<bool>,
+    children: Children,
+) -> impl IntoView {
+    view! {
+        <div class="ui-tabpanel" class:ui-tabpanel--hidden=move || !active.get()>
+            {children()}
+        </div>
+    }
+}
+
+/// Where one step of a [`Journey`] stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepState {
+    /// Behind.
+    Done,
+    /// Where things stand now.
+    Current,
+    /// Ahead.
+    Todo,
+    /// Stopped here.
+    Failed,
+}
+
+impl StepState {
+    const fn class(self) -> &'static str {
+        match self {
+            Self::Done => "ui-journey__step ui-journey__step--done",
+            Self::Current => "ui-journey__step ui-journey__step--current",
+            Self::Todo => "ui-journey__step",
+            Self::Failed => "ui-journey__step ui-journey__step--failed",
+        }
+    }
+
+    const fn icon(self) -> IconName {
+        match self {
+            Self::Done => IconName::Check,
+            Self::Current => IconName::Hourglass,
+            Self::Todo => IconName::Circle,
+            Self::Failed => IconName::XCircle,
+        }
+    }
+}
+
+/// A process in a few steps, and where it stands: done, now, ahead, or
+/// stopped. Read left to right; stacked on phones.
+#[component]
+pub fn Journey(
+    /// What the process is, for screen readers.
+    label: &'static str,
+    /// Each step's name and state, in order.
+    steps: Vec<(&'static str, StepState)>,
+) -> impl IntoView {
+    view! {
+        <ol class="ui-journey" aria-label=label>
+            {steps
+                .into_iter()
+                .map(|(name, state)| view! {
+                    <li class=state.class() aria-current=(state == StepState::Current).then_some("step")>
+                        <span class="ui-journey__dot"><Icon name=state.icon() /></span>
+                        <span class="ui-journey__label">{name}</span>
+                    </li>
+                })
+                .collect_view()}
+        </ol>
+    }
+}

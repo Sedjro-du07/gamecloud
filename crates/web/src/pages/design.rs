@@ -12,7 +12,7 @@ use crate::components::ui::{
     ChatLog, Cluster, DemoState, DenseList, EmptyState, ErrorState, ErrorText, Fact, Facts, Field,
     FilterBar, Form, FormActions, GridSkeleton, Icon, IconName, IconSize, ListGroup, ListRow,
     Message, MessageSide, Notice, NoticeKind, PageHeader, Panel, RowText, RowValue, RowsSkeleton,
-    SegmentedControl, SignInState, StreakMarks, Tag, TagKind, TitleLadder, TrackTag, Visual,
+    SegmentedControl, SignInState, TabPanel, Journey, StepState, Quote, StreakMarks, Tag, TagKind, TitleLadder, TrackTag, Visual,
     XpProgress,
 };
 use gamecloud_shared::roles::GlobalRank;
@@ -158,7 +158,7 @@ fn ButtonsSection() -> impl IntoView {
                 <div class="ui-preview__row">
                     <Button kind=ButtonKind::Primary icon=IconName::Plus>"Ouvrir un test"</Button>
                     <Button icon=IconName::DownloadSimple>"Télécharger"</Button>
-                    <Button kind=ButtonKind::Ghost trailing_icon=IconName::ArrowRight>"Tout le calendrier"</Button>
+                    <Button kind=ButtonKind::Ghost>"Tout le calendrier"</Button>
                 </div>
             </div>
         </section>
@@ -250,6 +250,11 @@ fn CardsSection() -> impl IntoView {
                         "Palier franchi."
                     </Card>
                 </State>
+                <State name="à débloquer">
+                    <Card kicker="Exemple · badge" title="Jammeur" locked=true meta="A participé à une Game Jam.">
+                        "Pas encore obtenu."
+                    </Card>
+                </State>
                 <State name="avec visuel (à fournir)">
                     <Card kicker="Exemple · projet" title="Visuel du projet" media=CardMedia::Pending
                         meta="Le visuel réel remplace ce cadre.">
@@ -287,6 +292,70 @@ fn HeaderSection() -> impl IntoView {
                 <PageHeader title="Quêtes" lead="Exemple : le Bureau les propose, elles se valident toutes seules." filters>
                     <Button kind=ButtonKind::Primary icon=IconName::Plus>"Ouvrir une quête"</Button>
                 </PageHeader>
+            </Panel>
+        </section>
+    }
+}
+
+/// Tabs: a segmented control over panels that print all together.
+#[component]
+fn TabsSection() -> impl IntoView {
+    let (tab, set_tab) = signal("titres".to_string());
+    view! {
+        <section class="ui-preview__section">
+            <SectionHead label="Primitive" title="Onglets"
+                note="Un contrôle segmenté choisit le panneau affiché. À l'impression, tous les panneaux sortent : une page qui s'imprime garde tout." />
+            <Panel>
+                <SegmentedControl
+                    label="Exemple d'onglets"
+                    options=vec![segment("titres", "Titres"), segment("badges", "Badges")]
+                    value=tab
+                    on_change=Callback::new(move |v| set_tab.set(v))
+                />
+                <TabPanel active=Signal::derive(move || tab.get() == "titres")>
+                    <p class="ui-body">"Exemple : l'échelle des titres."</p>
+                </TabPanel>
+                <TabPanel active=Signal::derive(move || tab.get() == "badges")>
+                    <p class="ui-body">"Exemple : la grille des badges."</p>
+                </TabPanel>
+            </Panel>
+        </section>
+    }
+}
+
+/// Quotes: the quote of the day, and the footer's line.
+#[component]
+fn QuoteSection() -> impl IntoView {
+    view! {
+        <section class="ui-preview__section">
+            <SectionHead label="Primitive" title="Citation"
+                note="La citation du jour, différente selon l'endroit ; « Une autre » en propose une nouvelle. La variante compacte tient sur une ligne, en pied de page." />
+            <Quote salt=0 shuffle=true />
+            <Quote salt=1 compact=true />
+        </section>
+    }
+}
+
+/// A process in a few steps.
+#[component]
+fn JourneySection() -> impl IntoView {
+    view! {
+        <section class="ui-preview__section">
+            <SectionHead label="Primitive" title="Parcours"
+                note="Quelques étapes et où on en est : faites, en cours (qui brille), à venir, ou arrêtées. Exemple : une candidature à un test d'entrée." />
+            <Panel>
+                <Journey label="Exemple de parcours" steps=vec![
+                    ("Préinscription", StepState::Done),
+                    ("Accès au sujet", StepState::Done),
+                    ("Rendu du travail", StepState::Current),
+                    ("Décision du Bureau", StepState::Todo),
+                ] />
+                <Journey label="Exemple de parcours arrêté" steps=vec![
+                    ("Préinscription", StepState::Done),
+                    ("Accès au sujet", StepState::Failed),
+                    ("Rendu du travail", StepState::Todo),
+                    ("Décision du Bureau", StepState::Todo),
+                ] />
             </Panel>
         </section>
     }
@@ -525,6 +594,9 @@ pub fn DesignPage() -> impl IntoView {
                 <FieldsSection />
                 <CardsSection />
                 <HeaderSection />
+                <TabsSection />
+                <JourneySection />
+                <QuoteSection />
                 <ListSection />
                 <GridSection />
                 <DetailSection />
