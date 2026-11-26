@@ -218,6 +218,7 @@ const COUNT_QUERIES: [&str; 10] = [
          WHERE created_at >= $1 AND created_at < $2
            AND source <> 'Manual'
            AND COALESCE(description, '') NOT LIKE 'Report de l''XP %'
+           AND COALESCE(description, '') NOT LIKE 'Synchro Kumo%'
         UNION ALL
         SELECT user_id, scanned_at::date FROM attendance WHERE scanned_at >= $1 AND scanned_at < $2
         UNION ALL

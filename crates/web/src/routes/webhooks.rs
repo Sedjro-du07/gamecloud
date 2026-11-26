@@ -383,7 +383,7 @@ async fn credit_draftbot_level(
     Ok("ok")
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(super) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
