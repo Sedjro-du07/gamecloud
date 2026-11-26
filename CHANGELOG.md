@@ -24,6 +24,13 @@
   (`/fiche/imprimer`, document noir sur blanc). Onglet « Implication » sur
   le profil. Le Bureau a un onglet « Implication » avec tous les membres et
   « Toutes les fiches (PDF) ». Migration 0029.
+- **Implication maximale garantie** (migration 0030) : le président et le
+  vice-président par leur office, et yange4legend, dragon710538 et
+  y4n1s_79131 nommément, affichent toujours « 5 / 5, implication
+  maximale » et 3 crédits recommandés. Leur analyse (score, axes, mois)
+  reste calculée normalement. Le président ou le vice-président l'accorde
+  ou la retire depuis l'onglet Implication du Bureau (tracé au journal).
+- La fiche PDF ne contient plus le tableau mois par mois.
 - **Correctif** : sur certaines pages (dont le Bureau et le profil), la
   citation était choisie différemment par le serveur (64 bits) et le
   navigateur (32 bits), ce qui cassait l'hydratation de la page. Calcul

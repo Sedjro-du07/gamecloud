@@ -117,9 +117,20 @@ pub struct Member {
     pub track_lead: bool,
     /// Co-leads a track.
     pub track_co_lead: bool,
+    /// Named by the President or the Vice-President for guaranteed
+    /// maximal involvement.
+    pub involvement_max: bool,
 }
 
 impl Member {
+    /// Always shown at maximal involvement: the President and the
+    /// Vice-President by their office, and the members they named.
+    #[must_use]
+    pub fn maximal(&self) -> bool {
+        self.involvement_max
+            || self.offices.iter().any(|o| matches!(o.as_str(), "President" | "VicePresident"))
+    }
+
     /// What their responsibilities guarantee.
     #[must_use]
     pub fn responsibilities(&self) -> Responsibilities {
@@ -133,7 +144,7 @@ impl Member {
 
 const SELECT_MEMBER: &str = r#"
     SELECT u.id, u.discord_username, u.first_name, u.last_name, u.promotion, u.created_at,
-           u.offices,
+           u.offices, u.involvement_max,
            EXISTS (SELECT 1 FROM track_memberships m
                     WHERE m.user_id = u.id AND m.left_at IS NULL AND m.track_role = 'Lead') AS track_lead,
            EXISTS (SELECT 1 FROM track_memberships m
@@ -332,7 +343,9 @@ pub struct Record {
     pub computed_level: Option<u8>,
     /// The President's or Vice-President's decision, if any.
     pub review: Review,
-    /// The level that counts: forced, or computed.
+    /// Guaranteed maximal involvement, whatever the analysis says.
+    pub maximal: bool,
+    /// The level that counts: maximal, forced, or computed.
     pub level: Option<u8>,
     /// Credits that level earns.
     pub credits: u8,
@@ -383,10 +396,12 @@ pub async fn records(pool: &PgPool, members: Vec<Member>, now: DateTime<Utc>) ->
             let walked = walk(&activities, floor);
             let computed_level = year_level(&walked);
             let review = decided.get(&member.id).cloned().unwrap_or_default();
-            let level = review
-                .forced_level
-                .and_then(|l| u8::try_from(l).ok())
-                .or(computed_level);
+            let maximal = member.maximal();
+            let level = if maximal {
+                Some(5)
+            } else {
+                review.forced_level.and_then(|l| u8::try_from(l).ok()).or(computed_level)
+            };
             let months = theirs
                 .iter()
                 .zip(walked)
@@ -399,6 +414,7 @@ pub async fn records(pool: &PgPool, members: Vec<Member>, now: DateTime<Utc>) ->
                 floor,
                 computed_level,
                 review,
+                maximal,
                 level,
                 credits: level.map_or(0, credits_for),
             }
@@ -434,6 +450,34 @@ pub async fn save_identity(
         .bind(promotion)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+/// Grant or lift a member's guaranteed maximal involvement.
+///
+/// # Errors
+/// `NotFound` when the account does not exist.
+pub async fn set_maximal(pool: &PgPool, user_id: Uuid, maximal: bool, by: Uuid) -> WebResult<()> {
+    let mut tx = pool.begin().await?;
+    let changed = sqlx::query(
+        "UPDATE users SET involvement_max = $2 WHERE id = $1 AND involvement_max IS DISTINCT FROM $2",
+    )
+    .bind(user_id)
+    .bind(maximal)
+    .execute(&mut *tx)
+    .await?;
+    if changed.rows_affected() > 0 {
+        audit::record_in_tx(
+            &mut tx,
+            Some(by),
+            if maximal { "involvement.max_granted" } else { "involvement.max_lifted" },
+            Some("user"),
+            Some(user_id),
+            serde_json::json!({}),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 

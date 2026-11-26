@@ -48,6 +48,15 @@ fn level_text(level: Option<u8>) -> String {
     level.map_or_else(|| "—".to_string(), |l| format!("{l} / 5"))
 }
 
+/// The level that counts, with its mention when it is maximal.
+fn headline_level(v: &InvolvementView) -> String {
+    if v.maximal {
+        "5 / 5, implication maximale".to_string()
+    } else {
+        level_text(v.level)
+    }
+}
+
 /// Where a member stands: this month, the year, and what to do next.
 #[component]
 #[allow(clippy::needless_pass_by_value)] // Leptos prop convention
@@ -56,10 +65,11 @@ pub fn InvolvementSummary(
     view: InvolvementView,
 ) -> impl IntoView {
     let next = match (view.current_level, view.to_next) {
+        _ if view.maximal => "Implication maximale : niveau 5 et 3 crédits recommandés, quoi qu'il arrive. Le détail ci-dessous reste ton activité réelle.".to_string(),
         (Some(5), _) | (_, None) => "Tu es au niveau maximal ce mois-ci.".to_string(),
         (_, Some(points)) => format!("Encore {points} points ce mois-ci pour le niveau suivant."),
     };
-    let decision = view.forced_level.map(|l| {
+    let decision = view.forced_level.filter(|_| !view.maximal).map(|l| {
         let why = view.force_reason.clone().unwrap_or_default();
         view! {
             <Notice>{format!("Niveau de l'année fixé à {l} / 5 par le président ou le vice-président : {why}")}</Notice>
@@ -81,7 +91,7 @@ pub fn InvolvementSummary(
             {decision}
             <Facts>
                 <Fact label="Ce mois-ci" value=level_text(view.current_level) />
-                <Fact label="Sur l'année" value=level_text(view.level) />
+                <Fact label="Sur l'année" value=headline_level(&view) />
                 <Fact label="Crédits recommandés" value=format!("{} / 3", view.credits) />
             </Facts>
             <p class="ui-body">{next}</p>
@@ -263,7 +273,7 @@ fn SheetDocument(
         view.responsibilities.join(", ")
     };
     let today = chrono::Utc::now().format("%d/%m/%Y").to_string();
-    let decided = view.forced_level.map(|l| {
+    let decided = view.forced_level.filter(|_| !view.maximal).map(|l| {
         format!(
             "Niveau fixé à {l} / 5 par le président ou le vice-président (niveau calculé : {}). Motif : {}",
             level_text(view.computed_level),
@@ -282,25 +292,11 @@ fn SheetDocument(
                     <tr><th scope="row">"Promotion"</th><td>{view.promotion.clone().unwrap_or_else(|| "Non renseignée".into())}</td></tr>
                     <tr><th scope="row">"Pseudo Discord"</th><td>{view.username.clone()}</td></tr>
                     <tr><th scope="row">"Responsabilités"</th><td>{responsibilities}</td></tr>
-                    <tr><th scope="row">"Niveau d'implication sur l'année"</th><td><strong>{level_text(view.level)}</strong></td></tr>
+                    <tr><th scope="row">"Niveau d'implication sur l'année"</th><td><strong>{headline_level(&view)}</strong></td></tr>
                     <tr><th scope="row">"Crédits recommandés"</th><td><strong>{format!("{} / 3", view.credits)}</strong></td></tr>
                 </tbody>
             </table>
             {decided.map(|d| view! { <p class="ui-doc__note">{d}</p> })}
-
-            <h2 class="ui-doc__h2">"Mois par mois"</h2>
-            <table class="ui-doc__table ui-doc__table--grid">
-                <thead><tr><th scope="col">"Mois"</th><th scope="col">"Score / 100"</th><th scope="col">"Niveau / 5"</th></tr></thead>
-                <tbody>
-                    {view.months.iter().map(|m| view! {
-                        <tr>
-                            <td>{if m.current { format!("{} (30 derniers jours)", m.label) } else { m.label.clone() }}</td>
-                            <td>{m.score}</td>
-                            <td>{m.level}</td>
-                        </tr>
-                    }).collect_view()}
-                </tbody>
-            </table>
 
             <h2 class="ui-doc__h2">"Remarques du président"</h2>
             <p class="ui-doc__remarks">{view.remarks.clone().unwrap_or_else(|| "—".into())}</p>
@@ -376,7 +372,9 @@ fn BoardRow(row: InvolvementView, can_decide: bool, on_changed: Callback<String>
     } else {
         view! { <Tag>"0 crédit"</Tag> }.into_any()
     };
+    let maximal_tag = row.maximal.then(|| view! { <Tag kind=TagKind::Accent icon=IconName::Crown>"Implication maximale"</Tag> });
     let end = view! {
+        {maximal_tag}
         <RowValue text=format!("année {}", level_text(row.level)) />
         {credits_tag}
         <ButtonLink kind=ButtonKind::Ghost href=format!("/fiche/imprimer?membre={}", row.username) icon=IconName::FileText>"Fiche"</ButtonLink>
@@ -404,10 +402,13 @@ fn DecideForm(row: InvolvementView, on_changed: Callback<String>) -> impl IntoVi
     let (level, set_level) = signal(row.forced_level.map_or_else(|| "0".to_string(), |l| l.to_string()));
     let (reason, set_reason) = signal(row.force_reason.clone().unwrap_or_default());
     let (remarks, set_remarks) = signal(row.remarks.clone().unwrap_or_default());
+    let (maximal, set_maximal) = signal(row.maximal_by_name);
+    // The two offices hold it by right: nothing to grant or lift.
+    let by_office = row.maximal && !row.maximal_by_name;
     let (notice, set_notice) = signal(Option::<Result<(), String>>::None);
-    let save = Action::new(move |(l, r, m): &(u8, String, String)| {
-        let (l, r, m) = (*l, r.clone(), m.clone());
-        async move { save_involvement_review(username.get_value(), l, r, m).await }
+    let save = Action::new(move |(l, r, m, x): &(u8, String, String, bool)| {
+        let (l, r, m, x) = (*l, r.clone(), m.clone(), *x);
+        async move { save_involvement_review(username.get_value(), l, r, m, x).await }
     });
     Effect::new(move |_| {
         if let Some(result) = save.value().get() {
@@ -424,6 +425,7 @@ fn DecideForm(row: InvolvementView, on_changed: Callback<String>) -> impl IntoVi
         format!("niveau-{}", row.username),
         format!("motif-{}", row.username),
         format!("remarques-{}", row.username),
+        format!("maximale-{}", row.username),
     );
     view! {
         <Disclosure summary="Décider pour l'année">
@@ -434,8 +436,14 @@ fn DecideForm(row: InvolvementView, on_changed: Callback<String>) -> impl IntoVi
             <Form on:submit=move |ev| {
                 ev.prevent_default();
                 let l = level.get().parse::<u8>().unwrap_or(0);
-                save.dispatch((l, reason.get(), remarks.get()));
+                save.dispatch((l, reason.get(), remarks.get(), maximal.get()));
             }>
+                <Field id=ids.3.clone() label="Implication maximale garantie" wide=true
+                    hint=if by_office { "Acquise par l'office de président ou de vice-président." } else { "Niveau 5 et 3 crédits, quoi qu'il arrive ; l'analyse reste calculée normalement." }>
+                    <input id=ids.3.clone() type="checkbox" disabled=by_office
+                        prop:checked=move || by_office || maximal.get()
+                        on:change=move |ev| set_maximal.set(event_target_checked(&ev)) />
+                </Field>
                 <Field id=ids.0.clone() label="Niveau de l'année">
                     <select id=ids.0.clone() class="ui-control" prop:value=move || level.get()
                         on:change=move |ev| set_level.set(event_target_value(&ev))>

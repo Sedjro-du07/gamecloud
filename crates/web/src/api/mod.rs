@@ -1055,6 +1055,12 @@ pub struct InvolvementView {
     pub force_reason: Option<String>,
     /// Remarks printed on the sheet.
     pub remarks: Option<String>,
+    /// Guaranteed maximal involvement: the President, the Vice-President
+    /// and the members they named. The analysis above stays as computed.
+    pub maximal: bool,
+    /// Granted by name, so the President or the Vice-President can lift it
+    /// (the two offices hold it by right).
+    pub maximal_by_name: bool,
     /// The level that counts.
     pub level: Option<u8>,
     /// Credits recommended, out of 3.

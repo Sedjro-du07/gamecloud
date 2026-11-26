@@ -1250,6 +1250,9 @@ fn audit_label(action: &str) -> String {
         "project.released" => "Projet publié",
         "quest.created" => "Quête ouverte",
         "resource.validated" => "Ressource validée",
+        "involvement.reviewed" => "Implication : décision du président ou du vice-président",
+        "involvement.max_granted" => "Implication maximale garantie",
+        "involvement.max_lifted" => "Implication maximale retirée",
         other => return other.to_string(),
     }
     .to_string()
@@ -3648,7 +3651,7 @@ fn present_involvement(r: &crate::db::queries::involvement::Record) -> Involveme
         school_year: crate::db::queries::involvement::school_year_label(r.school_year),
         responsibilities,
         current_score: current.map(|b| b.score),
-        current_level: r.months.last().map(|m| m.month.level),
+        current_level: if r.maximal { Some(5) } else { r.months.last().map(|m| m.month.level) },
         to_next: current.and_then(|b| points_to_next(b.score)),
         hints: current.map(|b| involvement_hints(&b)).unwrap_or_default(),
         axes,
@@ -3667,6 +3670,8 @@ fn present_involvement(r: &crate::db::queries::involvement::Record) -> Involveme
         forced_level: r.review.forced_level.and_then(|l| u8::try_from(l).ok()),
         force_reason: r.review.force_reason.clone(),
         remarks: r.review.remarks.clone(),
+        maximal: r.maximal,
+        maximal_by_name: r.member.involvement_max,
         level: r.level,
         credits: r.credits,
     }
@@ -3762,6 +3767,7 @@ pub async fn save_involvement_review(
     forced_level: u8,
     reason: String,
     remarks: String,
+    maximal: bool,
 ) -> Result<(), ServerFnError> {
     #[cfg(feature = "ssr")]
     {
@@ -3789,12 +3795,13 @@ pub async fn save_involvement_review(
         )
         .await
         .map_err(fail)?;
+        involvement::set_maximal(state.pool(), target, maximal, viewer).await.map_err(fail)?;
         return Ok(());
     }
 
     #[cfg(not(feature = "ssr"))]
     {
-        let _ = (username, forced_level, reason, remarks);
+        let _ = (username, forced_level, reason, remarks, maximal);
         Ok(())
     }
 }
