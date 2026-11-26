@@ -2466,6 +2466,7 @@ pub async fn add_contributor(
         )
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
+        crate::services::github::grant_repo_access(&state, id, target).await;
         return Ok(());
     }
 

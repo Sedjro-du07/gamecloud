@@ -53,6 +53,77 @@ pub struct Repository {
     /// Whether the repository is private.
     #[serde(default)]
     pub private: bool,
+    /// The branch everybody merges into.
+    #[serde(default = "default_branch")]
+    pub default_branch: String,
+}
+
+fn default_branch() -> String {
+    "main".to_string()
+}
+
+/// The labels a project's issues are sorted by: one per track, plus the
+/// milestones. Production tags each task with the track that owns it.
+const LABELS: [(&str, &str, &str); 9] = [
+    ("track:engineering", "1f6feb", "Code, architecture, export"),
+    ("track:game-design", "8957e5", "Règles, niveaux, équilibrage"),
+    ("track:narrative", "bf3989", "Histoire, dialogues, textes"),
+    ("track:visual-art", "d29922", "Sprites, décors, interface"),
+    ("track:audio", "2da44e", "Bruitages, musique, mixage"),
+    ("track:production", "6e7781", "Planning, périmètre, coordination"),
+    ("track:qa", "cf222e", "Tests, bugs, accessibilité"),
+    ("track:marketing", "0969da", "Page itch.io, captures, bande-annonce"),
+    ("jalon", "000000", "Prototype, alpha, bêta, version 1.0"),
+];
+
+/// The files every new project repository starts with, besides the README
+/// and the Godot `.gitignore` GitHub writes itself: one folder per kind of
+/// work, so each track mostly touches its own files.
+fn starter_files(project: &str) -> Vec<(String, String)> {
+    let readme = format!(
+        "# {project}\n\nProjet de l'association GameCloud (Epitech Bénin), suivi sur la plateforme GameCloud OS.\n\n\
+## Où va quoi\n\n\
+| Dossier | Contenu | Track |\n|---|---|---|\n\
+| `scenes/` | Scènes Godot (une scène = un propriétaire à la fois) | Engineering, Game Design |\n\
+| `scripts/` | Code | Engineering |\n\
+| `niveaux/` | Un niveau par fichier | Game Design |\n\
+| `art/` | Images exportées (PNG) | Visual Art |\n\
+| `audio/` | Sons et musiques exportés (OGG, WAV) | Audio |\n\
+| `dialogues/` | Fichiers Ink (.ink) | Narrative |\n\
+| `docs/` | GDD, planning, plan de test | Game Design, Production, QA |\n\
+| `promo/` | Captures, GIF, textes itch.io | Marketing |\n\n\
+Les fichiers sources lourds (.kra, .aseprite, projets audio) restent dans le dossier partagé de l'équipe, pas ici.\n\n\
+Avant de contribuer : lire [CONTRIBUER.md](CONTRIBUER.md).\n"
+    );
+    let contribuer = "# Contribuer\n\n\
+## La règle\n\n\
+`main` est toujours jouable. On n'y pousse jamais directement : tout passe par une pull request relue.\n\n\
+## Le chemin d'une tâche\n\n\
+1. Une *issue* sur le tableau du projet, étiquetée par track (`track:art`…) et assignée.\n\
+2. Une petite branche, qui vit de quelques heures à 2 ou 3 jours : `code/saut-du-joueur`, `art/tileset-foret`, `son/musique-menu`, `recit/dialogue-intro`, `design/niveau-2`.\n\
+3. Une pull request, relue par une personne de la track concernée.\n\
+4. Fusion dans `main`, puis la branche est supprimée.\n\n\
+## Qui relit quoi\n\n\
+| Ce qui change | Relu par |\n|---|---|\n\
+| Code | un Relecteur Engineering |\n\
+| Images | un Relecteur Visual Art |\n\
+| Sons | un Relecteur Audio |\n\
+| Dialogues | un Relecteur Narrative |\n\
+| Niveaux, réglages | un Relecteur Game Design |\n\n\
+## Trois règles\n\n\
+- Une scène Godot n'a qu'un propriétaire à la fois : découpez en petites scènes.\n\
+- Dans le dépôt, les fichiers exportés (PNG, OGG), pas les sources lourdes.\n\
+- Pas besoin du terminal : GitHub Desktop, ou « Add file > Upload files » sur le site.\n\n\
+## Jalons\n\n\
+À chaque jalon (prototype, alpha, bêta, 1.0), une étiquette de version sur `main` et le build déposé sur la plateforme, qui le relit par track.\n";
+    let mut files = vec![
+        ("README.md".to_string(), readme),
+        ("CONTRIBUER.md".to_string(), contribuer.to_string()),
+    ];
+    for dir in ["scenes", "scripts", "niveaux", "art", "audio", "dialogues", "docs", "promo"] {
+        files.push((format!("{dir}/.gitkeep"), String::new()));
+    }
+    files
 }
 
 impl GitHub {
@@ -112,6 +183,8 @@ impl GitHub {
                 "has_issues": true,
                 "has_wiki": false,
                 "auto_init": true,
+                // GitHub's own template: keeps Godot's cache and exports out.
+                "gitignore_template": "Godot",
             });
 
             let response = self
@@ -204,6 +277,120 @@ impl GitHub {
                 "github add webhook: {}",
                 response.status()
             )))
+        }
+    }
+
+    /// Lay the starter files on top of the first commit, in one commit,
+    /// through the Git data API (a commit per file would bury the
+    /// history under nine "create file" entries).
+    ///
+    /// # Errors
+    /// `Upstream` when GitHub refuses or is unreachable.
+    pub async fn seed_repo(&self, repo: &Repository, project: &str) -> WebResult<()> {
+        let base = format!("/repos/{}/{}", self.org, repo.name);
+        let get = |path: String| async move {
+            let response = self
+                .request(reqwest::Method::GET, &path)
+                .send()
+                .await
+                .map_err(|e| WebError::Upstream(format!("github seed: {e}")))?;
+            if !response.status().is_success() {
+                return Err(WebError::Upstream(format!("github seed: {} on {path}", response.status())));
+            }
+            response
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|e| WebError::Upstream(format!("github seed decode: {e}")))
+        };
+        let post = |method: reqwest::Method, path: String, body: serde_json::Value| async move {
+            let response = self
+                .request(method, &path)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| WebError::Upstream(format!("github seed: {e}")))?;
+            if !response.status().is_success() {
+                return Err(WebError::Upstream(format!("github seed: {} on {path}", response.status())));
+            }
+            response
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|e| WebError::Upstream(format!("github seed decode: {e}")))
+        };
+
+        let branch = &repo.default_branch;
+        let head = get(format!("{base}/git/ref/heads/{branch}")).await?;
+        let parent = head["object"]["sha"].as_str().unwrap_or_default().to_string();
+        let commit = get(format!("{base}/git/commits/{parent}")).await?;
+        let base_tree = commit["tree"]["sha"].as_str().unwrap_or_default().to_string();
+
+        let entries: Vec<serde_json::Value> = starter_files(project)
+            .into_iter()
+            .map(|(path, content)| serde_json::json!({ "path": path, "mode": "100644", "type": "blob", "content": content }))
+            .collect();
+        let tree = post(reqwest::Method::POST, format!("{base}/git/trees"), serde_json::json!({ "base_tree": base_tree, "tree": entries })).await?;
+        let new_commit = post(
+            reqwest::Method::POST,
+            format!("{base}/git/commits"),
+            serde_json::json!({
+                "message": "Structure du projet GameCloud",
+                "tree": tree["sha"],
+                "parents": [parent],
+            }),
+        )
+        .await?;
+        post(
+            reqwest::Method::PATCH,
+            format!("{base}/git/refs/heads/{branch}"),
+            serde_json::json!({ "sha": new_commit["sha"] }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Create the track and milestone labels. A label that already exists
+    /// is not an error.
+    pub async fn add_labels(&self, repo: &str) {
+        for (name, color, description) in LABELS {
+            let result = self
+                .request(reqwest::Method::POST, &format!("/repos/{}/{repo}/labels", self.org))
+                .json(&serde_json::json!({ "name": name, "color": color, "description": description }))
+                .send()
+                .await;
+            if let Err(e) = result {
+                tracing::warn!(error = %e, label = name, "github: label not created");
+            }
+        }
+    }
+
+    /// Protect the default branch: no direct push, one approving review.
+    ///
+    /// GitHub only allows this on private repositories for paid plans, so
+    /// on a free organisation it succeeds once the repository is public —
+    /// which is why it is tried again when a project is released.
+    ///
+    /// # Errors
+    /// `Upstream` when GitHub refuses (403 on a private repository of a
+    /// free organisation) or is unreachable.
+    pub async fn protect_branch(&self, repo: &str, branch: &str) -> WebResult<()> {
+        let response = self
+            .request(
+                reqwest::Method::PUT,
+                &format!("/repos/{}/{repo}/branches/{branch}/protection", self.org),
+            )
+            .json(&serde_json::json!({
+                "required_status_checks": null,
+                "enforce_admins": false,
+                "required_pull_request_reviews": { "required_approving_review_count": 1 },
+                "restrictions": null,
+            }))
+            .send()
+            .await
+            .map_err(|e| WebError::Upstream(format!("github protect branch: {e}")))?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(WebError::Upstream(format!("github protect branch: {}", response.status())))
         }
     }
 
@@ -522,6 +709,17 @@ pub async fn provision_project_repo(
         }
     };
 
+    // The structure every project starts with, and the track labels.
+    if let Err(e) = github.seed_repo(&repo, new.name).await {
+        tracing::warn!(error = %e, repo = %repo.name, "github: starter files not added");
+    }
+    github.add_labels(&repo.name).await;
+    // Refused on a private repository of a free organisation; tried again
+    // when the project is released and the repository goes public.
+    if let Err(e) = github.protect_branch(&repo.name, &repo.default_branch).await {
+        tracing::info!(error = %e, repo = %repo.name, "github: main not protected yet (private repository)");
+    }
+
     // Push access for the author, when they have linked a GitHub login.
     // Without one there is nobody to add — and linking it is also what
     // makes their commits pay XP, so the profile page nags for it.
@@ -566,9 +764,41 @@ pub async fn provision_project_repo(
     Some(repo.html_url)
 }
 
+/// Give a project contributor push access to its repository, when the
+/// project has one and they have linked a GitHub login. Failures are
+/// logged: crediting somebody must never fail because GitHub did.
+pub async fn grant_repo_access(state: &crate::state::AppState, project_id: uuid::Uuid, user_id: uuid::Uuid) {
+    let Some(github) = state.github() else { return };
+    let row: Result<Option<(Option<String>, Option<String>)>, _> = sqlx::query_as(
+        "SELECT p.github_repo_url, u.github_username FROM projects p, users u WHERE p.id = $1 AND u.id = $2",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(state.pool())
+    .await;
+    let Ok(Some((Some(url), Some(login)))) = row else {
+        return;
+    };
+    let Some(repo) = crate::db::queries::projects::repo_name_from_url(&url) else { return };
+    if let Err(e) = github.add_collaborator(repo, &login).await {
+        tracing::warn!(error = %e, repo, login, "github: contributor not given access");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_project_starts_with_the_track_folders() {
+        let files = starter_files("Mon jeu");
+        let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        for dir in ["scenes", "scripts", "niveaux", "art", "audio", "dialogues", "docs", "promo"] {
+            assert!(paths.contains(&format!("{dir}/.gitkeep").as_str()), "{dir}");
+        }
+        assert!(files[0].1.starts_with("# Mon jeu"));
+        assert!(paths.contains(&"CONTRIBUER.md"));
+    }
 
     #[test]
     fn plain_titles_slug_cleanly() {

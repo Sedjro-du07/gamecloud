@@ -200,6 +200,7 @@ async fn add_contributor(
         body.role_in_project.as_deref(),
     )
     .await?;
+    crate::services::github::grant_repo_access(&state, id, body.user_id).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -341,6 +342,10 @@ async fn release(
             tracing::warn!(error = %e, repo, "github: repository not opened on release");
         } else {
             tracing::info!(repo, "github: repository opened on release");
+            // Public now, so a free organisation can protect `main` too.
+            if let Err(e) = github.protect_branch(repo, "main").await {
+                tracing::warn!(error = %e, repo, "github: main not protected on release");
+            }
         }
     }
 
