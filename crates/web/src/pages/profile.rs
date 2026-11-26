@@ -217,6 +217,7 @@ fn SheetBody(
                 segment_with_icon("titres", "Titres", IconName::Crown),
                 segment_with_icon("tracks", "Tracks", IconName::Compass),
                 segment_with_icon("badges", "Badges", IconName::Medal),
+                segment_with_icon("implication", "Implication", IconName::Medal),
                 segment_with_icon("droits", "Mes droits", IconName::Key),
                 segment_with_icon("activite", "Activité", IconName::Lightning),
             ] value=tab on_change=Callback::new(move |t| set_tab.set(t)) />
@@ -228,6 +229,9 @@ fn SheetBody(
             </TabPanel>
             <TabPanel active=Signal::derive(move || tab.get() == "badges")>
                 <Section title="Badges" meta=format!("{held} / {total}")><Badges badges=sheet.badges /></Section>
+            </TabPanel>
+            <TabPanel active=Signal::derive(move || tab.get() == "implication")>
+                <crate::pages::involvement::MyInvolvementPanel />
             </TabPanel>
             <TabPanel active=Signal::derive(move || tab.get() == "droits")>
                 <Section title="Mes droits" lead="Ce que tu peux faire sur la plateforme, et ce qui te le donne."><Rights /></Section>

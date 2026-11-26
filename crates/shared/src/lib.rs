@@ -36,6 +36,7 @@
 
 pub mod badges;
 pub mod errors;
+pub mod involvement;
 pub mod mentions;
 pub mod models;
 pub mod projects;

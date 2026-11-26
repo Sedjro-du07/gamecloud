@@ -29,6 +29,7 @@ use crate::{
         scan::ScanPage,
         shares::SharesPage,
         tests::{ApplicationPage, PreRegistrationPage, TestsPage},
+        involvement::{SheetPage, SheetPrintPage},
         track_detail::TrackDetailPage,
         tracks::TrackPickerPage,
     },
@@ -120,6 +121,8 @@ pub fn App() -> impl IntoView {
                     <Route path=(StaticSegment("tests"), ParamSegment("id"), StaticSegment("preinscription"))
                         view=PreRegistrationPage />
                     <Route path=(StaticSegment("candidature"), ParamSegment("token")) view=ApplicationPage />
+                    <Route path=StaticSegment("fiche") view=SheetPage />
+                    <Route path=(StaticSegment("fiche"), StaticSegment("imprimer")) view=SheetPrintPage />
                     <Route path=StaticSegment("kumo") view=KumoPage />
                     // Preview of the redesign's tokens and primitives; not in the menu.
                     <Route path=StaticSegment("design") view=DesignPage />

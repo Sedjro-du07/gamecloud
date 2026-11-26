@@ -420,6 +420,7 @@ pub fn AdminPage() -> impl IntoView {
             <SegmentedControl label="Sections du Bureau" options=vec![
                 segment_with_icon("offices", "Offices et nominations", IconName::Crown),
                 segment_with_icon("xp", "XP et quêtes", IconName::Lightning),
+                segment_with_icon("implication", "Implication", IconName::Medal),
                 segment_with_icon("journal", "Journal", IconName::Scroll),
             ] value=tab on_change=Callback::new(move |t| set_tab.set(t)) />
             <TabPanel active=Signal::derive(move || tab.get() == "offices")>
@@ -436,6 +437,9 @@ pub fn AdminPage() -> impl IntoView {
             <TabPanel active=Signal::derive(move || tab.get() == "xp")>
                 <GrantPanel />
                 <QuestPanel />
+            </TabPanel>
+            <TabPanel active=Signal::derive(move || tab.get() == "implication")>
+                <crate::pages::involvement::InvolvementBoardPanel />
             </TabPanel>
             <TabPanel active=Signal::derive(move || tab.get() == "journal")>
                 <AuditPanel />

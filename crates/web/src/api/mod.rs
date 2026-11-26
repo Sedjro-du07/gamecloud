@@ -989,3 +989,85 @@ mod tests {
         assert!((quest_percent(9, 4) - 100.0).abs() < f64::EPSILON);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Involvement
+// ---------------------------------------------------------------------------
+
+/// One axis of the involvement score.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InvolvementAxis {
+    /// "Production", "Présence"…
+    pub label: String,
+    /// Points earned; `None` when the axis could not be earned (no session held).
+    pub points: Option<u32>,
+    /// Points available.
+    pub max: u32,
+}
+
+/// One month of a member's involvement.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InvolvementMonth {
+    /// "novembre 2026".
+    pub label: String,
+    /// The month in progress, measured over its last 30 days.
+    pub current: bool,
+    /// Score out of 100.
+    pub score: u32,
+    /// Level kept that month.
+    pub level: u8,
+}
+
+/// A member's involvement for the school year, and what the sheet prints.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InvolvementView {
+    /// Discord username: how the Bureau names them.
+    pub username: String,
+    /// First name, as they typed it.
+    pub first_name: Option<String>,
+    /// Last name.
+    pub last_name: Option<String>,
+    /// Tek1…Tek5, MSc, Autre.
+    pub promotion: Option<String>,
+    /// "2026-2027".
+    pub school_year: String,
+    /// Offices and track titles that guarantee a floor.
+    pub responsibilities: Vec<String>,
+    /// Score of the month in progress.
+    pub current_score: Option<u32>,
+    /// Level of the month in progress.
+    pub current_level: Option<u8>,
+    /// Points still needed for the next level, this month.
+    pub to_next: Option<u32>,
+    /// This month's score, axis by axis.
+    pub axes: Vec<InvolvementAxis>,
+    /// What would raise the score most, in plain words.
+    pub hints: Vec<String>,
+    /// The months of the year so far.
+    pub months: Vec<InvolvementMonth>,
+    /// Lowest level their responsibilities allow.
+    pub floor: u8,
+    /// Average of the months, before any decision.
+    pub computed_level: Option<u8>,
+    /// Level forced by the President or the Vice-President.
+    pub forced_level: Option<u8>,
+    /// Why.
+    pub force_reason: Option<String>,
+    /// Remarks printed on the sheet.
+    pub remarks: Option<String>,
+    /// The level that counts.
+    pub level: Option<u8>,
+    /// Credits recommended, out of 3.
+    pub credits: u8,
+}
+
+/// The Bureau's involvement board.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InvolvementBoard {
+    /// "2026-2027".
+    pub school_year: String,
+    /// The viewer may force levels and write remarks (President, Vice-President).
+    pub can_decide: bool,
+    /// Every member.
+    pub rows: Vec<InvolvementView>,
+}

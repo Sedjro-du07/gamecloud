@@ -26,7 +26,7 @@ use leptos::prelude::*;
 use crate::api::{
     AuditLine, CalendarEvent, CalendarRights, DirectoryEntry, EventAttendee, EventDraft, FileItem, LeaderboardView, MeView, ProjectCard,
     ProjectDetailView, QrTicket, KumoChatView, QuestItem, ResourceItem, ReviewItem, SharesView, SheetView, SubmissionItem, TestsView, TrackBoard,
-    TrackOption, ApplicationItem, ApplicationView, TestItem,
+    TrackOption, ApplicationItem, ApplicationView, TestItem, InvolvementBoard, InvolvementView,
 };
 
 // Types only constructed inside the server bodies.
@@ -3589,4 +3589,255 @@ pub async fn get_my_rights() -> Result<Vec<gamecloud_shared::roles::Right>, Serv
 
     #[cfg(not(feature = "ssr"))]
     Ok(Vec::new())
+}
+
+// ---------------------------------------------------------------------------
+// Involvement
+// ---------------------------------------------------------------------------
+
+/// What would raise a month's score most, in plain words.
+#[cfg(feature = "ssr")]
+fn involvement_hints(b: &gamecloud_shared::involvement::Breakdown) -> Vec<String> {
+    use gamecloud_shared::involvement::{HELP_MAX, PRESENCE_MAX, PRODUCTION_MAX, REGULARITY_MAX};
+    let mut gaps: Vec<(u32, &str)> = vec![
+        (PRODUCTION_MAX - b.production, "Produis : pousse du code, contribue à un projet, publie, partage un fichier ou une ressource."),
+        (REGULARITY_MAX - b.regularity, "Sois régulier : un peu d'activité sur plus de jours compte davantage qu'un gros coup isolé."),
+        (HELP_MAX - b.help, "Entraide : relis le projet de quelqu'un ou accomplis une quête."),
+    ];
+    if let Some(p) = b.presence {
+        gaps.push((PRESENCE_MAX - p, "Viens aux séances et scanne le QR sur place."));
+    }
+    gaps.sort_by(|a, z| z.0.cmp(&a.0));
+    gaps.into_iter().filter(|(gap, _)| *gap > 0).take(2).map(|(_, h)| h.to_string()).collect()
+}
+
+/// A record, as the page and the sheet show it.
+#[cfg(feature = "ssr")]
+fn present_involvement(r: &crate::db::queries::involvement::Record) -> InvolvementView {
+    use crate::api::{InvolvementAxis, InvolvementMonth};
+    use gamecloud_shared::involvement::{points_to_next, HELP_MAX, PRESENCE_MAX, PRODUCTION_MAX, REGULARITY_MAX};
+    use gamecloud_shared::roles::{undecorated, BureauRole};
+
+    let current = r.current();
+    let axes = current.map_or_else(Vec::new, |b| {
+        vec![
+            InvolvementAxis { label: "Production".into(), points: Some(b.production), max: PRODUCTION_MAX },
+            InvolvementAxis { label: "Présence".into(), points: b.presence, max: PRESENCE_MAX },
+            InvolvementAxis { label: "Régularité".into(), points: Some(b.regularity), max: REGULARITY_MAX },
+            InvolvementAxis { label: "Entraide".into(), points: Some(b.help), max: HELP_MAX },
+        ]
+    });
+    let mut responsibilities: Vec<String> = r
+        .member
+        .offices
+        .iter()
+        .filter_map(|o| BureauRole::parse(o))
+        .map(|b| format!("{} ({})", undecorated(b.title()), b.plain()))
+        .collect();
+    if r.member.track_lead {
+        responsibilities.push("Responsable de track".into());
+    }
+    if r.member.track_co_lead {
+        responsibilities.push("Co-responsable de track".into());
+    }
+    InvolvementView {
+        username: r.member.discord_username.clone().unwrap_or_default(),
+        first_name: r.member.first_name.clone(),
+        last_name: r.member.last_name.clone(),
+        promotion: r.member.promotion.clone(),
+        school_year: crate::db::queries::involvement::school_year_label(r.school_year),
+        responsibilities,
+        current_score: current.map(|b| b.score),
+        current_level: r.months.last().map(|m| m.month.level),
+        to_next: current.and_then(|b| points_to_next(b.score)),
+        hints: current.map(|b| involvement_hints(&b)).unwrap_or_default(),
+        axes,
+        months: r
+            .months
+            .iter()
+            .map(|m| InvolvementMonth {
+                label: m.label.clone(),
+                current: m.current,
+                score: m.month.breakdown.score,
+                level: m.month.level,
+            })
+            .collect(),
+        floor: r.floor,
+        computed_level: r.computed_level,
+        forced_level: r.review.forced_level.and_then(|l| u8::try_from(l).ok()),
+        force_reason: r.review.force_reason.clone(),
+        remarks: r.review.remarks.clone(),
+        level: r.level,
+        credits: r.credits,
+    }
+}
+
+/// The signed-in member's involvement and sheet. `None` when signed out.
+///
+/// # Errors
+/// Returns a `ServerFnError` on database failure.
+#[server(GetMyInvolvement, "/_fn")]
+pub async fn get_my_involvement() -> Result<Option<InvolvementView>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::db::queries::involvement;
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+        let Some(state) = ctx::state() else { return Ok(None) };
+        let Some(user_id) = ctx::current_user_id(&state).await else { return Ok(None) };
+        let member = involvement::member(state.pool(), user_id).await.map_err(fail)?;
+        let mut records = involvement::records(state.pool(), vec![member], chrono::Utc::now())
+            .await
+            .map_err(fail)?;
+        return Ok(records.pop().as_ref().map(present_involvement));
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(None)
+}
+
+/// Save the signed-in member's name and promotion, for their sheet.
+///
+/// # Errors
+/// Returns a `ServerFnError` when signed out or the form is invalid.
+#[server(SaveMyIdentity, "/_fn")]
+pub async fn save_my_identity(first_name: String, last_name: String, promotion: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let user_id = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("connecte-toi d'abord"))?;
+        crate::db::queries::involvement::save_identity(state.pool(), user_id, &first_name, &last_name, &promotion)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (first_name, last_name, promotion);
+        Ok(())
+    }
+}
+
+/// Every member's involvement. Bureau only.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau.
+#[server(GetInvolvementBoard, "/_fn")]
+pub async fn get_involvement_board() -> Result<InvolvementBoard, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::db::queries::involvement;
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let viewer = require_bureau(&state).await?;
+        let can_decide = crate::db::queries::users::load_authority(state.pool(), viewer)
+            .await
+            .map_err(fail)?
+            .can_appoint();
+        let now = chrono::Utc::now();
+        let members = involvement::members(state.pool()).await.map_err(fail)?;
+        let rows = involvement::records(state.pool(), members, now).await.map_err(fail)?;
+        return Ok(InvolvementBoard {
+            school_year: involvement::school_year_label(involvement::school_year_of(now)),
+            can_decide,
+            rows: rows.iter().map(present_involvement).collect(),
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(InvolvementBoard::default())
+}
+
+/// Force a member's level for the year (0 lifts it) and write the remarks
+/// printed on their sheet. President and Vice-President only.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller may not decide, the member is
+/// unknown, or a forced level comes without a reason.
+#[server(SaveInvolvementReview, "/_fn")]
+pub async fn save_involvement_review(
+    username: String,
+    forced_level: u8,
+    reason: String,
+    remarks: String,
+) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::db::queries::involvement;
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let viewer = require_bureau(&state).await?;
+        let authority = crate::db::queries::users::load_authority(state.pool(), viewer).await.map_err(fail)?;
+        if !authority.can_appoint() {
+            return Err(ServerFnError::new("réservé au président et au vice-président"));
+        }
+        let target = crate::db::queries::users::find_by_reference(state.pool(), username.trim().trim_start_matches('@'))
+            .await
+            .map_err(fail)?
+            .ok_or_else(|| ServerFnError::new(format!("aucun membre « {username} »")))?;
+        let year = involvement::school_year_of(chrono::Utc::now());
+        involvement::save_review(
+            state.pool(),
+            target,
+            year,
+            (forced_level > 0).then_some(forced_level),
+            Some(&reason),
+            Some(&remarks),
+            viewer,
+        )
+        .await
+        .map_err(fail)?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (username, forced_level, reason, remarks);
+        Ok(())
+    }
+}
+
+/// Sheets to print: the viewer's own by default; a member's, or everyone's,
+/// for the Bureau.
+///
+/// # Errors
+/// Returns a `ServerFnError` when signed out, or when someone outside the
+/// Bureau asks for another member's sheet.
+#[server(GetSheets, "/_fn")]
+pub async fn get_sheets(member: Option<String>, all: bool) -> Result<Vec<InvolvementView>, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::db::queries::involvement;
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let viewer = ctx::current_user_id(&state)
+            .await
+            .ok_or_else(|| ServerFnError::new("connecte-toi d'abord"))?;
+        let wanted = member.as_deref().map(str::trim).filter(|m| !m.is_empty());
+        let members = if all || wanted.is_some() {
+            require_bureau(&state).await?;
+            if all {
+                involvement::members(state.pool()).await.map_err(fail)?
+            } else {
+                let name = wanted.unwrap_or_default().trim_start_matches('@');
+                let id = crate::db::queries::users::find_by_reference(state.pool(), name)
+                    .await
+                    .map_err(fail)?
+                    .ok_or_else(|| ServerFnError::new(format!("aucun membre « {name} »")))?;
+                vec![involvement::member(state.pool(), id).await.map_err(fail)?]
+            }
+        } else {
+            vec![involvement::member(state.pool(), viewer).await.map_err(fail)?]
+        };
+        let records = involvement::records(state.pool(), members, chrono::Utc::now()).await.map_err(fail)?;
+        return Ok(records.iter().map(present_involvement).collect());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (member, all);
+        Ok(Vec::new())
+    }
 }

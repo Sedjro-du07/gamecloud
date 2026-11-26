@@ -1,5 +1,34 @@
 # Changelog
 
+## Novembre 2026 — implication, crédits et fiche pour l'école
+
+- **Niveau d'implication de 1 à 5**, calculé par la plateforme à partir de
+  ce qu'elle enregistre déjà, mois par mois sur l'année scolaire
+  (septembre-août), le mois en cours sur ses 30 derniers jours. Score sur
+  100 : production 35 (GitHub, projets lancés et publiés, partages,
+  ressources acceptées), présence 30 (séances scannées sur séances
+  tenues), régularité 25 (jours actifs), entraide 10 (relectures, quêtes).
+  Seuils 15 / 35 / 60 / 80. Sans séance dans le mois, la présence ne
+  pénalise personne. L'XP donnée à la main et l'XP reportée de Kumo ne
+  comptent pas. Calcul dans `gamecloud_shared::involvement`, testé.
+- **Il faut le mériter** : pas de période de grâce. On monte dès que c'est
+  mérité, on descend d'un niveau par mois au plus. **Planchers** : Bureau
+  et responsable de track au niveau 3, co-responsable au niveau 2. Le
+  **président et le vice-président** peuvent forcer le niveau de l'année
+  (motif obligatoire, tracé au journal) et écrire les remarques de la fiche.
+- **Crédits recommandés** : 0, 0, 1, 2, 3 selon le niveau de l'année
+  (moyenne des mois). 3 crédits exigent le niveau 5. L'école décide.
+- **Ma fiche** (`/fiche`, nouveau lien du menu « Moi ») : chacun y renseigne
+  prénom, nom et promotion (Tek1 à Tek5, MSc, Autre), voit son niveau, le
+  détail des axes et ce qui lui manque, et exporte sa fiche en PDF
+  (`/fiche/imprimer`, document noir sur blanc). Onglet « Implication » sur
+  le profil. Le Bureau a un onglet « Implication » avec tous les membres et
+  « Toutes les fiches (PDF) ». Migration 0029.
+- **Correctif** : sur certaines pages (dont le Bureau et le profil), la
+  citation était choisie différemment par le serveur (64 bits) et le
+  navigateur (32 bits), ce qui cassait l'hydratation de la page. Calcul
+  désormais en entiers de taille fixe.
+
 ## Novembre 2026 — citations, salon du Bureau
 
 - **Citations inspirantes** partout : une citation du jour en pied de page

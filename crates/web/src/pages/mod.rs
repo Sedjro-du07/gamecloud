@@ -4,6 +4,7 @@ pub mod admin;
 pub mod calendar;
 pub mod design;
 pub mod home;
+pub mod involvement;
 pub mod kumo;
 pub mod new_project;
 pub mod leaderboard;

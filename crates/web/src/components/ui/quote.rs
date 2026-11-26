@@ -6,7 +6,7 @@
 //! have said or written, with the work when there is one; the association's
 //! own mottos are signed by the platform.
 
-use leptos::prelude::*;
+use leptos::{either::Either, prelude::*};
 
 use super::{
     button::{Button, ButtonKind},
@@ -115,16 +115,28 @@ pub const QUOTES: &[Citation] = &[
 ];
 
 /// Today's day number, the same on the server and in the browser.
-fn day_number() -> usize {
-    let days = chrono::Utc::now().timestamp().div_euclid(86_400);
-    usize::try_from(days).unwrap_or(0)
+fn day_number() -> u64 {
+    u64::try_from(chrono::Utc::now().timestamp().div_euclid(86_400)).unwrap_or(0)
 }
 
 /// The quote of the day for one placement. Different `salt`s give different
 /// quotes on the same day.
+///
+/// Fixed-width arithmetic on purpose: the server is 64-bit and the browser's
+/// WebAssembly 32-bit, and a `usize` that wraps differently on each would
+/// pick two different quotes and break hydration.
 #[must_use]
-pub fn quote_of_day(salt: usize) -> Citation {
-    QUOTES[day_number().wrapping_mul(7).wrapping_add(salt.wrapping_mul(13)) % QUOTES.len()]
+pub fn quote_of_day(salt: u32) -> Citation {
+    let len = QUOTES.len() as u64;
+    let i = (day_number() * 7 + u64::from(salt) * 13) % len;
+    QUOTES[usize::try_from(i).unwrap_or(0)]
+}
+
+/// A placement number from a page address, identical on the server and in
+/// the browser.
+#[must_use]
+pub fn salt_for(path: &str) -> u32 {
+    path.bytes().fold(5_u32, |h, b| h.wrapping_mul(31).wrapping_add(u32::from(b)))
 }
 
 /// A quote: the words, then who said them.
@@ -132,7 +144,7 @@ pub fn quote_of_day(salt: usize) -> Citation {
 pub fn Quote(
     /// Which placement this is: different numbers, different quotes.
     #[prop(optional)]
-    salt: usize,
+    salt: u32,
     /// One discreet line, for a footer.
     #[prop(optional)]
     compact: bool,
@@ -151,13 +163,16 @@ pub fn Quote(
         <figure class=class>
             {move || {
                 let c = current();
-                let by = match c.source {
-                    Some(source) => view! { {c.author}", "<cite>{source}</cite> }.into_any(),
-                    None => view! { {c.author} }.into_any(),
-                };
+                // The same shape with or without a source — an author, then a
+                // `cite` that is hidden when empty — so the page the server
+                // sends and the one the browser hydrates always match.
+                let source = c.source.map_or_else(
+                    || Either::Right(view! { <cite class="ui-quote__source" hidden=true></cite> }),
+                    |source| Either::Left(view! { <cite class="ui-quote__source">{source}</cite> }),
+                );
                 view! {
                     <blockquote class="ui-quote__text"><p>{c.text}</p></blockquote>
-                    <figcaption class="ui-quote__by">{by}</figcaption>
+                    <figcaption class="ui-quote__by"><span class="ui-quote__author">{c.author}</span>{source}</figcaption>
                 }
             }}
             {shuffle.then(|| view! {
@@ -182,6 +197,13 @@ mod tests {
             assert!(!c.author.trim().is_empty());
             assert!(c.text.ends_with(['.', '!', '?']), "{}", c.text);
         }
+    }
+
+    #[test]
+    fn a_page_address_picks_the_same_quote_everywhere() {
+        // The same number on a 64-bit server and in 32-bit WebAssembly.
+        assert_eq!(salt_for("/admin"), salt_for("/admin"));
+        assert_eq!(salt_for("/"), 5 * 31 + u32::from(b'/'));
     }
 
     #[test]

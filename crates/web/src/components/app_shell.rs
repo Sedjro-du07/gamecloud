@@ -33,6 +33,7 @@ const HOME: Destination = to("/", IconName::House, "Accueil");
 const PROFILE: Destination = to("/profile", IconName::User, "Profil");
 const QUESTS: Destination = to("/quests", IconName::Target, "Quêtes");
 const TRACKS: Destination = to("/tracks", IconName::Compass, "Tracks");
+const SHEET: Destination = to("/fiche", IconName::FileText, "Ma fiche");
 const CALENDAR: Destination = to("/calendar", IconName::CalendarBlank, "Calendrier");
 const PROJECTS: Destination = to("/projects", IconName::Cube, "Projets");
 const SHARES: Destination = to("/shares", IconName::Package, "Partages");
@@ -62,7 +63,7 @@ fn sections(me: Option<&MeView>) -> Vec<Section> {
     if me.is_some() {
         out.push(Section {
             label: "Moi",
-            items: vec![PROFILE, QUESTS, TRACKS],
+            items: vec![PROFILE, QUESTS, TRACKS, SHEET],
         });
     }
 
@@ -428,7 +429,7 @@ pub fn AppShell(
                     // A different quote on each screen: the page's address picks it.
                     {move || {
                         let path = location.pathname.get();
-                        let salt = path.bytes().fold(5_usize, |h, b| h.wrapping_mul(31).wrapping_add(usize::from(b)));
+                        let salt = crate::components::ui::quote::salt_for(&path);
                         view! { <Quote salt compact=true /> }
                     }}
                     <p class="ui-meta">"GameCloud OS, l'association game-dev d'Epitech Bénin"</p>

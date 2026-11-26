@@ -7,6 +7,7 @@ pub mod badges;
 pub mod entrance;
 pub mod events;
 pub mod files;
+pub mod involvement;
 pub mod kumo_chat;
 pub mod leaderboard;
 pub mod projects;
