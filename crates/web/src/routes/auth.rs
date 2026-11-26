@@ -199,6 +199,19 @@ async fn callback(
         tracing::warn!(error = %e, user = %user.id, "legacy XP not credited");
     }
 
+    // And the Kumo chat XP reported before they had an account.
+    if let Err(e) = crate::db::queries::kumo_sync::pay_pending(
+        state.pool(),
+        state.channels(),
+        state.config().kumo_xp_per_platform_xp,
+        user.id,
+        &user.discord_id,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, user = %user.id, "kumo XP not credited");
+    }
+
     let candidate = settle_admission(&state, &user).await?;
     let target = post_login_target(&user, candidate);
 

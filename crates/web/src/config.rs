@@ -65,6 +65,12 @@ pub struct Config {
     /// Shared secret for the DraftBot → Axum sync endpoint.
     pub draftbot_api_key: String,
 
+    /// Shared secret for the Kumo XP sync endpoints. Optional: without
+    /// it they answer 503 and nothing else is affected.
+    pub kumo_sync_api_key: Option<String>,
+    /// Kumo XP worth one platform XP.
+    pub kumo_xp_per_platform_xp: i64,
+
     /// Supabase project URL (used to build presigned upload URLs).
     /// Optional in dev: file uploads are disabled when absent.
     pub supabase_url: Option<String>,
@@ -148,6 +154,15 @@ impl Config {
             draftbot_api_key: required("DRAFTBOT_API_KEY")
                 .and_then(|s| secret("DRAFTBOT_API_KEY", s))
                 .map(|b| String::from_utf8(b).unwrap_or_default())?,
+
+            kumo_sync_api_key: optional("KUMO_SYNC_API_KEY")
+                .map(|s| secret("KUMO_SYNC_API_KEY", s))
+                .transpose()?
+                .map(|b| String::from_utf8(b).unwrap_or_default()),
+            kumo_xp_per_platform_xp: parse_or(
+                "KUMO_XP_PER_PLATFORM_XP",
+                gamecloud_shared::kumo::DEFAULT_KUMO_XP_PER_PLATFORM_XP,
+            )?,
 
             supabase_url: optional("SUPABASE_URL"),
             supabase_service_key: optional("SUPABASE_SERVICE_KEY"),

@@ -38,6 +38,7 @@ pub mod badges;
 pub mod errors;
 pub mod involvement;
 pub mod jams;
+pub mod kumo;
 pub mod mentions;
 pub mod models;
 pub mod projects;

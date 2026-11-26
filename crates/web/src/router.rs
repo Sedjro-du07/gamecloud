@@ -80,7 +80,8 @@ pub fn build(state: AppState) -> Router {
         .nest("/contact", routes::contact::router())
         .nest("/jams", routes::jams::router())
         .nest("/admin", routes::admin::router())
-        .merge(routes::webhooks::router());
+        .merge(routes::webhooks::router())
+        .merge(routes::kumo_sync::router());
 
     Router::new()
         .merge(routes::health::router())

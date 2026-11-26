@@ -1,5 +1,28 @@
 # Changelog
 
+## Novembre 2026 — l'XP de Kumo et celle de la plateforme restent synchronisées
+
+- **Dans les deux sens, au taux de 5 XP Kumo pour 1 XP plateforme**
+  (`KUMO_XP_PER_PLATFORM_XP`). La plateforme garde la priorité : elle ne
+  reprend jamais d'XP à Kumo, et ce que Kumo a gagné n'est pas abandonné.
+- **Kumo → plateforme** : Kumo déclare l'XP gagnée en parlant (compteur
+  cumulatif, hors `/add-xp`, `/set-xp` et XP venue de la plateforme). La
+  plateforme crédite `floor(total / 5)` moins ce qu'elle a déjà payé,
+  sans multiplicateur, tracé « Synchro Kumo » dans le journal. Un membre pas
+  encore inscrit est payé à sa première connexion.
+- **Plateforme → Kumo** : toute l'XP donnée par la plateforme (GitHub,
+  présences, quêtes, ajustements du Bureau, positifs ou négatifs) est
+  recopiée sur Kumo, ×5. Le report 1:1 de septembre et l'XP déjà payée
+  par Kumo en sont exclus, pour ne jamais revenir à Kumo.
+- **Point de départ** : les 10 membres du relevé du 14/09 repartent de leur
+  XP reportée (seul ce qu'ils ont gagné depuis est payé) ; les autres, de
+  l'XP Kumo qu'ils avaient le jour du branchement (le reset est respecté).
+- L'XP de chat n'entre pas dans le score d'implication.
+- Migration 0032. Endpoints `POST /api/sync/kumo/activity` et
+  `GET /api/sync/kumo/platform-xp`, protégés par `KUMO_SYNC_API_KEY`
+  (fermés si elle est absente). Kumo appelle la plateforme toutes les
+  5 minutes (`PLATFORM_SYNC_URL`, `PLATFORM_SYNC_KEY` dans son `.env`).
+
 ## Novembre 2026 — game jams internes
 
 - **Le Bureau organise une jam** depuis la page Game jams : titre, thème
@@ -457,7 +480,7 @@ scan y noierait tout le reste.
 
 ### DraftBot suspendu
 
-La plateforme est le seul système d'XP. Le pont DraftBot → XP est coupé
+La plateforme est le seul système d'XP *propre* (Kumo y est relié, voir plus haut). Le pont DraftBot → XP est coupé
 (`DRAFTBOT_ENABLED=false`), le rôle DraftBot n'a plus aucune permission
 et n'a plus accès à `🏆level`. Pour le réactiver : remettre les
 permissions du rôle à `396579302911`, retirer l'exception sur `🏆level`,
