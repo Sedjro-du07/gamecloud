@@ -36,6 +36,7 @@ const TRACKS: Destination = to("/tracks", IconName::Compass, "Tracks");
 const SHEET: Destination = to("/fiche", IconName::FileText, "Ma fiche");
 const CALENDAR: Destination = to("/calendar", IconName::CalendarBlank, "Calendrier");
 const PROJECTS: Destination = to("/projects", IconName::Cube, "Projets");
+const JAMS: Destination = to("/jams", IconName::GameController, "Game jams");
 const SHARES: Destination = to("/shares", IconName::Package, "Partages");
 const LEADERBOARD: Destination = to("/leaderboard", IconName::Trophy, "Classement");
 const RESOURCES: Destination = to("/resources", IconName::Books, "Ressources");
@@ -74,7 +75,7 @@ fn sections(me: Option<&MeView>) -> Vec<Section> {
     // Projects, shares, the leaderboard and the library are the
     // association's own: a visitor is not shown the door to them.
     if me.is_some_and(|u| u.is_member) {
-        association.extend([PROJECTS, SHARES, LEADERBOARD, RESOURCES]);
+        association.extend([PROJECTS, JAMS, SHARES, LEADERBOARD, RESOURCES]);
     }
     if me.map_or(true, |u| u.can_see_tests) {
         association.push(TESTS);

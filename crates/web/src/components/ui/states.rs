@@ -40,11 +40,13 @@ pub fn EmptyState(
 
 /// An error sentence under what failed: icon and words.
 #[component]
+#[allow(clippy::needless_pass_by_value)] // Leptos prop convention
 pub fn ErrorText(
     /// What went wrong and how to fix it.
     #[prop(into)]
     message: String,
 ) -> impl IntoView {
+    let message = readable_error(&message);
     Effect::new(move |_| play(Sound::Error));
     view! {
         <p class="ui-error" role="alert">
@@ -52,6 +54,28 @@ pub fn ErrorText(
             <span>{message}</span>
         </p>
     }
+}
+
+/// A server's error, as a person reads it: without the transport's and the
+/// error type's prefixes, the few English words in French, a capital first.
+#[must_use]
+pub fn readable_error(raw: &str) -> String {
+    let mut text = raw.trim();
+    for prefix in ["error running server function:", "validation error:", "conflict:", "upstream error:"] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            text = rest.trim();
+        }
+    }
+    let text = match text {
+        "unauthorized" => "connecte-toi d'abord",
+        "forbidden" => "tu n'as pas le droit de faire ça",
+        "not found" | "introuvable" => "introuvable : la page a peut-être été supprimée",
+        "rate limited" => "trop de tentatives : attends une minute",
+        "database error" | "internal error" => "une erreur s'est produite, réessaie dans un instant",
+        other => other,
+    };
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
 }
 
 /// Loading failed: what went wrong, and a way to try again.
@@ -177,5 +201,20 @@ pub fn PageSkeleton() -> impl IntoView {
             <span class="ui-skeleton ui-skeleton--title"></span>
         </div>
         <RowsSkeleton rows=4 />
+    }
+}
+
+#[cfg(test)]
+mod readable_tests {
+    use super::readable_error;
+
+    #[test]
+    fn transport_and_type_prefixes_go() {
+        assert_eq!(
+            readable_error("error running server function: validation error: cette personne est déjà dans une équipe"),
+            "Cette personne est déjà dans une équipe"
+        );
+        assert_eq!(readable_error("error running server function: forbidden"), "Tu n'as pas le droit de faire ça");
+        assert_eq!(readable_error("connecte-toi d'abord"), "Connecte-toi d'abord");
     }
 }

@@ -1077,3 +1077,143 @@ pub struct InvolvementBoard {
     /// Every member.
     pub rows: Vec<InvolvementView>,
 }
+
+// ---------------------------------------------------------------------------
+// Game jams
+// ---------------------------------------------------------------------------
+
+/// A jam, as listed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JamCard {
+    /// Row id, for the link.
+    pub id: String,
+    /// Title.
+    pub title: String,
+    /// `Registration`, `Running`, `Voting`, `Deliberation`, `Results`.
+    pub phase: String,
+    /// The phase in words.
+    pub phase_label: String,
+    /// The theme, once revealed.
+    pub theme: Option<String>,
+    /// Start, in Bénin time.
+    pub starts: String,
+    /// Submissions close.
+    pub ends: String,
+    /// Voting closes.
+    pub voting_ends: String,
+    /// Time left in the current phase: "2 j restants".
+    pub time_left: Option<String>,
+    /// Teams registered.
+    pub teams: i64,
+    /// Games handed in.
+    pub entries: i64,
+}
+
+/// The jams page.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JamsView {
+    /// The viewer may take part (a member).
+    pub is_member: bool,
+    /// The viewer may organise jams (the Bureau).
+    pub can_organise: bool,
+    /// Every jam, the latest first.
+    pub jams: Vec<JamCard>,
+}
+
+/// A reward category.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JamCategoryItem {
+    /// Row id, for voting.
+    pub id: String,
+    /// Name.
+    pub name: String,
+    /// What the winners receive besides XP.
+    pub reward: Option<String>,
+    /// XP for each member of the winning team.
+    pub xp_reward: i32,
+}
+
+/// A game handed in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JamEntryItem {
+    /// Title.
+    pub title: String,
+    /// What it is.
+    pub description: Option<String>,
+    /// A link to play or download it.
+    pub url: Option<String>,
+    /// The uploaded file's name and size, if any.
+    pub file: Option<String>,
+    /// When it was handed in.
+    pub when: String,
+}
+
+/// A team.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JamTeamItem {
+    /// Row id, for voting and the download link.
+    pub id: String,
+    /// Name.
+    pub name: String,
+    /// Members, by Discord username.
+    pub members: Vec<String>,
+    /// The viewer is in it.
+    pub mine: bool,
+    /// Its game, if handed in.
+    pub entry: Option<JamEntryItem>,
+}
+
+/// One of the viewer's scores.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JamScore {
+    /// Team voted for.
+    pub team_id: String,
+    /// Category.
+    pub category_id: String,
+    /// 1 to 5.
+    pub score: u8,
+}
+
+/// A category's winner.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JamResult {
+    /// Category.
+    pub category: String,
+    /// What it rewards.
+    pub reward: Option<String>,
+    /// XP it paid.
+    pub xp_reward: i32,
+    /// Winning team, or `None` when nobody voted.
+    pub team: Option<String>,
+    /// Its members.
+    pub members: Vec<String>,
+    /// Final score out of 5, as text.
+    pub score: Option<String>,
+}
+
+/// One jam, as its page shows it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JamView {
+    /// The jam.
+    pub card: JamCard,
+    /// What it is about.
+    pub description: Option<String>,
+    /// Rules.
+    pub rules: Option<String>,
+    /// Largest team.
+    pub max_team_size: i16,
+    /// XP for everybody who hands in a game.
+    pub participation_xp: i32,
+    /// Reward categories.
+    pub categories: Vec<JamCategoryItem>,
+    /// Teams.
+    pub teams: Vec<JamTeamItem>,
+    /// The viewer may take part.
+    pub is_member: bool,
+    /// The viewer organises (the Bureau): votes as jury, publishes.
+    pub can_organise: bool,
+    /// The viewer's own scores.
+    pub my_scores: Vec<JamScore>,
+    /// Winners, once published.
+    pub results: Vec<JamResult>,
+}

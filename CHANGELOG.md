@@ -1,5 +1,30 @@
 # Changelog
 
+## Novembre 2026 — game jams internes
+
+- **Le Bureau organise une jam** depuis la page Game jams : titre, thème
+  (caché jusqu'au début), règles, trois dates (début, fin des rendus, fin
+  du vote), taille maximale des équipes, XP de participation et
+  **catégories de récompense** (nom, récompense, XP), avec cinq catégories
+  proposées par défaut. L'ouverture est annoncée sur Discord.
+- **Les membres** forment une équipe (seul ou à plusieurs, une équipe par
+  personne et par jam), ajoutent leurs coéquipiers par pseudo, puis rendent
+  leur jeu pendant la jam : un lien (itch.io…) et/ou un fichier de 500 Mo
+  maximum, remplaçable jusqu'à la fin des rendus.
+- **Le vote** : chaque membre note chaque jeu de 1 à 5 dans chaque
+  catégorie, sauf le sien ; le Bureau vote comme jury. Chaque catégorie est
+  décidée moitié jury, moitié membres (un groupe qui n'a pas voté n'est
+  pas compté comme zéro). Égalité : plus de votes, puis premier rendu.
+- **Les résultats**, publiés une fois par le Bureau, désignent les gagnants
+  et paient, dans la même transaction, l'XP de participation et le badge
+  Jammeur à tous ceux qui ont rendu un jeu, l'XP de la catégorie et le
+  badge Vainqueur de Jam aux gagnants, puis les annoncent sur Discord.
+- Rendre un jeu compte dans l'**implication** comme un projet publié.
+- Les messages d'erreur ne montrent plus « error running server function:
+  validation error: » : seul le message, en français, s'affiche.
+- Migration 0031. Logique des phases et du classement dans
+  `gamecloud_shared::jams`, testée.
+
 ## Novembre 2026 — implication, crédits et fiche pour l'école
 
 - **Niveau d'implication de 1 à 5**, calculé par la plateforme à partir de

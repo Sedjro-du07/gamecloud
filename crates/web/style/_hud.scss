@@ -885,3 +885,6 @@ html {
 // The comma before a quote's source, drawn by the style so the markup stays
 // the same with or without one.
 .ui-quote__source:not([hidden])::before { content: ", "; }
+
+// Text typed with line breaks, kept as typed.
+.ui-pre { white-space: pre-line; }

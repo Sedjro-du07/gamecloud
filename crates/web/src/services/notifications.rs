@@ -540,6 +540,22 @@ impl Announcement {
         }
     }
 
+    /// A game jam opened, or its results came out. Public: the whole
+    /// association is invited, in the announcement channel.
+    #[must_use]
+    pub fn jam(title: &str, description: String) -> Self {
+        Self {
+            kind: "GameJam",
+            title: title.to_string(),
+            description,
+            color: 0x00_f2ff,
+            user_id: None,
+            track: None,
+            mention: Mention::Nobody,
+            dm: false,
+        }
+    }
+
     /// An entrance-test applicant is waiting on the Bureau: access to the
     /// subject, or a verdict on their work. Bureau channel only, like a
     /// Bureau meeting: it names somebody who is not a member yet.

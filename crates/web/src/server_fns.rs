@@ -26,7 +26,7 @@ use leptos::prelude::*;
 use crate::api::{
     AuditLine, CalendarEvent, CalendarRights, DirectoryEntry, EventAttendee, EventDraft, FileItem, LeaderboardView, MeView, ProjectCard,
     ProjectDetailView, QrTicket, KumoChatView, QuestItem, ResourceItem, ReviewItem, SharesView, SheetView, SubmissionItem, TestsView, TrackBoard,
-    TrackOption, ApplicationItem, ApplicationView, TestItem, InvolvementBoard, InvolvementView,
+    TrackOption, ApplicationItem, ApplicationView, TestItem, InvolvementBoard, InvolvementView, JamView, JamsView,
 };
 
 // Types only constructed inside the server bodies.
@@ -1250,6 +1250,9 @@ fn audit_label(action: &str) -> String {
         "project.released" => "Projet publié",
         "quest.created" => "Quête ouverte",
         "resource.validated" => "Ressource validée",
+        "jam.created" => "Game jam ouverte",
+        "jam.deleted" => "Game jam supprimée",
+        "jam.results_published" => "Résultats de game jam publiés",
         "involvement.reviewed" => "Implication : décision du président ou du vice-président",
         "involvement.max_granted" => "Implication maximale garantie",
         "involvement.max_lifted" => "Implication maximale retirée",
@@ -3846,5 +3849,397 @@ pub async fn get_sheets(member: Option<String>, all: bool) -> Result<Vec<Involve
     {
         let _ = (member, all);
         Ok(Vec::new())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Game jams
+// ---------------------------------------------------------------------------
+
+/// The phase in words.
+#[cfg(feature = "ssr")]
+fn jam_phase_label(phase: gamecloud_shared::jams::Phase) -> &'static str {
+    use gamecloud_shared::jams::Phase;
+    match phase {
+        Phase::Registration => "Inscriptions ouvertes",
+        Phase::Running => "En cours",
+        Phase::Voting => "Vote",
+        Phase::Deliberation => "Vote clos",
+        Phase::Results => "Résultats",
+    }
+}
+
+#[cfg(feature = "ssr")]
+fn present_jam_card(j: &crate::db::queries::jams::Jam, now: chrono::DateTime<chrono::Utc>) -> crate::api::JamCard {
+    use crate::db::queries::jams::local_stamp;
+    use gamecloud_shared::jams::Phase;
+    let phase = j.phase(now);
+    let deadline = match phase {
+        Phase::Registration => Some(j.starts_at),
+        Phase::Running => Some(j.ends_at),
+        Phase::Voting => Some(j.voting_ends_at),
+        _ => None,
+    };
+    crate::api::JamCard {
+        id: j.id.to_string(),
+        title: j.title.clone(),
+        phase: phase.as_str().to_string(),
+        phase_label: jam_phase_label(phase).to_string(),
+        theme: phase.theme_revealed().then(|| j.theme.clone()),
+        starts: local_stamp(j.starts_at),
+        ends: local_stamp(j.ends_at),
+        voting_ends: local_stamp(j.voting_ends_at),
+        time_left: deadline.map(ctx::time_left),
+        teams: j.teams,
+        entries: j.entries,
+    }
+}
+
+/// Who is asking: signed in, a member, on the Bureau.
+#[cfg(feature = "ssr")]
+async fn jam_viewer(state: &crate::state::AppState) -> Result<(uuid::Uuid, bool, bool), ServerFnError> {
+    let user = ctx::current_user_id(state)
+        .await
+        .ok_or_else(|| ServerFnError::new("connecte-toi d'abord"))?;
+    let member = crate::db::queries::users::is_member(state.pool(), user).await.unwrap_or(false);
+    let bureau = crate::db::queries::users::load_authority(state.pool(), user)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?
+        .can(gamecloud_shared::roles::Action::AccessAdminPanel);
+    Ok((user, member, bureau))
+}
+
+#[cfg(feature = "ssr")]
+fn parse_id(raw: &str) -> Result<uuid::Uuid, ServerFnError> {
+    raw.parse::<uuid::Uuid>().map_err(|_| ServerFnError::new("introuvable"))
+}
+
+/// Every jam. Members and the Bureau.
+///
+/// # Errors
+/// Returns a `ServerFnError` when signed out.
+#[server(GetJams, "/_fn")]
+pub async fn get_jams() -> Result<JamsView, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let (_, is_member, can_organise) = jam_viewer(&state).await?;
+        if !is_member && !can_organise {
+            return Ok(JamsView::default());
+        }
+        let now = chrono::Utc::now();
+        let jams = crate::db::queries::jams::list(state.pool())
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(JamsView {
+            is_member,
+            can_organise,
+            jams: jams.iter().map(|j| present_jam_card(j, now)).collect(),
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    Ok(JamsView::default())
+}
+
+/// One jam, as the viewer sees it.
+///
+/// # Errors
+/// Returns a `ServerFnError` when signed out, not a member or the jam is unknown.
+#[server(GetJam, "/_fn")]
+pub async fn get_jam(id: String) -> Result<JamView, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::api::{JamCategoryItem, JamEntryItem, JamResult, JamScore, JamTeamItem};
+        use crate::db::queries::jams;
+        let fail = |e: crate::error::WebError| ServerFnError::new(e.to_string());
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let (viewer, is_member, can_organise) = jam_viewer(&state).await?;
+        if !is_member && !can_organise {
+            return Err(ServerFnError::new("les game jams sont réservées aux membres"));
+        }
+        let id = parse_id(&id)?;
+        let pool = state.pool();
+        let jam = jams::find(pool, id).await.map_err(fail)?;
+        let now = chrono::Utc::now();
+        let categories = jams::categories(pool, id).await.map_err(fail)?;
+        let teams = jams::teams(pool, id).await.map_err(fail)?;
+        let mine = jams::team_of(pool, id, viewer).await.map_err(fail)?;
+        let my_scores = jams::my_votes(pool, id, viewer).await.map_err(fail)?;
+        let awards = jams::awards(pool, id).await.map_err(fail)?;
+        let results = if jam.results_published_at.is_some() {
+            categories
+                .iter()
+                .map(|c| {
+                    let won = awards.get(&c.id).and_then(|(t, s)| teams.iter().find(|x| x.id == *t).map(|x| (x, *s)));
+                    JamResult {
+                        category: c.name.clone(),
+                        reward: c.reward.clone(),
+                        xp_reward: c.xp_reward,
+                        team: won.map(|(t, _)| t.name.clone()),
+                        members: won.map(|(t, _)| t.members.clone()).unwrap_or_default(),
+                        score: won.map(|(_, s)| format!("{s:.2} / 5")),
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        return Ok(JamView {
+            card: present_jam_card(&jam, now),
+            description: jam.description.clone(),
+            rules: jam.rules.clone(),
+            max_team_size: jam.max_team_size,
+            participation_xp: jam.participation_xp,
+            categories: categories
+                .iter()
+                .map(|c| JamCategoryItem { id: c.id.to_string(), name: c.name.clone(), reward: c.reward.clone(), xp_reward: c.xp_reward })
+                .collect(),
+            teams: teams
+                .iter()
+                .map(|t| JamTeamItem {
+                    id: t.id.to_string(),
+                    name: t.name.clone(),
+                    members: t.members.clone(),
+                    mine: mine == Some(t.id),
+                    entry: t.entry.as_ref().map(|e| JamEntryItem {
+                        title: e.title.clone(),
+                        description: e.description.clone(),
+                        url: e.url.clone(),
+                        file: e.filename.as_ref().map(|f| format!("{f} ({})", crate::api::format_bytes(e.size_bytes.unwrap_or(0)))),
+                        when: jams::local_stamp(e.submitted_at),
+                    }),
+                })
+                .collect(),
+            is_member,
+            can_organise,
+            my_scores: my_scores
+                .into_iter()
+                .map(|((t, c), score)| JamScore { team_id: t.to_string(), category_id: c.to_string(), score })
+                .collect(),
+            results,
+        });
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = id;
+        Ok(JamView::default())
+    }
+}
+
+/// Open a jam. Bureau only. `categories` is one per line: "Nom | récompense | XP".
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau or the jam is invalid.
+#[allow(clippy::too_many_arguments)]
+#[server(CreateJam, "/_fn")]
+pub async fn create_jam(
+    title: String,
+    description: String,
+    rules: String,
+    theme: String,
+    starts: String,
+    ends: String,
+    voting_ends: String,
+    max_team_size: i16,
+    participation_xp: i32,
+    categories: String,
+) -> Result<String, ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        use crate::db::queries::jams::{create, NewJam};
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let by = require_bureau(&state).await?;
+        let mut cats = Vec::new();
+        for line in categories.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            let mut parts = line.split('|').map(str::trim);
+            let name = parts.next().unwrap_or_default().to_string();
+            let reward = parts.next().filter(|r| !r.is_empty()).map(str::to_string);
+            let xp = match parts.next() {
+                Some(x) if !x.is_empty() => x
+                    .trim_end_matches("XP")
+                    .trim()
+                    .parse::<i32>()
+                    .map_err(|_| ServerFnError::new(format!("l'XP de « {name} » doit être un nombre")))?,
+                _ => 200,
+            };
+            cats.push((name, reward, xp));
+        }
+        let new = NewJam {
+            title,
+            description: Some(description),
+            rules: Some(rules),
+            theme,
+            starts_at: parse_local(&starts)?,
+            ends_at: parse_local(&ends)?,
+            voting_ends_at: parse_local(&voting_ends)?,
+            max_team_size,
+            participation_xp,
+            categories: cats,
+        };
+        let id = create(state.pool(), state.channels(), &new, by)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(id.to_string());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (title, description, rules, theme, starts, ends, voting_ends, max_team_size, participation_xp, categories);
+        Ok(String::new())
+    }
+}
+
+/// Delete a jam that has not started. Bureau only.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the caller is not in the Bureau or it started.
+#[server(DeleteJam, "/_fn")]
+pub async fn delete_jam(id: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let by = require_bureau(&state).await?;
+        let files = crate::db::queries::jams::delete(state.pool(), parse_id(&id)?, by)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let dir = state.config().shares_dir.join("jams");
+        for f in files {
+            let _ = tokio::fs::remove_file(dir.join(f)).await;
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = id;
+        Ok(())
+    }
+}
+
+/// Register a team for a jam, with the caller in it.
+///
+/// # Errors
+/// Returns a `ServerFnError` when teams are closed or the caller is in one.
+#[server(CreateJamTeam, "/_fn")]
+pub async fn create_jam_team(jam_id: String, name: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let (user, _, _) = jam_viewer(&state).await?;
+        crate::db::queries::jams::create_team(state.pool(), parse_id(&jam_id)?, &name, user)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (jam_id, name);
+        Ok(())
+    }
+}
+
+/// Add a member to the caller's team, by Discord username.
+///
+/// # Errors
+/// Returns a `ServerFnError` when the team is full or the person cannot join.
+#[server(AddJamMember, "/_fn")]
+pub async fn add_jam_member(jam_id: String, username: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let (user, _, _) = jam_viewer(&state).await?;
+        crate::db::queries::jams::add_member(state.pool(), parse_id(&jam_id)?, user, username.trim().trim_start_matches('@'))
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (jam_id, username);
+        Ok(())
+    }
+}
+
+/// Leave one's team for a jam.
+///
+/// # Errors
+/// Returns a `ServerFnError` once teams are closed.
+#[server(LeaveJamTeam, "/_fn")]
+pub async fn leave_jam_team(jam_id: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let (user, _, _) = jam_viewer(&state).await?;
+        let file = crate::db::queries::jams::leave(state.pool(), parse_id(&jam_id)?, user)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        if let Some(f) = file {
+            let _ = tokio::fs::remove_file(state.config().shares_dir.join("jams").join(f)).await;
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = jam_id;
+        Ok(())
+    }
+}
+
+/// Score a game in a category, 1 to 5. The Bureau votes as the jury.
+///
+/// # Errors
+/// Returns a `ServerFnError` outside the vote or for one's own game.
+#[server(VoteJam, "/_fn")]
+pub async fn vote_jam(jam_id: String, team_id: String, category_id: String, score: u8) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let (user, _, bureau) = jam_viewer(&state).await?;
+        crate::db::queries::jams::vote(
+            state.pool(),
+            parse_id(&jam_id)?,
+            parse_id(&team_id)?,
+            parse_id(&category_id)?,
+            user,
+            bureau,
+            score,
+        )
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = (jam_id, team_id, category_id, score);
+        Ok(())
+    }
+}
+
+/// Publish a jam's results. Bureau only, once the vote is closed.
+///
+/// # Errors
+/// Returns a `ServerFnError` before the vote closes or when already published.
+#[server(PublishJam, "/_fn")]
+pub async fn publish_jam(jam_id: String) -> Result<(), ServerFnError> {
+    #[cfg(feature = "ssr")]
+    {
+        let state = ctx::state().ok_or_else(|| ServerFnError::new("no request context"))?;
+        let by = require_bureau(&state).await?;
+        crate::db::queries::jams::publish(state.pool(), state.channels(), parse_id(&jam_id)?, by)
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "ssr"))]
+    {
+        let _ = jam_id;
+        Ok(())
     }
 }

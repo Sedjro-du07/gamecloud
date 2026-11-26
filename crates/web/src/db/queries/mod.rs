@@ -8,6 +8,7 @@ pub mod entrance;
 pub mod events;
 pub mod files;
 pub mod involvement;
+pub mod jams;
 pub mod kumo_chat;
 pub mod leaderboard;
 pub mod projects;

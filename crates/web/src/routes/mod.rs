@@ -9,6 +9,7 @@ pub mod auth;
 pub mod contact;
 pub mod entrance;
 pub mod health;
+pub mod jams;
 pub mod projects;
 pub mod qr;
 pub mod quests;

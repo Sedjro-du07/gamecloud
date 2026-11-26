@@ -7,7 +7,8 @@
 //! measured over its last 30 days, so it is never judged on three days.
 //!
 //! What is counted, and what is not:
-//! * GitHub XP, projects started and released, shares, accepted resources;
+//! * GitHub XP, projects started and released (a game jam game counts as
+//!   one), shares, accepted resources;
 //! * sessions attended (scanned on site) out of sessions held;
 //! * active days: any XP-earning action, presence, review or share —
 //!   except XP granted by hand and the XP carried over from the old Kumo
@@ -191,7 +192,7 @@ async fn counts(pool: &PgPool, sql: &str, w: &Window) -> WebResult<HashMap<Uuid,
 
 /// One aggregate per kind of action, each returning `(member, count)` for
 /// the window `[$1, $2)`. The order is the order of [`Counts`].
-const COUNT_QUERIES: [&str; 9] = [
+const COUNT_QUERIES: [&str; 10] = [
     // GitHub XP.
     "SELECT user_id, COALESCE(SUM(amount), 0)::BIGINT FROM xp_logs \
       WHERE source = 'GitHub' AND amount > 0 AND created_at >= $1 AND created_at < $2 GROUP BY user_id",
@@ -234,6 +235,10 @@ const COUNT_QUERIES: [&str; 9] = [
       GROUP BY v.reviewed_by",
     // Quests completed.
     "SELECT user_id, COUNT(*) FROM quest_completions WHERE completed_at >= $1 AND completed_at < $2 GROUP BY user_id",
+    // Game jam games handed in, for every member of the team: they count
+    // as a project released.
+    "SELECT m.user_id, COUNT(*) FROM jam_entries e JOIN jam_team_members m ON m.team_id = e.team_id \
+      WHERE e.submitted_at >= $1 AND e.submitted_at < $2 GROUP BY m.user_id",
 ];
 
 /// Sessions held: those on the calendar, or, where nobody put them on the
@@ -270,7 +275,7 @@ pub async fn activity(pool: &PgPool, w: &Window) -> WebResult<(HashMap<Uuid, Act
             let n = |i: usize| maps[i].get(&id).copied().unwrap_or(0);
             let a = Activity {
                 github_xp: n(0),
-                projects_released: n(1),
+                projects_released: n(1) + n(9),
                 projects_started: n(2),
                 shares: n(3),
                 resources_accepted: n(4),
