@@ -93,7 +93,8 @@ pub fn App() -> impl IntoView {
         // Without this the browser asks for /favicon.ico on every page
         // and gets a 404 each time — harmless, but it fills the console
         // and hides the errors that matter.
-        <Link rel="icon" type_="image/svg+xml" href="/favicon.svg" />
+        <Link rel="icon" type_="image/png" href="/favicon.png" />
+        <Link rel="apple-touch-icon" href="/images/gamecloud-icone-192.png" />
         <Title text="GameCloud OS" />
         <Meta name="description"
               content="GameCloud OS — l'OS gamifié de l'association game-dev d'Epitech Bénin." />

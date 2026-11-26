@@ -262,6 +262,8 @@ fn Welcome() -> impl IntoView {
     view! {
         <div class="ui-stack ui-stack--loose ui-dashboard">
             <Stack reading=true>
+                <img class="ui-hero-logo" src="/images/gamecloud-logo-sombre.webp"
+                    alt="GameCloud" width="360" height="270" />
                 <span class="ui-label">"L'association game-dev d'Epitech Bénin"</span>
                 <h1 class="ui-display">"Code, crée, viens aux séances : chaque action te fait monter en titre."</h1>
                 <p class="ui-body ui-muted">

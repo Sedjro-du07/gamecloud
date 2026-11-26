@@ -888,3 +888,48 @@ html {
 
 // Text typed with line breaks, kept as typed.
 .ui-pre { white-space: pre-line; }
+
+// --- The GameCloud logo ----------------------------------------------------------------------
+
+// Top bar: the mark beside the name.
+.ui-topbar__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+
+  .ui-wordmark { font-size: var(--size-h3); }
+}
+
+.ui-topbar__mark {
+  width: auto;
+  height: 28px;
+  filter: drop-shadow(0 0 6px rgba(0, 242, 255, 0.35));
+  transition: filter var(--dur-fade), transform var(--dur-fade);
+}
+
+.ui-topbar__brand:hover .ui-topbar__mark {
+  filter: drop-shadow(0 0 10px rgba(0, 242, 255, 0.6)) drop-shadow(0 0 16px rgba(191, 0, 255, 0.4));
+}
+
+@media (max-width: 720px) {
+  .ui-topbar__mark { height: 24px; }
+}
+
+// Home, for visitors: the full logo above the headline.
+.ui-hero-logo {
+  display: block;
+  width: min(360px, 70vw);
+  height: auto;
+  margin-bottom: var(--space-4);
+  filter: drop-shadow(0 0 24px rgba(0, 242, 255, 0.25)) drop-shadow(0 0 40px rgba(191, 0, 255, 0.2));
+}
+
+// The involvement sheet: the logo in the header, plain.
+.ui-doc__head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 5mm;
+  align-items: center;
+
+  .ui-doc__logo { grid-row: span 2; width: 26mm; height: auto; }
+}

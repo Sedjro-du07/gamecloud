@@ -283,6 +283,7 @@ fn SheetDocument(
     view! {
         <article class="ui-doc">
             <header class="ui-doc__head">
+                <img class="ui-doc__logo" src="/images/gamecloud-logo.webp" alt="GameCloud" width="120" height="90" />
                 <p class="ui-doc__org">"GameCloud OS · association game-dev d'Epitech Bénin"</p>
                 <h1 class="ui-doc__title">{format!("Fiche d'implication {}", view.school_year)}</h1>
             </header>

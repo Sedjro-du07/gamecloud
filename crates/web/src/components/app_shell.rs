@@ -251,7 +251,10 @@ fn TopBar(
         <header class="ui-topbar">
             // A plain link, not a menu entry: it should never read as the
             // current page. The router still handles the click.
-            <a href="/" class="ui-topbar__brand ui-wordmark">"GameCloud OS"</a>
+            <a href="/" class="ui-topbar__brand" aria-label="GameCloud OS, accueil">
+                <img class="ui-topbar__mark" src="/images/gamecloud-symbole.png" alt="" width="48" height="35" />
+                <span class="ui-wordmark">"GameCloud OS"</span>
+            </a>
             <div class="ui-topbar__account">
                 <SoundToggle />
                 <Suspense fallback=|| view! { <span class="ui-skeleton ui-topbar__loading"></span> }>
